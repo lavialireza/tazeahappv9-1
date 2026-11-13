@@ -38,6 +38,7 @@ fun LibraryHomeScreen(
     showGlossary: Boolean = true,
     showGallery: Boolean = true,
     showCompare: Boolean = true,
+    onOpenDirectorOffice: (() -> Unit)? = null,
     onBack: () -> Unit
 ) {
     val ink = Color(0xFF263B5B)
@@ -121,6 +122,31 @@ val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardContr
                         Text("ورود به فهرست زمینه‌ها و تعزیه‌ها", fontWeight = FontWeight.Bold)
                         Spacer(Modifier.weight(1f))
                         Icon(Icons.Filled.ChevronLeft, contentDescription = null)
+                    }
+                }
+            }
+
+            // دفتر معین البکا؛ فقط در نسخه Admin با callback غیرتهی نمایش داده می‌شود.
+            if (onOpenDirectorOffice != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenDirectorOffice),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE5F0E2)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFFD3E6D0)) {
+                            Icon(Icons.Filled.EditNote, contentDescription = null, tint = Color(0xFF28543D), modifier = Modifier.padding(11.dp).size(28.dp))
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text("دفتر معین البکا", fontWeight = FontWeight.ExtraBold, color = Color(0xFF28543D), style = MaterialTheme.typography.titleMedium)
+                            Text("تنظیم نوبت‌ها، ترتیب اجرا و علائم صحنه", color = Color(0xFF456B50), style = MaterialTheme.typography.bodySmall)
+                        }
+                        Icon(Icons.Filled.ChevronLeft, contentDescription = "ورود", tint = Color(0xFF28543D))
                     }
                 }
             }

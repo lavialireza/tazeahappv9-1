@@ -346,6 +346,7 @@ fun AppNavigation(
                 showGlossary = featureEnabled("dictionary.view"),
                 showGallery = featureEnabled("gallery.view"),
                 showCompare = featureEnabled("compare.view"),
+                onOpenDirectorOffice = if (!publicViewer) ({ navController.navigate("director_office") }) else null,
                 onBack = { navController.popBackStack() }
             )
         }
