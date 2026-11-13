@@ -1,0 +1,341 @@
+import java.util.Properties
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp")
+}
+
+// اطلاعات امضای Release را از local.properties یا متغیرهای محیطی می‌خواند.
+// این فایل هرگز نباید حاوی کلید واقعی باشد و local.properties هم در .gitignore است.
+val localProps = Properties()
+run {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) {
+        f.inputStream().use { stream -> localProps.load(stream) }
+    }
+}
+val updateServerProps = Properties()
+run {
+    val f = rootProject.file("update-servers.properties")
+    if (f.exists()) {
+        f.inputStream().use { stream -> updateServerProps.load(stream) }
+    }
+}
+fun signingProp(key: String): String? =
+    (localProps.getProperty(key) ?: System.getenv(key))?.takeIf { it.isNotBlank() }
+
+// آدرس(های) سرور بروزرسانی برای هر نسخه جداست و بدون تغییر کد Kotlin قابل تغییر است.
+// می‌توانید چند آدرس پشتیبان با کاما جدا از هم بدهید (اولین آدرسی که در گوشی کاربر
+// جواب داد استفاده می‌شود؛ اگر یکی از دسترس خارج شد، بعدی امتحان می‌شود).
+// اولویت خواندن مقدار: -P هنگام Build، سپس local.properties، و در نهایت
+// update-servers.properties؛ کلید جمع (…_URLS) در اولویت است، برای سازگاری با
+// تنظیمات قبلی کلید مفرد (…_URL) هم پشتیبانی می‌شود.
+fun updateServerUrlsProp(pluralKey: String, singularKey: String, defaultValue: String): List<String> {
+    val raw = providers.gradleProperty(pluralKey).orNull
+        ?: localProps.getProperty(pluralKey)
+        ?: updateServerProps.getProperty(pluralKey)
+        ?: providers.gradleProperty(singularKey).orNull
+        ?: localProps.getProperty(singularKey)
+        ?: updateServerProps.getProperty(singularKey)
+        ?: defaultValue
+    return raw.split(",", "\n")
+        .map { it.trim().removeSuffix("/") }
+        .filter { it.isNotBlank() }
+}
+
+val adminUpdateServerUrls = updateServerUrlsProp(
+    "UPDATE_SERVER_ADMIN_URLS", "UPDATE_SERVER_ADMIN_URL",
+    "https://example.com/tazieh/admin"
+)
+val viewerUpdateServerUrls = updateServerUrlsProp(
+    "UPDATE_SERVER_VIEWER_URLS", "UPDATE_SERVER_VIEWER_URL",
+    "https://example.com/tazieh/user"
+)
+// جداکننده‌ی داخلی بین چند آدرس؛ چون خود آدرس‌ها کاما ندارند از "|" استفاده شده
+// تا با split ساده در Kotlin بدون ابهام جدا شوند.
+val adminUpdateServerUrlsJoined = adminUpdateServerUrls.joinToString("|")
+val viewerUpdateServerUrlsJoined = viewerUpdateServerUrls.joinToString("|")
+
+// Test builds must never point at the public production update channel by default.
+// Optional test-only endpoints can be supplied with -PUPDATE_SERVER_ADMIN_TEST_URLS / -PUPDATE_SERVER_VIEWER_TEST_URLS.
+fun testUpdateUrls(key: String): String = providers.gradleProperty(key).orNull
+    ?.split(",", "\n")
+    ?.map { it.trim().removeSuffix("/") }
+    ?.filter { it.isNotBlank() }
+    ?.joinToString("|")
+    ?: ""
+val adminTestUpdateServerUrlsJoined = testUpdateUrls("UPDATE_SERVER_ADMIN_TEST_URLS")
+val viewerTestUpdateServerUrlsJoined = testUpdateUrls("UPDATE_SERVER_VIEWER_TEST_URLS")
+
+val storeFilePath = signingProp("RELEASE_STORE_FILE")
+val hasReleaseSigning = storeFilePath != null
+// کلید امضای اختیاری و جداگانه برای Viewer (توصیه امنیتی: Admin و Viewer با دو
+// کلید متفاوت امضا شوند تا اگر یکی لو رفت، دیگری مستقل بماند). اگر تنظیم نشود،
+// Viewer همچنان با همان کلید Admin امضا می‌شود (رفتار قبلی، سازگار به عقب).
+val viewerStoreFilePath = signingProp("RELEASE_VIEWER_STORE_FILE")
+val hasViewerReleaseSigning = viewerStoreFilePath != null
+
+// کلید عمومی/خصوصی RSA برای امضای Policy دسترسی Viewer (جایگزین HMAC قدیمی).
+// کلید عمومی در هر دو Flavor امن است (فقط برای «تأیید» به کار می‌رود)؛ کلید
+// خصوصی فقط باید برای Admin تنظیم شود و هرگز نباید commit شود — به
+// RELEASE_AUTOMATION_FA.md مراجعه کنید.
+val policyPublicKeyBase64 = signingProp("POLICY_PUBLIC_KEY") ?: ""
+val policyPrivateKeyBase64 = signingProp("ADMIN_POLICY_PRIVATE_KEY") ?: ""
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
+android {
+    namespace = "com.example.bookapp"
+    flavorDimensions += "access"
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(storeFilePath!!)
+                storePassword = signingProp("RELEASE_STORE_PASSWORD")
+                keyAlias = signingProp("RELEASE_KEY_ALIAS")
+                keyPassword = signingProp("RELEASE_KEY_PASSWORD")
+            }
+        }
+        if (hasViewerReleaseSigning) {
+            create("releaseViewer") {
+                storeFile = file(viewerStoreFilePath!!)
+                storePassword = signingProp("RELEASE_VIEWER_STORE_PASSWORD")
+                keyAlias = signingProp("RELEASE_VIEWER_KEY_ALIAS")
+                keyPassword = signingProp("RELEASE_VIEWER_KEY_PASSWORD")
+            }
+        }
+    }
+
+    productFlavors {
+        create("admin") {
+            dimension = "access"
+            applicationId = "com.example.bookapp"
+            buildConfigField("Boolean", "PUBLIC_VIEWER", "false")
+            buildConfigField("String", "UPDATE_SERVER_URLS", "\"${adminUpdateServerUrlsJoined}\"")
+            buildConfigField("String", "TEST_UPDATE_SERVER_URLS", "\"${adminTestUpdateServerUrlsJoined}\"")
+            buildConfigField("String", "SYNC_SERVER_URL", "\"\"")
+            // کلید خصوصی امضای Policy فقط برای Admin — هرگز در Viewer تعریف نمی‌شود.
+            buildConfigField("String", "POLICY_PRIVATE_KEY", "\"$policyPrivateKeyBase64\"")
+            manifestPlaceholders["appLabel"] = "تعزیه و شبیه‌خوانی — مدیر"
+            // امضای Release این flavor؛ در buildTypes.release عمداً تنظیم نمی‌شود
+            // چون سطح buildType روی سطح flavor اولویت دارد و امضای جدا هر
+            // flavor را بی‌اثر می‌کرد.
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+        create("viewer") {
+            dimension = "access"
+            applicationId = "com.example.bookapp.viewer"
+            buildConfigField("Boolean", "PUBLIC_VIEWER", "true")
+            buildConfigField("String", "UPDATE_SERVER_URLS", "\"${viewerUpdateServerUrlsJoined}\"")
+            buildConfigField("String", "TEST_UPDATE_SERVER_URLS", "\"${viewerTestUpdateServerUrlsJoined}\"")
+            buildConfigField("String", "SYNC_SERVER_URL", "\"\"")
+            manifestPlaceholders["appLabel"] = "تعزیه و شبیه‌خوانی"
+            if (hasViewerReleaseSigning) {
+                signingConfig = signingConfigs.getByName("releaseViewer")
+            } else if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+    compileSdk = 34
+
+    // The Viewer keeps its protected content in src/viewer/assets.
+    // Explicitly attach that directory to the viewer flavor so encrypted .taz
+    // files are packaged into the Viewer APK under assets/content/.
+    sourceSets {
+        // Keep the common source set completely free of content assets.
+        // Content is intentionally isolated per flavor so Admin JSON can
+        // never become an input to the public Viewer variant.
+        getByName("main") {
+            assets.setSrcDirs(emptyList<String>())
+        }
+        getByName("viewer") {
+            setRoot("src/viewer")
+            assets.setSrcDirs(listOf("src/viewer/assets"))
+        }
+        getByName("admin") {
+            setRoot("src/admin")
+            assets.setSrcDirs(listOf("src/admin/assets"))
+        }
+
+        // آیکن‌های تولیدشده از custom_icons به‌صورت منبع موقت build اضافه می‌شوند.
+        // فایل‌های تولیدشده داخل build/ هستند و سورس اصلی برنامه را آلوده نمی‌کنند.
+        getByName("admin").res.srcDir(layout.buildDirectory.dir("generated/custom-icons/admin/res"))
+        getByName("viewer").res.srcDir(layout.buildDirectory.dir("generated/custom-icons/viewer/res"))
+        maybeCreate("adminQa").res.srcDir(layout.buildDirectory.dir("generated/custom-icons/adminQa/res"))
+        maybeCreate("viewerQa").res.srcDir(layout.buildDirectory.dir("generated/custom-icons/viewerQa/res"))
+    }
+
+
+    // شماره نسخه/برچسب هر build را از تاریخچه Git می‌سازد تا هر build برچسب
+    // منحصربه‌فرد و قابل‌ردیابی داشته باشد؛ اگر پروژه از حالت git checkout نشده باشد
+    // (مثلاً از یک فایل zip استخراج شده)، به مقدار ثابت پیش‌فرض برمی‌گردد تا build نشکند.
+    val hasGit = rootProject.file(".git").exists()
+    val gitCommitCount = if (hasGit) {
+        runCatching {
+            providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
+                .standardOutput.asText.get().trim().toIntOrNull()
+        }.getOrNull() ?: 1
+    } else 1
+    val gitShortSha = if (hasGit) {
+        runCatching {
+            providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
+                .standardOutput.asText.get().trim()
+        }.getOrNull() ?: "local"
+    } else "local"
+
+    val ciReleaseNumber = providers.gradleProperty("releaseNumber").orNull?.toIntOrNull()
+    val effectiveBuildNumber = ciReleaseNumber ?: gitCommitCount
+
+    defaultConfig {
+        // Shared inter-app policy channel for the two official APKs.
+        // The test build type overrides these with an isolated namespace so test APKs
+        // can coexist with official installs without permission/action collisions.
+        buildConfigField("Boolean", "IS_TEST_BUILD", "false")
+        buildConfigField("String", "POLICY_APPLIED_ACTION", "\"com.example.bookapp.POLICY_APPLIED\"")
+        buildConfigField("String", "POLICY_CHANGED_ACTION", "\"com.example.bookapp.POLICY_CHANGED\"")
+        buildConfigField("String", "POLICY_APPLIED_PERMISSION", "\"com.example.bookapp.permission.POLICY_APPLIED\"")
+        buildConfigField("String", "ADMIN_APPLICATION_ID", "\"com.example.bookapp\"")
+        buildConfigField("String", "VIEWER_APPLICATION_ID", "\"com.example.bookapp.viewer\"")
+        manifestPlaceholders["policyAppliedPermission"] = "com.example.bookapp.permission.POLICY_APPLIED"
+        manifestPlaceholders["policyAppliedAction"] = "com.example.bookapp.POLICY_APPLIED"
+        manifestPlaceholders["policyChangedPermission"] = "com.example.bookapp.permission.POLICY_CHANGED"
+        manifestPlaceholders["policyChangedAction"] = "com.example.bookapp.POLICY_CHANGED"
+        manifestPlaceholders["appLabelSuffix"] = ""
+        minSdk = 23
+        targetSdk = 34
+        // شماره نسخه/برچسب هر build به‌صورت خودکار از تاریخچه Git ساخته می‌شود
+        // (تعداد کامیت‌ها = versionCode، و نام نسخه شامل هش کوتاه کامیت است)
+        // تا هر build یک برچسب منحصربه‌فرد داشته باشد و قابل ردیابی باشد.
+        versionCode = effectiveBuildNumber
+        // شماره نسخه برای هر دو flavor یکسان می‌ماند؛ تفاوت فقط در سطح دسترسی است.
+        versionName = "1.0-build$effectiveBuildNumber+$gitShortSha"
+        // کلید عمومی امضای Policy — یکسان و امن برای هر دو Flavor.
+        buildConfigField("String", "POLICY_PUBLIC_KEY", "\"$policyPublicKeyBase64\"")
+    }
+
+    buildTypes {
+        debug {
+            // از debug keystore استاندارد و تولیدشده توسط Android/Gradle استفاده می‌شود.
+            // هیچ کلید خصوصی Debug در مخزن یا ZIP نگهداری نمی‌شود.
+        }
+        release {
+            // انتشار واقعی: کد Viewer در Release با R8 کوچک‌سازی و مبهم‌سازی می‌شود.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // امضای Release هر flavor در productFlavors بالا تنظیم شده (نه اینجا)
+            // تا Admin و Viewer بتوانند کلید جدا داشته باشند — اگر اینجا هم ست
+            // می‌شد، چون سطح buildType اولویت بالاتری از flavor دارد، امضای
+            // جداگانه‌ی Viewer را بی‌اثر می‌کرد. اگر هیچ کلیدی تنظیم نشده باشد
+            // (مثلاً CI بدون secret)، APK بدون امضا ساخته می‌شود تا Build نشکند؛
+            // چنین APK ای فقط برای تست داخلی قابل‌نصب است، نه انتشار در فروشگاه.
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        // Independently installable QA builds: app IDs are suffixed with .test,
+        // app data and inter-app policy broadcasts are isolated, and no production
+        // update endpoint is embedded. Official Release variants remain unchanged.
+        create("qa") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-TEST"
+            signingConfig = signingConfigs.getByName("debug")
+            manifestPlaceholders["appLabelSuffix"] = " — آزمایشی"
+            manifestPlaceholders["policyAppliedPermission"] = "com.example.bookapp.test.permission.POLICY_APPLIED"
+            manifestPlaceholders["policyAppliedAction"] = "com.example.bookapp.test.POLICY_APPLIED"
+            manifestPlaceholders["policyChangedPermission"] = "com.example.bookapp.test.permission.POLICY_CHANGED"
+            manifestPlaceholders["policyChangedAction"] = "com.example.bookapp.test.POLICY_CHANGED"
+            buildConfigField("Boolean", "IS_TEST_BUILD", "true")
+            buildConfigField("String", "UPDATE_SERVER_URLS", "\"\"")
+            buildConfigField("String", "POLICY_APPLIED_ACTION", "\"com.example.bookapp.test.POLICY_APPLIED\"")
+            buildConfigField("String", "POLICY_CHANGED_ACTION", "\"com.example.bookapp.test.POLICY_CHANGED\"")
+            buildConfigField("String", "POLICY_APPLIED_PERMISSION", "\"com.example.bookapp.test.permission.POLICY_APPLIED\"")
+            buildConfigField("String", "ADMIN_APPLICATION_ID", "\"com.example.bookapp.test\"")
+            buildConfigField("String", "VIEWER_APPLICATION_ID", "\"com.example.bookapp.viewer.test\"")
+            // Optional test endpoints live in TEST_UPDATE_SERVER_URLS, never in the production URL field.
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
+    }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
+}
+
+
+// لوگوهای سفارشی: پیش از ادغام منابع هر APK از پوشه custom_icons خوانده می‌شوند.
+// نام فایل‌ها: admin.png، viewer.png، admin_test.png و viewer_test.png.
+val prepareCustomLauncherIcons = tasks.register("prepareCustomLauncherIcons") {
+    val iconInputs = rootProject.file("custom_icons")
+    val generatedIcons = layout.buildDirectory.dir("generated/custom-icons")
+    inputs.dir(iconInputs)
+    outputs.dir(generatedIcons)
+    doLast {
+        exec {
+            commandLine(
+                "java",
+                "-Djava.awt.headless=true",
+                rootProject.file("tools/GenerateLauncherIcons.java").absolutePath,
+                iconInputs.absolutePath,
+                generatedIcons.get().asFile.absolutePath
+            )
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preBuild" || (name.startsWith("merge") && name.endsWith("Resources"))) {
+        dependsOn(prepareCustomLauncherIcons)
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.1")
+    implementation("androidx.activity:activity-compose:1.9.0")
+
+    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.1")
+
+    // Room (database)
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    implementation("io.coil-kt:coil-compose:2.6.0")
+    ksp("androidx.room:room-compiler:2.6.1")
+
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // تست‌های واحد (اجرا روی JVM با Robolectric، بدون نیاز به شبیه‌ساز/گوشی)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    testImplementation("androidx.test:core:1.5.0")
+    testImplementation("androidx.room:room-testing:2.6.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+}
