@@ -47,7 +47,9 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var planTitle by remember { mutableStateOf("") }
-    var taziehUid by remember { mutableStateOf("") }
+    var taziehOptions by remember { mutableStateOf(emptyList<TaziehEntity>()) }
+    var selectedTazieh by remember { mutableStateOf<TaziehEntity?>(null) }
+    var taziehMenuExpanded by remember { mutableStateOf(false) }
     var roleTitle by remember { mutableStateOf("") }
     var turnNumber by remember { mutableStateOf("1") }
     var turnText by remember { mutableStateOf("") }
@@ -70,6 +72,10 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                 }
             }
         }
+    }
+    LaunchedEffect(Unit) {
+        try { taziehOptions = db.taziehDao().getAll() }
+        catch (e: Exception) { message = "دریافت فهرست تعزیه‌ها ناموفق بود: ${e.message}" }
     }
     LaunchedEffect(refresh) { reload() }
 
@@ -155,18 +161,47 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                 Card {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("ایجاد دفتر جدید", fontWeight = FontWeight.Bold)
+                        Text("انتخاب تعزیه از کتابخانه", style = MaterialTheme.typography.labelLarge)
+                        Box {
+                            OutlinedButton(
+                                onClick = { taziehMenuExpanded = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = taziehOptions.isNotEmpty()
+                            ) {
+                                Text(selectedTazieh?.title ?: if (taziehOptions.isEmpty()) "تعزیه‌ای در کتابخانه پیدا نشد" else "برای انتخاب تعزیه لمس کنید")
+                            }
+                            DropdownMenu(
+                                expanded = taziehMenuExpanded,
+                                onDismissRequest = { taziehMenuExpanded = false },
+                                modifier = Modifier.fillMaxWidth(0.92f)
+                            ) {
+                                taziehOptions.forEach { item ->
+                                    DropdownMenuItem(
+                                        text = { Text(item.title) },
+                                        onClick = {
+                                            selectedTazieh = item
+                                            if (planTitle.isBlank()) planTitle = item.title
+                                            taziehMenuExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        if (selectedTazieh != null) {
+                            Text("تعزیه انتخاب‌شده: ${selectedTazieh!!.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         OutlinedTextField(planTitle, { planTitle = it }, label = { Text("عنوان دفتر / مجلس") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        OutlinedTextField(taziehUid, { taziehUid = it }, label = { Text("شناسه تعزیه (UID) موجود در کتابخانه") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        Button(enabled = planTitle.isNotBlank() && taziehUid.isNotBlank() && !busy, onClick = {
+                        Button(enabled = planTitle.isNotBlank() && selectedTazieh != null && !busy, onClick = {
                             scope.launch {
                                 busy = true
                                 try {
                                     val now = System.currentTimeMillis()
-                                    val id = dao.insertPlan(DirectorPlanEntity(uid = UUID.randomUUID().toString(), taziehUid = taziehUid.trim(), title = planTitle.trim(), createdAt = now, updatedAt = now))
+                                    val id = dao.insertPlan(DirectorPlanEntity(uid = UUID.randomUUID().toString(), taziehUid = selectedTazieh!!.uid, title = planTitle.trim(), createdAt = now, updatedAt = now))
                                     val versionId = dao.insertVersion(DirectorPlanVersionEntity(planId = id, versionNumber = 1, title = "نسخه اول", createdAt = now))
                                     selectedPlan = dao.plan(id)
                                     selectedVersion = dao.version(versionId)
                                     planTitle = ""
+                                    selectedTazieh = null
                                     message = "دفتر جدید ایجاد شد."
                                     reload()
                                 } catch (e: Exception) { message = "ایجاد دفتر ناموفق بود: ${e.message}" }
