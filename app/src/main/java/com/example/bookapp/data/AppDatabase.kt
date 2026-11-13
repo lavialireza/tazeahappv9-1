@@ -11,7 +11,7 @@ import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 
-const val APP_DATABASE_SCHEMA_VERSION = 17
+const val APP_DATABASE_SCHEMA_VERSION = 18
 
 @Database(
     entities = [
@@ -49,7 +49,16 @@ const val APP_DATABASE_SCHEMA_VERSION = 17
         GroupMemberEntity::class,
         PerformanceEntity::class,
         PerformanceAssignmentEntity::class,
-        PerformanceNoteEntity::class
+        PerformanceNoteEntity::class,
+        DirectorPlanEntity::class,
+        DirectorPlanVersionEntity::class,
+        DirectorSourceFileEntity::class,
+        DirectorTurnEntity::class,
+        DirectorParticipantEntity::class,
+        DirectorTextSegmentEntity::class,
+        DirectorStageCueEntity::class,
+        DirectorSessionEntity::class,
+        DirectorTurnProgressEntity::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -74,6 +83,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun glossaryDao(): GlossaryDao
     abstract fun encyclopediaDao(): EncyclopediaDao
     abstract fun performanceDao(): PerformanceDao
+    abstract fun directorDao(): DirectorDao
 
     companion object {
 
@@ -557,6 +567,64 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Version 18: add an isolated director-office workspace.
+         * Existing library, dialogue, rehearsal and performance data is untouched.
+         */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_plans` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uid` TEXT NOT NULL, `taziehUid` TEXT NOT NULL, `title` TEXT NOT NULL, `status` TEXT NOT NULL, `description` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)""")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_director_plans_uid` ON `director_plans` (`uid`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_plans_taziehUid` ON `director_plans` (`taziehUid`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_plans_status` ON `director_plans` (`status`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_plans_updatedAt` ON `director_plans` (`updatedAt`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_plan_versions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `planId` INTEGER NOT NULL, `versionNumber` INTEGER NOT NULL, `title` TEXT NOT NULL, `status` TEXT NOT NULL, `changeNotes` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `publishedAt` INTEGER, FOREIGN KEY(`planId`) REFERENCES `director_plans`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_plan_versions_planId` ON `director_plan_versions` (`planId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_director_plan_versions_planId_versionNumber` ON `director_plan_versions` (`planId`, `versionNumber`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_plan_versions_status` ON `director_plan_versions` (`status`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_source_files` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `planId` INTEGER NOT NULL, `originalName` TEXT NOT NULL, `mimeType` TEXT NOT NULL, `localPath` TEXT NOT NULL, `sha256` TEXT NOT NULL, `pageCount` INTEGER, `importMethod` TEXT NOT NULL, `extractedText` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`planId`) REFERENCES `director_plans`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_source_files_planId` ON `director_source_files` (`planId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_source_files_sha256` ON `director_source_files` (`sha256`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_source_files_createdAt` ON `director_source_files` (`createdAt`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_turns` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `versionId` INTEGER NOT NULL, `turnNumber` INTEGER NOT NULL, `sequenceIndex` INTEGER NOT NULL, `turnType` TEXT NOT NULL, `title` TEXT NOT NULL, `continuityGroupUid` TEXT NOT NULL, `isEnabled` INTEGER NOT NULL, `notes` TEXT NOT NULL, FOREIGN KEY(`versionId`) REFERENCES `director_plan_versions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_turns_versionId` ON `director_turns` (`versionId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_director_turns_versionId_sequenceIndex` ON `director_turns` (`versionId`, `sequenceIndex`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_turns_versionId_turnNumber` ON `director_turns` (`versionId`, `turnNumber`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_turns_continuityGroupUid` ON `director_turns` (`continuityGroupUid`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_turn_participants` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `turnId` INTEGER NOT NULL, `roleUid` TEXT NOT NULL, `roleTitle` TEXT NOT NULL, `orderIndex` INTEGER NOT NULL, `isLead` INTEGER NOT NULL, FOREIGN KEY(`turnId`) REFERENCES `director_turns`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_turn_participants_turnId` ON `director_turn_participants` (`turnId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_director_turn_participants_turnId_roleUid` ON `director_turn_participants` (`turnId`, `roleUid`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_turn_participants_roleUid` ON `director_turn_participants` (`roleUid`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_text_segments` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `turnId` INTEGER NOT NULL, `segmentIndex` INTEGER NOT NULL, `text` TEXT NOT NULL, `sectionUid` TEXT, `sourceFileId` INTEGER, `sourcePageStart` INTEGER, `sourcePageEnd` INTEGER, FOREIGN KEY(`turnId`) REFERENCES `director_turns`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(`sourceFileId`) REFERENCES `director_source_files`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_text_segments_turnId` ON `director_text_segments` (`turnId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_text_segments_sourceFileId` ON `director_text_segments` (`sourceFileId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_director_text_segments_turnId_segmentIndex` ON `director_text_segments` (`turnId`, `segmentIndex`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_text_segments_sectionUid` ON `director_text_segments` (`sectionUid`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_stage_cues` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `versionId` INTEGER NOT NULL, `turnId` INTEGER, `cueType` TEXT NOT NULL, `title` TEXT NOT NULL, `instruction` TEXT NOT NULL, `orderIndex` INTEGER NOT NULL, `blocksNextTurn` INTEGER NOT NULL, `continuationRoleUid` TEXT NOT NULL, FOREIGN KEY(`versionId`) REFERENCES `director_plan_versions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(`turnId`) REFERENCES `director_turns`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_stage_cues_versionId` ON `director_stage_cues` (`versionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_stage_cues_turnId` ON `director_stage_cues` (`turnId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_stage_cues_versionId_orderIndex` ON `director_stage_cues` (`versionId`, `orderIndex`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_sessions` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `planId` INTEGER NOT NULL, `versionId` INTEGER, `performanceUid` TEXT NOT NULL, `title` TEXT NOT NULL, `status` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `notes` TEXT NOT NULL, FOREIGN KEY(`planId`) REFERENCES `director_plans`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(`versionId`) REFERENCES `director_plan_versions`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_sessions_planId` ON `director_sessions` (`planId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_sessions_versionId` ON `director_sessions` (`versionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_sessions_startedAt` ON `director_sessions` (`startedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_sessions_status` ON `director_sessions` (`status`)")
+
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `director_turn_progress` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `turnId` INTEGER NOT NULL, `status` TEXT NOT NULL, `startedAt` INTEGER, `completedAt` INTEGER, `note` TEXT NOT NULL, FOREIGN KEY(`sessionId`) REFERENCES `director_sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(`turnId`) REFERENCES `director_turns`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_turn_progress_sessionId` ON `director_turn_progress` (`sessionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_turn_progress_turnId` ON `director_turn_progress` (`turnId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_director_turn_progress_sessionId_turnId` ON `director_turn_progress` (`sessionId`, `turnId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_turn_progress_status` ON `director_turn_progress` (`status`)")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -576,7 +644,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_13_14,
                         MIGRATION_14_15,
                         MIGRATION_15_16,
-                        MIGRATION_16_17
+                        MIGRATION_16_17,
+                        MIGRATION_17_18
                     )
                     .build()
 
