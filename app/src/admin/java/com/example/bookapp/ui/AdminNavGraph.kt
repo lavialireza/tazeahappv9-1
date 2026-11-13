@@ -66,6 +66,7 @@ private const val ROUTE_ENCYCLOPEDIA_GRAPH = "encyclopedia_graph"
 private const val ROUTE_PERFORMANCE_MANAGEMENT = "performance_management"
 private const val ROUTE_PERFORMANCE_GROUPS = "performance_groups"
 private const val ROUTE_PERFORMANCE_EXECUTION = "performance_execution"
+private const val ROUTE_DIRECTOR_OFFICE = "director_office"
 
 /**
  * مسیرهای Navigation که فقط مخصوص نسخه Admin هستند (مدیریت محتوا، ویرایشگر،
@@ -114,6 +115,13 @@ fun NavGraphBuilder.adminOnlyRoutes(
             db = db,
             onBack = { navController.popBackStack() },
             initialTab = 2
+        )
+    }
+
+    composable(ROUTE_DIRECTOR_OFFICE) {
+        DirectorOfficeScreen(
+            db = db,
+            onBack = { navController.popBackStack() }
         )
     }
 
