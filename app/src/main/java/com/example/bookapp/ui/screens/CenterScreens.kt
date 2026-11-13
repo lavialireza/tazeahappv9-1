@@ -379,13 +379,14 @@ private fun ResearchAction(title: String, subtitle: String, icon: ImageVector, o
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExecutionCenterScreen(showAdminActions: Boolean = true, onOpenGroups: () -> Unit, onOpenExecutionManagement: () -> Unit, onBack: () -> Unit) {
+fun ExecutionCenterScreen(showAdminActions: Boolean = true, onOpenGroups: () -> Unit, onOpenExecutionManagement: () -> Unit, onOpenDirectorOffice: () -> Unit = {}, onBack: () -> Unit) {
     Scaffold(topBar = { TopAppBar(title = { Text("مرکز اجرا") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("مدیریت چرخه آماده‌سازی، تمرین و اجرای تعزیه", style = MaterialTheme.typography.bodyMedium)
             if (showAdminActions) {
                 ResearchAction("مدیریت گروه‌ها و اعضا", "پرونده گروه، اعضا، شبیه‌خوان‌ها و سوابق", Icons.Filled.People, onOpenGroups, Color(0xFFDCE9E4))
                 ResearchAction("برنامه تمرین و اجرا", "زمان‌بندی، تخصیص نقش، یادداشت کارگردان و متن اجرای زنده", Icons.Filled.Event, onOpenExecutionManagement, Color(0xFFE8EDF8))
+                ResearchAction("دفتر معین البکا", "بارگذاری فایل نقش‌ها، تنظیم نوبت‌های جمعی و دستورهای صحنه", Icons.Filled.Description, onOpenDirectorOffice, Color(0xFFF4EBD7))
             } else {
                 Text("امکانات مدیریتی مرکز اجرا در نسخه مدیر فعال هستند. امکانات مطالعه و تمرین متن از کتابخانه در دسترس‌اند.", style = MaterialTheme.typography.bodyMedium)
             }

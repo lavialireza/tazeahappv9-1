@@ -414,6 +414,7 @@ fun AppNavigation(
                 showAdminActions = !publicViewer,
                 onOpenGroups = { if (!publicViewer) navController.navigate("performance_groups") },
                 onOpenExecutionManagement = { if (!publicViewer) navController.navigate("performance_execution") },
+                onOpenDirectorOffice = { if (!publicViewer) navController.navigate("director_office") },
                 onBack = { navController.popBackStack() }
             )
         }
