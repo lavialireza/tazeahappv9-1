@@ -1,0 +1,31 @@
+# این فایل را کپی کنید به‌عنوان local.properties (که در .gitignore است، هرگز commit نمی‌شود)
+# و مقادیر واقعی کلید امضای Release خودتان را داخلش بنویسید.
+#
+# ساخت کلید (یک‌بار، با keytool که همراه Java نصب است):
+#   keytool -genkey -v -keystore release.keystore -alias taziehapp -keyalg RSA -keysize 2048 -validity 10000
+#
+# سپس همین مقادیر را اینجا (یا به‌عنوان Secret در GitHub Actions) قرار دهید:
+
+RELEASE_STORE_FILE=/absolute/path/to/release.keystore
+RELEASE_STORE_PASSWORD=your-store-password
+RELEASE_KEY_ALIAS=taziehapp
+RELEASE_KEY_PASSWORD=your-key-password
+
+# اختیاری: کلید امضای جدا برای Viewer (اگر نگذارید، Viewer با همان کلید بالا امضا می‌شود)
+# RELEASE_VIEWER_STORE_FILE=/absolute/path/to/release-viewer.keystore
+# RELEASE_VIEWER_STORE_PASSWORD=your-viewer-store-password
+# RELEASE_VIEWER_KEY_ALIAS=taziehappviewer
+# RELEASE_VIEWER_KEY_PASSWORD=your-viewer-key-password
+
+# --------------------------------------------------------------------------
+# کلید امضای Policy دسترسی Viewer (RSA — جایگزین HMAC قدیمی).
+# یک‌بار بسازید (روی کامپیوتر خودتان، هرگز این خروجی‌ها را commit نکنید):
+#
+#   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out policy_private.pem
+#   openssl pkey -in policy_private.pem -outform DER | base64 -w0 > policy_private.b64.txt
+#   openssl pkey -in policy_private.pem -pubout -outform DER | base64 -w0 > policy_public.b64.txt
+#
+# محتوای policy_public.b64.txt را برای هر دو مقدار زیر بگذارید (باید یکسان باشند):
+POLICY_PUBLIC_KEY=paste-content-of-policy_public.b64.txt
+# محتوای policy_private.b64.txt را فقط اینجا بگذارید (هرگز در Viewer/کد/گیت):
+ADMIN_POLICY_PRIVATE_KEY=paste-content-of-policy_private.b64.txt

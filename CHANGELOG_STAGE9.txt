@@ -1,0 +1,9 @@
+Stage 9 - Publication and Export
+- Preserved legacy PDF export routes for role, tazieh and dialogue.
+- Added runtime authorization checks for all Viewer PDF export handlers.
+- Kept per-user admin-controlled output permissions: pdf, pdf.create, pdf.save and myRole.pdf.
+- Added DOCX export for the complete content hierarchy (RTL paragraphs).
+- Added versioned internal JSON export, separate from the unchanged external companion JSON contract.
+- Improved PDF footer with title/date/page number and unique safe filenames.
+- No Room schema, package IDs, signing, updater endpoints, secrets or release workflows changed.
+- Android Gradle build/runtime tests were not available in this environment.

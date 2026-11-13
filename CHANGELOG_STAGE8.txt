@@ -1,0 +1,10 @@
+Stage 8 - Performance and group management
+- Added private group/member management.
+- Added rehearsal/performance scheduling and lifecycle statuses.
+- Added primary/alternate role assignments linked by stable role UID.
+- Added director/rehearsal/cue/general notes with optional section UID anchors.
+- Added large-font live role text screen with assignment selection and version mismatch warning.
+- Added Room schema v15 and non-destructive migration 14->15.
+- Admin-only route; Viewer source set and access policy untouched.
+- Added normalization unit tests and Persian implementation documentation.
+- Android Gradle build was not available in this environment.

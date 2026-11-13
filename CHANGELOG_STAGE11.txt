@@ -1,0 +1,14 @@
+Stage 11 — QA, security and recovery hardening
+
+- Added read-only SQLite integrity_check, foreign_key_check, schema-version and required-table diagnostics.
+- Added Admin Settings entry for database health diagnostics; hidden from public Viewer.
+- Bumped portable personal-data backup format to v4 (not Room schema): correct Room schemaVersion metadata, canonical SHA-256 integrity, bounded input and structural validation.
+- Kept restore compatibility for backup formats v1-v3.
+- Corrected misleading “full backup” wording and documented data not included in the portable personal-data backup.
+- Improved backup save error reporting and restore merge explanation.
+- Added regression tests for tampered-backup rejection and database health checks.
+- Added tools/stage11_audit.py; 29/29 static contract checks passed in this environment.
+- No Room migration, signing key, package ID, production update URL, release workflow, or Viewer write policy was changed.
+- Android Gradle build and Robolectric tests were not run: no Gradle wrapper or installed Gradle is present in the source package/environment.
+- Hardened exported Viewer policy-change receiver with a dedicated signature-level permission; QA permission namespace is isolated.
+- Added AES-GCM backup crypto regression tests (round-trip, wrong password, fresh salt/IV, truncated input).

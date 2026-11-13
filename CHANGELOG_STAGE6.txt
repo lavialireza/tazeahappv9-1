@@ -1,0 +1,6 @@
+Stage 6 — Advanced Search & Text Comparison
+- Added glossary headword/spelling/meaning/source hits to global search results.
+- Added Persian-normalized line-level text diff with same/added/removed counts.
+- Kept independent user selection for both roles or both sections and side-by-side view.
+- Added JVM tests for diff behavior.
+- No database schema, migration, signing, updater, package ID, or release workflow changes.

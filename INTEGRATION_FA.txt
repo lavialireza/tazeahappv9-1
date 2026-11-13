@@ -1,0 +1,80 @@
+بسته پیاده‌سازی یکپارچه گفت‌وگوهای چندنقشی برای Admin و Viewer
+
+مبنای این بسته: پایگاه داده نسخه ۱۷ شما که ownerInstallationId را در DialogueEntity دارد.
+این بسته هیچ تغییری در نسخه پایگاه داده یا Migration ایجاد نمی‌کند.
+
+فایل‌های جایگزین / جدید
+-----------------------
+۱) جایگزین کامل:
+app/src/main/java/com/example/bookapp/ui/screens/SectionPickerItem.kt
+app/src/main/java/com/example/bookapp/ui/screens/DialogueBuilderScreen.kt
+app/src/main/java/com/example/bookapp/ui/screens/DialogueReaderScreen.kt
+app/src/main/java/com/example/bookapp/ui/screens/DialoguesScreen.kt
+
+۲) فایل‌های جدید:
+app/src/main/java/com/example/bookapp/data/DialogueRepository.kt
+app/src/main/java/com/example/bookapp/ui/DialogueFeatureRoutes.kt
+
+۳) DAO:
+محتوای DialogueDao_Replacement.txt را جایگزین کل interface DialogueDao در فایل
+app/src/main/java/com/example/bookapp/data/Dao.kt کنید. سایر DAOهای این فایل را تغییر ندهید.
+
+۴) فایل قدیمی Builder:
+فایل زیر دیگر نباید در source set مدیر باقی بماند، چون Builder اکنون مشترک است:
+app/src/admin/java/com/example/bookapp/ui/screens/DialogueBuilderScreen.kt
+آن را حذف کنید.
+
+اتصال مسیرها در AppNavigation.kt
+-------------------------------
+الف) دو بلوک قدیمی composable مربوط به ROUTE_DIALOGUES و ROUTE_DIALOGUE_READER را
+از AppNavigation.kt حذف کنید؛ این دو مسیر اکنون در DialogueFeatureRoutes.kt ثبت می‌شوند.
+
+ب) دقیقاً در همان محل (قبل از مسیر ROUTE_TAZIEH_GALLERY) این فراخوانی را قرار دهید:
+
+dialogueFeatureRoutes(
+    navController = navController,
+    db = db,
+    context = context,
+    publicViewer = publicViewer,
+    featureEnabled = { key -> featureEnabled(key) }
+)
+
+ج) ثابت‌های ROUTE_DIALOGUES و ROUTE_DIALOGUE_READER و ROUTE_DIALOGUE_BUILDER اگر پس از انتقال
+دیگر استفاده نمی‌شوند، می‌توان حذفشان کرد؛ باقی‌ماندن ثابت استفاده‌نشده خطای کامپایل ایجاد نمی‌کند.
+
+اتصال مسیرها در AdminNavGraph.kt
+--------------------------------
+بلوک composable(ROUTE_DIALOGUE_BUILDER) و ثابت ROUTE_DIALOGUE_BUILDER را از AdminNavGraph.kt
+حذف کنید. Builder دیگر Admin-only نیست و در مسیر مشترک ثبت می‌شود.
+سایر مسیرهای مدیریتی AdminNavGraph را دست نزنید.
+
+DialoguesScreen.kt و ViewerAccessPolicy.kt
+-----------------------------------------
+در بسته یک نسخه کامل DialoguesScreen.kt با پارامترهای canCreate، canEdit و canDelete قرار دارد.
+اگر نسخه فعلی شما همین پارامترها و رفتار مستقل مجوزها را دارد، می‌توانید همان را نگه دارید؛ در غیر این صورت فایل بسته را جایگزین کنید.
+طبق تأیید شما، اصلاحات ViewerAccessPolicy.kt قبلاً اعمال شده‌اند؛ آن را با نسخه قدیمی جایگزین نکنید.
+ViewerAccessPolicy باید مجوزهای dialogues.view/create/edit/delete/practice را داشته باشد.
+
+نکته درباره DialogueRoleSelectionEntity
+--------------------------------------
+توضیح KDoc قدیمی که می‌گوید همه نقش‌ها باید از یک نسخه باشند، دیگر درست نیست.
+فقط متن توضیح را اصلاح کنید؛ ساختار Entity و Migration را تغییر ندهید.
+
+رفتار پیاده‌سازی
+----------------
+- Admin همه گفت‌وگوهای تعزیه را می‌بیند و مدیریت می‌کند.
+- Viewer فقط گفت‌وگوهایی را می‌بیند که ownerInstallationId آن‌ها با شناسه نصب خودش برابر باشد.
+- ساخت گفت‌وگو در هر دو نسخه ممکن است، مشروط به مجوزهای Viewer.
+- برای هر نقش، نسخه آرشیو مستقلی انتخاب می‌شود؛ تطبیق نقش‌های نسخه‌ها با عنوان نرمال‌شده است.
+- در ذخیره‌سازی، roleId و versionUid واقعی همان نسخه نگهداری می‌شوند.
+- ترتیب انتخاب بخش‌ها به‌عنوان ترتیب اولیه نوبت‌ها حفظ می‌شود.
+- افزودن نوبت در صفحه خواندن فقط از نقش‌ها و نسخه‌های ثبت‌شده برای همان گفتگو ممکن است.
+- تغییر ترتیب، حذف نوبت، روابط پاسخ و نشانه‌های اجرایی در Viewer فقط پس از بررسی مالکیت گفتگو انجام می‌شود.
+- تمرین شخصی شامل نوبت‌های نقش انتخاب‌شده و پرسش‌هایی است که صریحاً پاسخ را از همان نقش انتظار دارند.
+- برای گفت‌وگوهای قدیمی فاقد ردیف‌های role selection، نسخه dialogue.versionUid به‌عنوان fallback استفاده می‌شود.
+
+ترتیب اعمال
+-----------
+ابتدا فایل‌های جایگزین و جدید را اضافه کنید؛ سپس DAO را جایگزین کنید؛ در پایان فقط دو اتصال
+Navigation بالا را انجام دهید و مسیر Builder را از AdminNavGraph حذف کنید.
+طبق توافق، در این مرحله QA اجرا نکنید؛ ساخت و QA پس از تکمیل همه تغییرات انجام شود.

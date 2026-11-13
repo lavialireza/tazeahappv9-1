@@ -1,0 +1,6 @@
+Stage 10 — AI-assisted research tools
+- Added offline structure/repetition analysis, speaker-marker suggestions, glossary candidates and approximate archive search.
+- Added optional Android speech-recognition handoff (fa-IR).
+- Added per-user AI master switch and granular signed Viewer permissions; AI defaults OFF.
+- No database migration, release signing, package ID, updater endpoint or workflow changes.
+- OCR for scanned Persian/Arabic documents and true ML/LLM semantic embeddings remain future work.
