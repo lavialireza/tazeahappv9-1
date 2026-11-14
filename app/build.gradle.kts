@@ -312,7 +312,7 @@ tasks.configureEach {
 
 dependencies {
     // PDF text extraction is Admin-only; Viewer APK does not package this dependency.
-    adminImplementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    add("adminImplementation", "com.tom-roush:pdfbox-android:2.0.27.0")
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.1")
