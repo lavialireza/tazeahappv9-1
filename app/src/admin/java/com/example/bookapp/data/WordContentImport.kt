@@ -19,7 +19,8 @@ data class WordImportPreview(
     val sections: Int = 0,
     val paragraphs: Int = 0,
     val existingItems: Int = 0,
-    val newItems: Int = 0
+    val newItems: Int = 0,
+    val changedSections: Int = 0
 )
 
 private data class WordParagraph(val style: String, val text: String)
@@ -133,7 +134,8 @@ suspend fun previewWordImport(db: AppDatabase, bytes: ByteArray): Pair<WordImpor
         sections = jsonPreview.sections,
         paragraphs = paragraphs,
         existingItems = jsonPreview.existingItems,
-        newItems = jsonPreview.newItems
+        newItems = jsonPreview.newItems,
+        changedSections = jsonPreview.changedSections
     )
     return preview to json
 }
