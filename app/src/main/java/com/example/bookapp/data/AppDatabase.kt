@@ -1165,8 +1165,10 @@ internal suspend fun mergeContentFromJson(
                     // Only sections owned by this source are candidates for removal.
                     if (syncContext == null) {
                         db.sectionDao()
-                            .getBySourceAndRole(sourceUid, roleId)
-                            .filter { it.uid !in seenSectionUids }
+                            .getByRole(roleId)
+                            // Remove obsolete sections owned by any prior revision of
+                            // this majlis. Empty sourceUid denotes user-created/local data.
+                            .filter { it.sourceUid.isNotBlank() && it.uid !in seenSectionUids }
                             .forEach { db.sectionDao().delete(it.id) }
                     }
                 }
