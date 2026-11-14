@@ -86,3 +86,33 @@ def test_next_content_filename_starts_at_one_when_dir_empty(tmp_path):
     content_dir = str(tmp_path / "content")
     output_path = docx_to_json.next_content_filename(content_dir, "test.docx")
     assert os.path.basename(output_path) == "001_test.json"
+
+
+def test_same_source_name_reuses_existing_output(tmp_path):
+    content_dir = str(tmp_path / "content")
+    os.makedirs(content_dir)
+    expected = os.path.join(content_dir, "007_ashura.json")
+    open(expected, "w").close()
+    actual = docx_to_json.next_content_filename(content_dir, "ashura.docx")
+    assert actual == expected
+
+
+def test_stable_uids_match_kotlin_hash_contract(sample_docx_path):
+    import hashlib
+
+    data = docx_to_json.add_stable_uids(docx_to_json.convert(sample_docx_path))
+    field = data[0]
+    expected_field_uid = hashlib.sha256("field|root|اصفهان".encode("utf-8")).hexdigest()
+    assert field["uid"] == expected_field_uid
+    tazieh = field["taziehs"][0]
+    role = tazieh["roles"][0]
+    section = role["sections"][1]
+    expected_section_uid = hashlib.sha256(
+        f"section|{role['uid']}|شهادت|1".encode("utf-8")
+    ).hexdigest()
+    assert section["uid"] == expected_section_uid
+
+
+def test_default_output_targets_admin_assets():
+    normalized = os.path.normpath(docx_to_json.DEFAULT_CONTENT_DIR)
+    assert normalized.endswith(os.path.join("app", "src", "admin", "assets", "content"))

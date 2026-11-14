@@ -32,7 +32,7 @@ from docx import Document
 
 # پوشه‌ی پیش‌فرض محتوای تدریجی برنامه (نسبت به مسیر همین اسکریپت)
 DEFAULT_CONTENT_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "app", "src", "main", "assets", "content"
+    os.path.dirname(os.path.abspath(__file__)), "..", "app", "src", "admin", "assets", "content"
 )
 
 
@@ -99,9 +99,13 @@ def convert(docx_path: str) -> list:
     return fields
 
 
-def stable_uid(kind: str, parent_uid: str, title: str, occurrence: int = 0) -> str:
+def stable_uid(kind: str, parent_uid: str, title: str, occurrence: int | None = None) -> str:
+    # Must match Kotlin ContentUid.derived / derivedWithIndex exactly.
     normalized = re.sub(r"\s+", " ", title.strip())
-    return hashlib.sha256(f"{kind}|{parent_uid}|{normalized}|{occurrence}".encode("utf-8")).hexdigest()
+    value = f"{kind}|{parent_uid}|{normalized}"
+    if occurrence is not None:
+        value += f"|{occurrence}"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 def add_stable_uids(fields: list) -> list:
     for field in fields:
@@ -110,12 +114,9 @@ def add_stable_uids(fields: list) -> list:
             tazieh["uid"] = stable_uid("tazieh", field["uid"], tazieh["title"])
             for role in tazieh.get("roles", []):
                 role["uid"] = stable_uid("role", tazieh["uid"], role["title"])
-                occurrences = {}
-                for section in role.get("sections", []):
-                    key = re.sub(r"\s+", " ", section["title"].strip())
-                    occurrence = occurrences.get(key, 0)
-                    occurrences[key] = occurrence + 1
-                    section["uid"] = stable_uid("section", role["uid"], section["title"], occurrence)
+                for section_index, section in enumerate(role.get("sections", [])):
+                    # Kotlin uses the section's absolute order index, not title occurrence.
+                    section["uid"] = stable_uid("section", role["uid"], section["title"], section_index)
     return fields
 
 
@@ -125,14 +126,16 @@ def next_content_filename(content_dir: str, input_path: str) -> str:
     os.makedirs(content_dir, exist_ok=True)
 
     existing = [f for f in os.listdir(content_dir) if re.match(r"^\d{3}_.*\.json$", f)]
-    next_num = 1
-    for f in existing:
-        n = int(f[:3])
-        if n >= next_num:
-            next_num = n + 1
-
     base_name = os.path.splitext(os.path.basename(input_path))[0]
     slug = re.sub(r"[^\w\-]+", "-", base_name).strip("-") or "majles"
+
+    # Re-converting the same source filename updates its own JSON, rather than
+    # creating another copy of the same majlis with a higher sequence number.
+    same_source = next((f for f in existing if re.match(rf"^\d{{3}}_{re.escape(slug)}\.json$", f)), None)
+    if same_source:
+        return os.path.join(content_dir, same_source)
+
+    next_num = max((int(f[:3]) for f in existing), default=0) + 1
     output_name = f"{next_num:03d}_{slug}.json"
     return os.path.join(content_dir, output_name)
 
