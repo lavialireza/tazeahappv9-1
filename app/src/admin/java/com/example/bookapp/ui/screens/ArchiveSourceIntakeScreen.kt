@@ -35,6 +35,8 @@ import com.example.bookapp.data.PdfPageRasterizer
 import com.example.bookapp.data.SourceReviewWorkflow
 import com.example.bookapp.data.SourceIntakePreview
 import com.example.bookapp.data.SourceIntakeResult
+import com.example.bookapp.data.ContentUid
+import com.example.bookapp.data.ensureStableContentUids
 import com.example.bookapp.domain.repository.ArchiveRepository
 import kotlinx.coroutines.launch
 
@@ -60,8 +62,25 @@ fun ArchiveSourceIntakeScreen(
     var renderedPagePath by remember { mutableStateOf<String?>(null) }
     var reviewedText by remember { mutableStateOf("") }
     var reviewerNote by remember { mutableStateOf("") }
+    var fieldTitle by remember { mutableStateOf("") }
+    var majlisTitle by remember { mutableStateOf("") }
+    var roleTitle by remember { mutableStateOf("") }
+    var sectionTitle by remember { mutableStateOf("متن استخراج‌شده") }
+    var pendingContentJson by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { taziehs = db.taziehDao().getAll() }
+    val jsonExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val json = pendingContentJson
+        if (uri != null && json != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { it.write(json) }
+                    ?: error("فایل خروجی باز نشد")
+                message = "JSON استاندارد با شناسه‌های پایدار ذخیره شد؛ فایل را در بخش مدیریت محتوا بازبینی و وارد کنید."
+            }.onFailure { message = it.message ?: "ذخیره JSON ناموفق بود" }
+        }
+        pendingContentJson = null
+    }
+
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
@@ -114,11 +133,11 @@ fun ArchiveSourceIntakeScreen(
         Button(
             onClick = { picker.launch(arrayOf(
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "application/pdf"
+                "application/pdf", "text/plain", "image/jpeg", "image/png", "image/*", "application/octet-stream"
             )) },
             enabled = !busy && versionUid.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
-        ) { Text("انتخاب فایل Word یا PDF") }
+        ) { Text("انتخاب فایل Word، PDF، TXT یا تصویر") }
         if (busy) CircularProgressIndicator()
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
         result?.let { p ->
@@ -134,6 +153,14 @@ fun ArchiveSourceIntakeScreen(
                 Text("پاورقی‌های استخراج‌شده برای تطبیق: ${p.extractedFootnotes}")
                 Text("تصاویر استخراج‌شده: ${p.extractedMediaPaths.size}")
                 Text("مسیر پیش‌نمایش: ${p.extractedPreviewPath ?: "ایجاد نشد"}")
+            }
+            if (p.mimeType.startsWith("image/")) {
+                val imageBitmap = remember(p.storedSourcePath) { BitmapFactory.decodeFile(p.storedSourcePath) }
+                imageBitmap?.let {
+                    Text("پیش‌نمایش تصویر اصلی", style = MaterialTheme.typography.titleSmall)
+                    Image(bitmap = it.asImageBitmap(), contentDescription = "تصویر منبع تعزیه", modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp))
+                }
+                Text("تصویر اصلی با حفظ فایل ذخیره شده است؛ برای استخراج متن به مدل OCR فارسی/عربی نیاز دارد.", style = MaterialTheme.typography.bodySmall)
             }
             if (p.mimeType == "application/pdf") {
                 OutlinedTextField(value = pdfPage, onValueChange = { pdfPage = it.filter(Char::isDigit).take(4) }, label = { Text("شماره صفحه برای پیش‌نمایش OCR") }, singleLine = true)
@@ -171,6 +198,41 @@ fun ArchiveSourceIntakeScreen(
                             .onFailure { message = it.message ?: "تأیید بازبینی ناموفق بود." }
                     }, modifier = Modifier.weight(1f)) { Text("تأیید بازبینی") }
                 }
+                Text("تبدیل متن بازبینی‌شده به JSON استاندارد", style = MaterialTheme.typography.titleSmall)
+                OutlinedTextField(fieldTitle, { fieldTitle = it }, label = { Text("نام زمینه") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(majlisTitle, { majlisTitle = it }, label = { Text("نام مجلس") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(roleTitle, { roleTitle = it }, label = { Text("نام نقش") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(sectionTitle, { sectionTitle = it }, label = { Text("عنوان بخش") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Button(onClick = {
+                    runCatching {
+                        require(reviewedText.isNotBlank()) { "متن بازبینی‌شده خالی است." }
+                        val json = if (reviewedText.trimStart().startsWith("[")) {
+                            ensureStableContentUids(org.json.JSONArray(reviewedText)).toString(2)
+                        } else {
+                            require(fieldTitle.isNotBlank() && majlisTitle.isNotBlank() && roleTitle.isNotBlank() && sectionTitle.isNotBlank()) {
+                                "برای متن خام، نام زمینه، مجلس، نقش و بخش را تکمیل کنید."
+                            }
+                            val fieldUid = ContentUid.derived("field", "root", fieldTitle)
+                            val majlisUid = ContentUid.derived("tazieh", fieldUid, majlisTitle)
+                            val roleUid = ContentUid.derived("role", majlisUid, roleTitle)
+                            val sectionUid = ContentUid.derivedWithIndex("section", roleUid, sectionTitle, 0)
+                            val section = org.json.JSONObject()
+                                .put("title", sectionTitle).put("uid", sectionUid).put("content", reviewedText)
+                            val role = org.json.JSONObject().put("title", roleTitle).put("uid", roleUid)
+                                .put("sections", org.json.JSONArray().put(section))
+                            val majlis = org.json.JSONObject().put("title", majlisTitle).put("uid", majlisUid)
+                                .put("roles", org.json.JSONArray().put(role))
+                            val field = org.json.JSONObject().put("title", fieldTitle).put("uid", fieldUid)
+                                .put("taziehs", org.json.JSONArray().put(majlis))
+                            org.json.JSONArray().put(field).toString(2)
+                        }
+                        pendingContentJson = json
+                        jsonExporter.launch("${majlisTitle.ifBlank { "tazieh-content" }}.json")
+                    }.onFailure { message = it.message ?: "ساخت JSON ناموفق بود." }
+                }, enabled = reviewedText.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                    Text("ساخت و ذخیره فایل JSON")
+                }
+
             }
             p.warnings.forEach { Text("هشدار: $it", color = MaterialTheme.colorScheme.error) }
         }

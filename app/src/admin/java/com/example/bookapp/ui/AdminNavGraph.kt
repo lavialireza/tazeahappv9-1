@@ -32,6 +32,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.composable
 import androidx.room.withTransaction
 import com.example.bookapp.data.AppDatabase
+import com.example.bookapp.data.ContentUid
 import com.example.bookapp.data.ContentImportPreview
 import com.example.bookapp.data.ContentHealthReport
 import com.example.bookapp.data.buildDetailedContentHealthReport
@@ -46,6 +47,7 @@ import com.example.bookapp.data.WordImportPreview
 import com.example.bookapp.data.importWordContent
 import com.example.bookapp.data.previewWordImport
 import com.example.bookapp.data.readWordFromUri
+import com.example.bookapp.data.wordToCompatibleJson
 import com.example.bookapp.data.Prefs
 import com.example.bookapp.data.syncLocalContentFiles
 import com.example.bookapp.data.syncRemoteContent
@@ -245,21 +247,58 @@ fun NavGraphBuilder.adminOnlyRoutes(
         }
 
         val importLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            if (uri != null) scope.launch {
+            ActivityResultContracts.OpenMultipleDocuments()
+        ) { uris ->
+            if (uris.isNotEmpty()) scope.launch {
                 busy = true
                 try {
-                    val json = readJsonFromUri(context, uri)
+                    val combinedFields = linkedMapOf<String, org.json.JSONObject>()
+                    val failures = mutableListOf<String>()
+                    uris.forEachIndexed { index, uri ->
+                        try {
+                            val name = context.contentResolver.query(
+                                uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null
+                            )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }.orEmpty()
+                            val mime = context.contentResolver.getType(uri).orEmpty()
+                            val isDocx = name.endsWith(".docx", true) || mime.contains("wordprocessingml")
+                            val json = if (isDocx) {
+                                wordToCompatibleJson(readWordFromUri(context, uri))
+                            } else {
+                                readJsonFromUri(context, uri)
+                            }
+                            val root = org.json.JSONArray(json)
+                            for (i in 0 until root.length()) {
+                                val incomingField = root.getJSONObject(i)
+                                val key = ContentUid.normalize(incomingField.optString("title")).lowercase()
+                                val existingField = combinedFields[key]
+                                if (existingField == null) {
+                                    combinedFields[key] = org.json.JSONObject(incomingField.toString())
+                                } else {
+                                    val incomingUid = incomingField.optString("uid")
+                                    val existingUid = existingField.optString("uid")
+                                    if (incomingUid.isNotBlank() && existingUid.isNotBlank() && incomingUid != existingUid) {
+                                        failures += "شناسه زمینه «${incomingField.optString("title")}» بین فایل‌های انتخابی متفاوت است."
+                                    } else {
+                                        val targetTaziehs = existingField.optJSONArray("taziehs") ?: org.json.JSONArray().also { existingField.put("taziehs", it) }
+                                        val incomingTaziehs = incomingField.optJSONArray("taziehs") ?: org.json.JSONArray()
+                                        for (j in 0 until incomingTaziehs.length()) targetTaziehs.put(incomingTaziehs.getJSONObject(j))
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            failures += "فایل ${index + 1}: ${e.message ?: "قابل خواندن نیست"}"
+                        }
+                    }
+                    if (combinedFields.isEmpty()) error(failures.joinToString("؛ ").ifBlank { "هیچ فایل معتبری انتخاب نشد" })
+                    val combined = org.json.JSONArray().apply { combinedFields.values.forEach { put(it) } }
+                    val json = combined.toString(2)
                     val preview = previewContentImport(db, json)
-                    pendingImportJson = if (preview.valid) json else null
-                    importPreview = preview
+                    val finalPreview = if (failures.isEmpty()) preview else preview.copy(errors = preview.errors + failures, valid = false)
+                    pendingImportJson = if (finalPreview.valid) json else null
+                    importPreview = finalPreview
                 } catch (e: Exception) {
                     pendingImportJson = null
-                    importPreview = ContentImportPreview(
-                        false,
-                        listOf("خطا در خواندن فایل: ${e.message ?: "خطای نامشخص"}")
-                    )
+                    importPreview = ContentImportPreview(false, listOf("خطا در خواندن فایل‌ها: ${e.message ?: "خطای نامشخص"}"))
                 } finally {
                     busy = false
                 }
@@ -395,7 +434,11 @@ fun NavGraphBuilder.adminOnlyRoutes(
             },
             onImportJson = {
                 importLauncher.launch(
-                    arrayOf("application/json", "text/json", "text/plain")
+                    arrayOf(
+                        "application/json", "text/json", "text/plain",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "application/octet-stream"
+                    )
                 )
             },
             onExportJson = {
@@ -408,7 +451,7 @@ fun NavGraphBuilder.adminOnlyRoutes(
                 wordExportLauncher.launch("Majmooe-Tazieh.docx")
             },
             onImportWord = {
-                wordImportLauncher.launch(
+                importLauncher.launch(
                     arrayOf(
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         "application/octet-stream"
@@ -507,6 +550,7 @@ fun NavGraphBuilder.adminOnlyRoutes(
                             Spacer(Modifier.height(8.dp))
                             Text("موجود/قابل‌به‌روزرسانی: ${preview.existingItems}")
                             Text("جدید: ${preview.newItems}")
+                            Text("بخش‌های دارای متن تغییرکرده: ${preview.changedSections}")
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 "فقط ساختار محتوا و متن بخش‌ها وارد می‌شود؛ " +
@@ -531,7 +575,8 @@ fun NavGraphBuilder.adminOnlyRoutes(
                                         reload()
                                         message =
                                             "ورود JSON با موفقیت انجام شد: " +
-                                                "${result.newItems} مورد جدید و " +
+                                                "${result.newItems} مورد جدید، " +
+                                                "${result.changedSections} بخش با متن تغییرکرده و " +
                                                 "${result.existingItems} مورد موجود/قابل‌به‌روزرسانی."
                                     } catch (e: Exception) {
                                         message =
@@ -620,7 +665,8 @@ fun NavGraphBuilder.adminOnlyRoutes(
                                         reload()
                                         message =
                                             "ورود Word با موفقیت انجام شد: " +
-                                                "${result.newItems} مورد جدید و " +
+                                                "${result.newItems} مورد جدید، " +
+                                                "${result.changedSections} بخش با متن تغییرکرده و " +
                                                 "${result.existingItems} مورد موجود/قابل‌به‌روزرسانی."
                                     } catch (e: Exception) {
                                         message =

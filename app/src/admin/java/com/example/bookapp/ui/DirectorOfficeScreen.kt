@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.room.withTransaction
 import com.example.bookapp.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -41,6 +42,7 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
     var plans by remember { mutableStateOf(emptyList<DirectorPlanEntity>()) }
     var selectedPlan by remember { mutableStateOf<DirectorPlanEntity?>(null) }
     var selectedVersion by remember { mutableStateOf<DirectorPlanVersionEntity?>(null) }
+    var planVersions by remember { mutableStateOf(emptyList<DirectorPlanVersionEntity>()) }
     var sources by remember { mutableStateOf(emptyList<DirectorSourceFileEntity>()) }
     var turns by remember { mutableStateOf(emptyList<DirectorTurnEntity>()) }
     var previewText by remember { mutableStateOf("") }
@@ -48,6 +50,7 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var planTitle by remember { mutableStateOf("") }
     var taziehOptions by remember { mutableStateOf(emptyList<TaziehEntity>()) }
+    var fieldOptions by remember { mutableStateOf(emptyList<FieldEntity>()) }
     var selectedTazieh by remember { mutableStateOf<TaziehEntity?>(null) }
     var taziehMenuExpanded by remember { mutableStateOf(false) }
     var roleTitle by remember { mutableStateOf("") }
@@ -65,6 +68,7 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                 selectedPlan = dao.plan(current.id)
                 sources = dao.sourceFiles(current.id)
                 val versions = dao.versions(current.id)
+                planVersions = versions
                 selectedVersion = selectedVersion?.let { old -> versions.firstOrNull { it.id == old.id } } ?: versions.firstOrNull()
                 selectedVersion?.let {
                     turns = dao.turns(it.id)
@@ -74,8 +78,10 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
         }
     }
     LaunchedEffect(Unit) {
-        try { taziehOptions = db.taziehDao().getAll() }
-        catch (e: Exception) { message = "دریافت فهرست تعزیه‌ها ناموفق بود: ${e.message}" }
+        try {
+            taziehOptions = db.taziehDao().getAll()
+            fieldOptions = db.fieldDao().getAll()
+        } catch (e: Exception) { message = "دریافت فهرست زمینه‌ها و تعزیه‌ها ناموفق بود: ${e.message}" }
     }
     LaunchedEffect(refresh) { reload() }
 
@@ -87,50 +93,74 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                     val importedSources = mutableListOf<Pair<Long, DirectorSourceFileEntity>>()
                     uris.forEach { uri ->
                         val imported = withContext(Dispatchers.IO) { importDirectorSource(context, uri, selectedPlan!!.id) }
-                        val sourceId = dao.insertSourceFile(imported)
-                        importedSources += sourceId to imported
+                        val alreadyStored = dao.sourceFiles(selectedPlan!!.id).any { it.sha256 == imported.sha256 }
+                        if (alreadyStored) {
+                            File(imported.localPath).delete()
+                        } else {
+                            val sourceId = dao.insertSourceFile(imported)
+                            importedSources += sourceId to imported
+                        }
                     }
-                    val parsedFiles = importedSources.mapNotNull { (sourceId, source) ->
-                        val role = source.originalName.substringBeforeLast('.', source.originalName).replace('_', ' ').trim()
-                        val parsed = parseNumberedDirectorTurns(source.extractedText)
-                        if (parsed.isEmpty()) null else Triple(sourceId, role.ifBlank { "نقش بدون نام" }, parsed)
+                    val targetTazieh = db.taziehDao().getByUid(selectedPlan!!.taziehUid)
+                    val targetTaziehTitle = targetTazieh?.title.orEmpty()
+                    val targetFieldTitle = targetTazieh?.let { target ->
+                        db.fieldDao().getAll().firstOrNull { it.id == target.fieldId }?.title
+                    }.orEmpty()
+                    val parsedEntries = importedSources.flatMap { (sourceId, source) ->
+                        parseDirectorSourceTurns(sourceId, source, targetFieldTitle, targetTaziehTitle)
                     }
                     var createdTurns = 0
                     var collectiveTurns = 0
                     var mismatchedTurns = 0
-                    if (parsedFiles.isNotEmpty()) {
-                        val grouped = linkedMapOf<Int, MutableList<Triple<Long, String, String>>>()
-                        parsedFiles.forEach { (sourceId, role, parsed) ->
-                            parsed.forEach { (number, text) -> grouped.getOrPut(number) { mutableListOf() }.add(Triple(sourceId, role, text)) }
-                        }
-                        var nextIndex = (dao.turns(selectedVersion!!.id).maxOfOrNull { it.sequenceIndex } ?: 0) + 1
-                        grouped.toSortedMap().forEach { (number, entries) ->
-                            val distinctRoles = entries.map { it.second }.distinct()
-                            val isCollective = distinctRoles.size > 1
-                            val distinctTexts = entries.map { it.third.trim().replace(Regex("\\s+"), " ") }.distinct()
-                            val note = if (distinctTexts.size > 1) "اختلاف متن برای شماره مشترک؛ نیازمند بازبینی مدیر" else ""
-                            if (distinctTexts.size > 1) mismatchedTurns++
-                            if (isCollective) collectiveTurns++
-                            val turnId = dao.insertTurn(DirectorTurnEntity(
-                                versionId = selectedVersion!!.id,
-                                turnNumber = number,
-                                sequenceIndex = nextIndex++,
-                                turnType = if (isCollective) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
-                                title = if (isCollective) "نوبت جمعی: ${distinctRoles.joinToString("، ")}" else distinctRoles.firstOrNull().orEmpty(),
-                                notes = note
+                    var nextSequence = (dao.turns(selectedVersion!!.id).maxOfOrNull { it.sequenceIndex } ?: 0) + 1
+                    var nextUnnumberedTurn = (dao.turns(selectedVersion!!.id).maxOfOrNull { it.turnNumber } ?: 0) + 1
+
+                    suspend fun saveTurn(number: Int, entries: List<DirectorSourceTurn>) {
+                        if (entries.isEmpty()) return
+                        val distinctRoles = entries.map { it.roleTitle }.distinctBy { ContentUid.normalize(it) }
+                        val isCollective = distinctRoles.size > 1
+                        val distinctTexts = entries.map { it.text.trim().replace(Regex("\\s+"), " ") }.distinct()
+                        val note = if (distinctTexts.size > 1) "اختلاف متن برای شماره مشترک؛ نیازمند بازبینی مدیر" else ""
+                        if (distinctTexts.size > 1) mismatchedTurns++
+                        if (isCollective) collectiveTurns++
+                        val turnId = dao.insertTurn(DirectorTurnEntity(
+                            versionId = selectedVersion!!.id,
+                            turnNumber = number,
+                            sequenceIndex = nextSequence++,
+                            turnType = if (isCollective) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
+                            title = if (isCollective) "نوبت جمعی: ${distinctRoles.joinToString("، ")}" else distinctRoles.firstOrNull().orEmpty(),
+                            notes = note
+                        ))
+                        distinctRoles.forEachIndexed { index, roleName ->
+                            val linkedRole = resolveDirectorRole(db, selectedPlan!!.taziehUid, roleName)
+                            dao.insertParticipant(DirectorParticipantEntity(
+                                turnId = turnId,
+                                roleUid = linkedRole?.uid ?: "unmatched-${ContentUid.sha256("${selectedPlan!!.taziehUid}|${ContentUid.normalize(roleName)}")}",
+                                roleTitle = linkedRole?.title ?: roleName,
+                                orderIndex = index,
+                                isLead = index == 0
                             ))
-                            entries.distinctBy { it.second }.forEachIndexed { index, entry ->
-                                dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = "source-${entry.first}", roleTitle = entry.second, orderIndex = index, isLead = index == 0))
-                            }
-                            entries.forEachIndexed { index, entry ->
-                                dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = index, text = entry.third, sourceFileId = entry.first))
-                            }
-                            createdTurns++
                         }
+                        entries.forEachIndexed { index, entry ->
+                            dao.insertTextSegment(DirectorTextSegmentEntity(
+                                turnId = turnId, segmentIndex = index, text = entry.text, sourceFileId = entry.sourceId
+                            ))
+                        }
+                        createdTurns++
+                    }
+
+                    // Numbered files from separate roles are joined by their shared turn number.
+                    parsedEntries.filter { it.turnNumber != null }
+                        .groupBy { it.turnNumber!! }.toSortedMap()
+                        .forEach { (number, entries) -> saveTurn(number, entries) }
+
+                    // Full-structure DOCX and unnumbered role files retain source/file order.
+                    parsedEntries.filter { it.turnNumber == null }.forEach { entry ->
+                        saveTurn(nextUnnumberedTurn++, listOf(entry))
                     }
                     previewText = importedSources.firstOrNull()?.second?.extractedText.orEmpty()
-                    message = if (parsedFiles.isEmpty()) {
-                        "${importedSources.size} فایل اصلی ذخیره شد؛ از فایل‌های متنی قابل استخراج، نوبت شماره‌دار پیدا نشد. PDF در این نسخه فقط ذخیره می‌شود."
+                    message = if (parsedEntries.isEmpty()) {
+                        "${importedSources.size} فایل منبع ذخیره شد؛ متن ساختاریافته/پاراگرافی و نوبت‌های شماره‌دار بررسی شد. PDF اسکن‌شده و تصویر به OCR نیاز دارند."
                     } else {
                         "$createdTurns نوبت ساخته شد؛ $collectiveTurns نوبت جمعی شناسایی شد. ${if (mismatchedTurns > 0) "$mismatchedTurns شماره با اختلاف متن نیازمند بازبینی است." else "اختلاف متن شناسایی نشد."}"
                     }
@@ -177,7 +207,7 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                             ) {
                                 taziehOptions.forEach { item ->
                                     DropdownMenuItem(
-                                        text = { Text(item.title) },
+                                        text = { Text("${fieldOptions.firstOrNull { it.id == item.fieldId }?.title ?: "زمینه نامشخص"}  ←  ${item.title}") },
                                         onClick = {
                                             selectedTazieh = item
                                             if (planTitle.isBlank()) planTitle = item.title
@@ -188,21 +218,31 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                             }
                         }
                         if (selectedTazieh != null) {
-                            Text("تعزیه انتخاب‌شده: ${selectedTazieh!!.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("زمینه: ${fieldOptions.firstOrNull { it.id == selectedTazieh!!.fieldId }?.title ?: "نامشخص"} | مجلس: ${selectedTazieh!!.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         OutlinedTextField(planTitle, { planTitle = it }, label = { Text("عنوان دفتر / مجلس") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                         Button(enabled = planTitle.isNotBlank() && selectedTazieh != null && !busy, onClick = {
                             scope.launch {
                                 busy = true
                                 try {
-                                    val now = System.currentTimeMillis()
-                                    val id = dao.insertPlan(DirectorPlanEntity(uid = UUID.randomUUID().toString(), taziehUid = selectedTazieh!!.uid, title = planTitle.trim(), createdAt = now, updatedAt = now))
-                                    val versionId = dao.insertVersion(DirectorPlanVersionEntity(planId = id, versionNumber = 1, title = "نسخه اول", createdAt = now))
-                                    selectedPlan = dao.plan(id)
-                                    selectedVersion = dao.version(versionId)
-                                    planTitle = ""
-                                    selectedTazieh = null
-                                    message = "دفتر جدید ایجاد شد."
+                                    val existingPlan = dao.plansForTazieh(selectedTazieh!!.uid).firstOrNull()
+                                    if (existingPlan != null) {
+                                        selectedPlan = existingPlan
+                                        planVersions = dao.versions(existingPlan.id)
+                                        selectedVersion = planVersions.firstOrNull()
+                                        sources = dao.sourceFiles(existingPlan.id)
+                                        turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
+                                        message = "برای این مجلس دفتر اصلی از قبل وجود دارد؛ همان دفتر باز شد. نسخه‌های آن را مدیریت کنید."
+                                    } else {
+                                        val now = System.currentTimeMillis()
+                                        val id = dao.insertPlan(DirectorPlanEntity(uid = UUID.randomUUID().toString(), taziehUid = selectedTazieh!!.uid, title = planTitle.trim(), createdAt = now, updatedAt = now))
+                                        val versionId = dao.insertVersion(DirectorPlanVersionEntity(planId = id, versionNumber = 1, title = "نسخه اول", createdAt = now))
+                                        selectedPlan = dao.plan(id)
+                                        selectedVersion = dao.version(versionId)
+                                        planTitle = ""
+                                        selectedTazieh = null
+                                        message = "دفتر جدید ایجاد شد."
+                                    }
                                     reload()
                                 } catch (e: Exception) { message = "ایجاد دفتر ناموفق بود: ${e.message}" }
                                 finally { busy = false }
@@ -218,6 +258,7 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                     scope.launch {
                         selectedPlan = plan
                         val versions = dao.versions(plan.id)
+                        planVersions = versions
                         selectedVersion = versions.firstOrNull()
                         sources = dao.sourceFiles(plan.id)
                         turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
@@ -234,8 +275,84 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                 item {
                     Divider()
                     Text("مدیریت: ${selectedPlan!!.title}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("نسخه فعال: ${selectedVersion?.title ?: "ندارد"}", style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = { importLauncher.launch(arrayOf("text/plain", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream")) }, enabled = !busy) {
+                    Text("نسخه انتخابی: ${selectedVersion?.title ?: "ندارد"} | وضعیت: ${selectedVersion?.status ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                    if (planVersions.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            planVersions.forEach { version ->
+                                TextButton(onClick = {
+                                    selectedVersion = version
+                                    scope.launch {
+                                        turns = dao.turns(version.id)
+                                        stageCues = dao.stageCues(version.id)
+                                    }
+                                }) { Text("${version.versionNumber}: ${version.title}") }
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(enabled = selectedPlan != null && selectedVersion != null && !busy, onClick = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val plan = selectedPlan!!
+                                    val sourceVersion = selectedVersion!!
+                                    val now = System.currentTimeMillis()
+                                    val newNumber = (dao.versions(plan.id).maxOfOrNull { it.versionNumber } ?: 0) + 1
+                                    val newVersionId = db.withTransaction {
+                                        val id = dao.insertVersion(DirectorPlanVersionEntity(
+                                            planId = plan.id, versionNumber = newNumber,
+                                            title = "نسخه $newNumber", status = DirectorPlanVersionEntity.STATUS_DRAFT,
+                                            changeNotes = "رونوشت از نسخه ${sourceVersion.versionNumber}", createdAt = now
+                                        ))
+                                        val turnMap = mutableMapOf<Long, Long>()
+                                        dao.turns(sourceVersion.id).forEach { oldTurn ->
+                                            val newTurnId = dao.insertTurn(oldTurn.copy(id = 0, versionId = id))
+                                            turnMap[oldTurn.id] = newTurnId
+                                            dao.participants(oldTurn.id).forEach { participant ->
+                                                dao.insertParticipant(participant.copy(id = 0, turnId = newTurnId))
+                                            }
+                                            dao.textSegments(oldTurn.id).forEach { segment ->
+                                                dao.insertTextSegment(segment.copy(id = 0, turnId = newTurnId))
+                                            }
+                                        }
+                                        dao.stageCues(sourceVersion.id).forEach { cue ->
+                                            dao.insertStageCue(cue.copy(id = 0, versionId = id, turnId = cue.turnId?.let { turnMap[it] }))
+                                        }
+                                        id
+                                    }
+                                    planVersions = dao.versions(plan.id)
+                                    selectedVersion = dao.version(newVersionId)
+                                    turns = dao.turns(newVersionId)
+                                    stageCues = dao.stageCues(newVersionId)
+                                    message = "نسخه پیش‌نویس جدید با کپی کامل ترتیب، نقش‌ها، متن‌ها و دستورهای صحنه ساخته شد."
+                                } catch (e: Exception) { message = "ساخت نسخه جدید ناموفق بود: ${e.message}" }
+                                finally { busy = false }
+                            }
+                        }) { Text("ساخت نسخه جدید از نسخه انتخابی") }
+                        Button(enabled = selectedPlan != null && selectedVersion != null && selectedVersion!!.status != DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy, onClick = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val plan = selectedPlan!!
+                                    val version = selectedVersion!!
+                                    db.withTransaction {
+                                        dao.versions(plan.id).filter { it.status == DirectorPlanVersionEntity.STATUS_PUBLISHED }.forEach {
+                                            dao.updateVersion(it.copy(status = DirectorPlanVersionEntity.STATUS_SUPERSEDED))
+                                        }
+                                        dao.updateVersion(version.copy(status = DirectorPlanVersionEntity.STATUS_PUBLISHED, publishedAt = System.currentTimeMillis()))
+                                        dao.updatePlan(plan.copy(status = DirectorPlanEntity.STATUS_PUBLISHED, updatedAt = System.currentTimeMillis()))
+                                    }
+                                    selectedPlan = dao.plan(plan.id)
+                                    planVersions = dao.versions(plan.id)
+                                    selectedVersion = dao.version(version.id)
+                                    message = "نسخه ${version.versionNumber} منتشر شد؛ نسخه منتشرشده قبلی به حالت جایگزین‌شده رفت."
+                                    reload()
+                                } catch (e: Exception) { message = "انتشار نسخه ناموفق بود: ${e.message}" }
+                                finally { busy = false }
+                            }
+                        }) { Text("انتشار نسخه انتخابی") }
+                    }
+                    Button(onClick = { importLauncher.launch(arrayOf("text/plain", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "image/*")) }, enabled = !busy) {
                         Icon(Icons.Default.FileOpen, null); Spacer(Modifier.width(6.dp)); Text("بارگذاری یک یا چند فایل نقش (PDF / TXT / DOCX)")
                     }
                 }
@@ -253,7 +370,7 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                 item {
                     Text("پیش‌نمایش و متن ورودی", fontWeight = FontWeight.Bold)
                     OutlinedTextField(previewText, { previewText = it }, label = { Text("متن استخراج‌شده / متن قابل اصلاح") }, modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp), minLines = 5)
-                    Text("PDF اسکن‌شده یا تصویری در این مرحله فقط به‌عنوان منبع نگهداری می‌شود؛ OCR و استخراج متن PDF در مرحله بعد اضافه خواهد شد.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("PDF متنی استخراج می‌شود؛ PDF اسکن‌شده و تصویر تا زمان نصب مدل OCR فارسی/عربی فقط به‌عنوان منبع نگهداری می‌شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 item {
                     Button(
@@ -270,7 +387,8 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                                         var nextIndex = (dao.turns(version.id).maxOfOrNull { it.sequenceIndex } ?: 0) + 1
                                         parsed.forEach { part ->
                                             val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = part.first, sequenceIndex = nextIndex++, title = roleTitle.trim()))
-                                            dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = "manual-${UUID.randomUUID()}", roleTitle = roleTitle.trim(), isLead = true))
+                                            val linkedRole = resolveDirectorRole(db, selectedPlan!!.taziehUid, roleTitle.trim())
+                                            dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = linkedRole?.uid ?: "unmatched-${ContentUid.sha256("${selectedPlan!!.taziehUid}|${ContentUid.normalize(roleTitle)}")}", roleTitle = linkedRole?.title ?: roleTitle.trim(), isLead = true))
                                             dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = part.second))
                                         }
                                         message = "${parsed.size} نوبت شماره‌گذاری‌شده به‌صورت پیش‌نویس اضافه شد؛ ترتیب و متن را بازبینی کنید."
@@ -295,7 +413,8 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                                 val nextIndex = (dao.turns(version.id).maxOfOrNull { it.sequenceIndex } ?: 0) + 1
                                 val number = turnNumber.toIntOrNull() ?: nextIndex
                                 val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = number, sequenceIndex = nextIndex, title = roleTitle.trim()))
-                                dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = "manual-${UUID.randomUUID()}", roleTitle = roleTitle.trim(), isLead = true))
+                                val linkedRole = resolveDirectorRole(db, selectedPlan!!.taziehUid, roleTitle.trim())
+                                dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = linkedRole?.uid ?: "unmatched-${ContentUid.sha256("${selectedPlan!!.taziehUid}|${ContentUid.normalize(roleTitle)}")}", roleTitle = linkedRole?.title ?: roleTitle.trim(), isLead = true))
                                 dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = turnText.trim()))
                                 turnText = ""
                                 message = "نوبت $number به دفتر اضافه شد."
@@ -392,10 +511,91 @@ private suspend fun importDirectorSource(context: Context, uri: Uri, planId: Lon
     target.writeBytes(bytes)
     val extracted = when (ext) {
         "txt", "text" -> bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
-        "docx" -> extractDocxText(bytes)
+        "docx" -> wordToCompatibleJson(bytes)
+        "pdf" -> runCatching { extractPdfText(context, bytes).text }.getOrElse { "" }
         else -> ""
     }
-    return DirectorSourceFileEntity(planId = planId, originalName = name, mimeType = mime, localPath = target.absolutePath, sha256 = sha256(bytes), importMethod = when (ext) { "txt", "text" -> "TEXT"; "docx" -> "DOCX_XML"; "pdf" -> "PDF_SOURCE_ONLY"; else -> "SOURCE_ONLY" }, extractedText = extracted, createdAt = System.currentTimeMillis())
+    return DirectorSourceFileEntity(planId = planId, originalName = name, mimeType = mime, localPath = target.absolutePath, sha256 = sha256(bytes), importMethod = when (ext) { "txt", "text" -> "TEXT"; "docx" -> "DOCX_XML"; "pdf" -> "PDF_TEXT_OR_SCAN"; "jpg", "jpeg", "png" -> "IMAGE_OCR_PENDING"; else -> "SOURCE_ONLY" }, extractedText = extracted, createdAt = System.currentTimeMillis())
+}
+
+private data class DirectorSourceTurn(
+    val sourceId: Long,
+    val turnNumber: Int?,
+    val roleTitle: String,
+    val text: String
+)
+
+/** Supports (1) one structured DOCX for all roles, (2) unnumbered role files,
+ * and (3) separate role files with shared numbered turns. */
+private fun parseDirectorSourceTurns(
+    sourceId: Long,
+    source: DirectorSourceFileEntity,
+    targetFieldTitle: String,
+    targetTaziehTitle: String
+): List<DirectorSourceTurn> {
+    val raw = source.extractedText.trim()
+    if (raw.isBlank()) return emptyList()
+
+    if (raw.startsWith("[")) {
+        return runCatching {
+            val root = org.json.JSONArray(raw)
+            val out = mutableListOf<DirectorSourceTurn>()
+            val totalTaziehs = (0 until root.length()).sumOf { index ->
+                root.optJSONObject(index)?.optJSONArray("taziehs")?.length() ?: 0
+            }
+            for (fi in 0 until root.length()) {
+                val field = root.getJSONObject(fi)
+                val fieldTitle = ContentUid.normalize(field.optString("title"))
+                val fieldMatches = fieldTitle.equals(ContentUid.normalize(targetFieldTitle), true) ||
+                    (root.length() == 1 && fieldTitle == ContentUid.normalize("بدون زمینه"))
+                if (!fieldMatches) continue
+                val taziehs = field.optJSONArray("taziehs") ?: continue
+                for (ti in 0 until taziehs.length()) {
+                    val tazieh = taziehs.getJSONObject(ti)
+                    val majlisTitle = ContentUid.normalize(tazieh.optString("title"))
+                    val majlisMatches = majlisTitle.equals(ContentUid.normalize(targetTaziehTitle), true) ||
+                        (totalTaziehs == 1 && majlisTitle == ContentUid.normalize("بدون تعزیه"))
+                    if (!majlisMatches) continue
+                    val roles = tazieh.optJSONArray("roles") ?: continue
+                    for (ri in 0 until roles.length()) {
+                        val role = roles.getJSONObject(ri)
+                        val sections = role.optJSONArray("sections") ?: continue
+                        for (si in 0 until sections.length()) {
+                            val section = sections.getJSONObject(si)
+                            val body = section.optString("content").trim()
+                            if (body.isNotBlank()) out += DirectorSourceTurn(
+                                sourceId = sourceId, turnNumber = null,
+                                roleTitle = role.optString("title", "نقش نامشخص"),
+                                text = body
+                            )
+                        }
+                    }
+                }
+            }
+            out
+        }.getOrDefault(emptyList())
+    }
+
+    val fileRole = source.originalName.substringBeforeLast('.', source.originalName)
+        .replace('_', ' ').replace('-', ' ').trim().ifBlank { "نقش بدون نام" }
+    val numbered = parseNumberedDirectorTurns(raw)
+    if (numbered.isNotEmpty()) return numbered.map { DirectorSourceTurn(sourceId, it.first, fileRole, it.second) }
+
+    // Unnumbered role documents are split into paragraph blocks and kept in the
+    // order in which the user selected the files. A separate execution-list file
+    // still needs explicit review before publication.
+    return raw.replace("\r\n", "\n").replace('\r', '\n')
+        .split(Regex("\\n\\s*\\n+"))
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .map { DirectorSourceTurn(sourceId, null, fileRole, it) }
+}
+
+private suspend fun resolveDirectorRole(db: AppDatabase, taziehUid: String, roleTitle: String): RoleEntity? {
+    val tazieh = db.taziehDao().getByUid(taziehUid) ?: return null
+    return db.roleDao().getByTazieh(tazieh.id).firstOrNull {
+        ContentUid.normalize(it.title).equals(ContentUid.normalize(roleTitle), ignoreCase = true)
+    }
 }
 
 private fun queryDisplayName(context: Context, uri: Uri): String? = runCatching {

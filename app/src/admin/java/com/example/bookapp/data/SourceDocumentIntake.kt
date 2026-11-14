@@ -67,13 +67,16 @@ class SourceDocumentIntake(
         val originalName = safeDisplayName(uri)
             ?: return SourceIntakeResult.Rejected("نام فایل قابل تشخیص نیست")
         val extension = originalName.substringAfterLast('.', "").lowercase()
-        if (extension !in setOf("docx", "pdf")) {
-            return SourceIntakeResult.Rejected("فقط فایل‌های DOCX و PDF پشتیبانی می‌شوند؛ فایل DOC قدیمی باید ابتدا به DOCX تبدیل شود")
+        if (extension !in setOf("docx", "pdf", "txt", "jpg", "jpeg", "png")) {
+            return SourceIntakeResult.Rejected("فرمت‌های مجاز: DOCX، PDF، TXT، JPG و PNG")
         }
 
         val mime = when (extension) {
             "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            else -> "application/pdf"
+            "pdf" -> "application/pdf"
+            "txt" -> "text/plain"
+            "jpg", "jpeg" -> "image/jpeg"
+            else -> "image/png"
         }
         val incoming = try {
             context.contentResolver.openInputStream(uri)?.use { input ->
@@ -101,10 +104,15 @@ class SourceDocumentIntake(
         val stored = File(sourceDir, "$uid.$extension")
         try {
             if (extension == "docx") validateDocxContainer(incoming)
-            FileOutputStream(stored).use { it.write(incoming) }
             if (extension == "pdf" && !incoming.copyOfRange(0, minOf(incoming.size, 5)).toString(Charsets.US_ASCII).startsWith("%PDF-")) {
                 throw IllegalArgumentException("ساختار فایل PDF معتبر نیست")
             }
+            if (extension in setOf("jpg", "jpeg", "png")) {
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeByteArray(incoming, 0, incoming.size, bounds)
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IllegalArgumentException("فایل تصویر معتبر نیست")
+            }
+            FileOutputStream(stored).use { it.write(incoming) }
             val digest = sha256(incoming)
 
             var pageCount: Int? = null
@@ -152,9 +160,27 @@ class SourceDocumentIntake(
                 warnings += "ساختار استخراج‌شده پیشنهادی است؛ پیش از تأیید باید با سند اصلی تطبیق داده شود."
                 warnings += supplemental.warnings
                 if (sections == 0) warnings += "عنوان‌های Heading 1 تا Heading 4 شناسایی نشدند؛ ساختار سند نیازمند بازبینی دستی است."
+            } else if (extension == "pdf") {
+                val extracted = extractPdfText(context, incoming)
+                pageCount = extracted.pageCount
+                previewText = extracted.text.take(12000).ifBlank { null }
+                if (!previewText.isNullOrBlank()) {
+                    val preview = File(sourceDir, "$uid.review-preview.txt")
+                    preview.writeText(extracted.text, Charsets.UTF_8)
+                    previewPath = preview.absolutePath
+                    warnings += "متن PDF استخراج شد؛ پیش از تبدیل نهایی باید ترتیب نقش‌ها و بخش‌ها بازبینی شود."
+                } else {
+                    warnings += "این PDF احتمالاً اسکن‌شده یا تصویری است؛ موتور OCR فارسی/عربی هنوز در این نسخه فعال نیست."
+                }
+            } else if (extension == "txt") {
+                val text = incoming.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
+                previewText = text.take(12000).ifBlank { null }
+                val preview = File(sourceDir, "$uid.review-preview.txt")
+                preview.writeText(text, Charsets.UTF_8)
+                previewPath = preview.absolutePath
+                warnings += "متن خام آماده بازبینی است؛ ساختار زمینه/مجلس/نقش/بخش باید پیش از انتشار تعیین شود."
             } else {
-                pageCount = countPdfPages(stored)
-                warnings += "این مرحله متن PDF را استخراج نمی‌کند؛ سند اصلی و تعداد صفحات ثبت شده‌اند. استخراج متن/OCR در گام پردازش PDF انجام می‌شود."
+                warnings += "تصویر اصلی ذخیره شد؛ تشخیص متن فارسی/عربی از تصویر پس از افزودن مدل OCR انجام می‌شود."
             }
 
             val note = buildString {
