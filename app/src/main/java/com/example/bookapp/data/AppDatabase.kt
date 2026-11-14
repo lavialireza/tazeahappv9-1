@@ -11,7 +11,7 @@ import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 
-const val APP_DATABASE_SCHEMA_VERSION = 18
+const val APP_DATABASE_SCHEMA_VERSION = 19
 
 @Database(
     entities = [
@@ -86,6 +86,15 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun directorDao(): DirectorDao
 
     companion object {
+
+        /** Version 19: soft-delete director plans without deleting source files or text. */
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `director_plans` ADD COLUMN `isDeleted` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `director_plans` ADD COLUMN `deletedAt` INTEGER")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_plans_isDeleted` ON `director_plans` (`isDeleted`)")
+            }
+        }
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -645,7 +654,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_14_15,
                         MIGRATION_15_16,
                         MIGRATION_16_17,
-                        MIGRATION_17_18
+                        MIGRATION_17_18,
+                        MIGRATION_18_19
                     )
                     .build()
 

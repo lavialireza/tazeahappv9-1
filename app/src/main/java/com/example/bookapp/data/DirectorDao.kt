@@ -9,12 +9,12 @@ import androidx.room.Update
 /** Data access for the director workspace. All records are independent from existing rehearsal/dialogue tables. */
 @Dao
 interface DirectorDao {
-    @Query("SELECT * FROM director_plans ORDER BY updatedAt DESC, id DESC") suspend fun plans(): List<DirectorPlanEntity>
+    @Query("SELECT * FROM director_plans WHERE isDeleted = 0 AND (:query = '' OR title LIKE '%' || :query || '%') ORDER BY updatedAt DESC, id DESC LIMIT :limit OFFSET :offset") suspend fun plansPage(query: String, limit: Int, offset: Int): List<DirectorPlanEntity>
     @Query("SELECT * FROM director_plans WHERE id=:id LIMIT 1") suspend fun plan(id: Long): DirectorPlanEntity?
-    @Query("SELECT * FROM director_plans WHERE taziehUid=:taziehUid ORDER BY updatedAt DESC") suspend fun plansForTazieh(taziehUid: String): List<DirectorPlanEntity>
+    @Query("SELECT * FROM director_plans WHERE taziehUid=:taziehUid AND isDeleted = 0 ORDER BY updatedAt DESC") suspend fun plansForTazieh(taziehUid: String): List<DirectorPlanEntity>
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertPlan(value: DirectorPlanEntity): Long
     @Update suspend fun updatePlan(value: DirectorPlanEntity)
-    @Query("DELETE FROM director_plans WHERE id=:id") suspend fun deletePlan(id: Long)
+    @Query("UPDATE director_plans SET isDeleted=1, deletedAt=:deletedAt, updatedAt=:deletedAt WHERE id=:id AND isDeleted=0") suspend fun softDeletePlan(id: Long, deletedAt: Long)
 
     @Query("SELECT * FROM director_plan_versions WHERE planId=:planId ORDER BY versionNumber DESC") suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
     @Query("SELECT * FROM director_plan_versions WHERE id=:id LIMIT 1") suspend fun version(id: Long): DirectorPlanVersionEntity?
@@ -38,6 +38,7 @@ interface DirectorDao {
     @Query("SELECT * FROM director_turn_participants WHERE turnId=:turnId ORDER BY orderIndex, id") suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertParticipant(value: DirectorParticipantEntity): Long
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertParticipants(values: List<DirectorParticipantEntity>): List<Long>
+    @Update suspend fun updateParticipant(value: DirectorParticipantEntity)
     @Query("DELETE FROM director_turn_participants WHERE id=:id") suspend fun deleteParticipant(id: Long)
 
     @Query("SELECT * FROM director_text_segments WHERE turnId=:turnId ORDER BY segmentIndex, id") suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>

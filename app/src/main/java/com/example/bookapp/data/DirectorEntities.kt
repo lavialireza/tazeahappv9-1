@@ -1,12 +1,13 @@
 package com.example.bookapp.data
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /** A director's independent execution plan for one existing Tazieh (identified by its stable UID). */
-@Entity(tableName = "director_plans", indices = [Index(value = ["uid"], unique = true), Index("taziehUid"), Index("status"), Index("updatedAt")])
+@Entity(tableName = "director_plans", indices = [Index(value = ["uid"], unique = true), Index("taziehUid"), Index("status"), Index("updatedAt"), Index("isDeleted")])
 data class DirectorPlanEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val uid: String,
@@ -16,7 +17,10 @@ data class DirectorPlanEntity(
     val status: String = STATUS_DRAFT,
     val description: String = "",
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    /** Soft deletion keeps source files and historical content recoverable. */
+    @ColumnInfo(defaultValue = "0") val isDeleted: Boolean = false,
+    val deletedAt: Long? = null
 ) {
     companion object {
         const val STATUS_DRAFT = "DRAFT"
