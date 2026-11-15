@@ -36,7 +36,7 @@ import java.util.zip.ZipInputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
+fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack: () -> Unit) {
     val context = LocalContext.current
     val dao = remember { db.directorDao() }
     val scope = rememberCoroutineScope()
@@ -100,23 +100,52 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
             fieldOptions = db.fieldDao().getAll()
         } catch (e: Exception) { message = "دریافت فهرست زمینه‌ها و تعزیه‌ها ناموفق بود: ${e.message}" }
     }
+    LaunchedEffect(initialTaziehId, taziehOptions) {
+        if (initialTaziehId != null && taziehOptions.isNotEmpty()) {
+            val chosen = taziehOptions.firstOrNull { it.id == initialTaziehId }
+            if (chosen != null) {
+                selectedTazieh = chosen
+                if (planTitle.isBlank()) planTitle = chosen.title
+                roleOptions = db.roleDao().getByTazieh(chosen.id)
+                selectedRole = roleOptions.firstOrNull()
+                val existing = dao.plansForTazieh(chosen.uid).firstOrNull()
+                if (existing != null) {
+                    selectedPlan = existing
+                    val versions = dao.versions(existing.id)
+                    planVersions = versions
+                    selectedVersion = versions.firstOrNull()
+                    sources = dao.sourceFiles(existing.id)
+                    turns = selectedVersion?.let { dao.turns(it.id) }.orEmpty()
+                    roleOptions = db.roleDao().getByTazieh(chosen.id)
+                    selectedRole = roleOptions.firstOrNull()
+                }
+            }
+        }
+    }
     LaunchedEffect(refresh) { reload() }
     LaunchedEffect(planSearch) { loadPlans(reset = true) }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty() && selectedPlan != null && selectedVersion != null) {
-            scope.launch {
+        if (uris.isNotEmpty()) {
+            if (selectedPlan == null || selectedVersion == null) {
+                message = "ابتدا دفتر و نسخه آن را انتخاب یا ایجاد کنید؛ سپس فایل را وارد کنید."
+            } else scope.launch {
                 busy = true
                 try {
                     val importedSources = mutableListOf<Pair<Long, DirectorSourceFileEntity>>()
+                    var firstPreviewSource: DirectorSourceFileEntity? = null
+                    val storedBeforeImport = dao.sourceFiles(selectedPlan!!.id)
                     uris.forEach { uri ->
                         val imported = withContext(Dispatchers.IO) { importDirectorSource(context, uri, selectedPlan!!.id) }
-                        val alreadyStored = dao.sourceFiles(selectedPlan!!.id).any { it.sha256 == imported.sha256 }
-                        if (alreadyStored) {
+                        val duplicate = storedBeforeImport.firstOrNull { it.sha256 == imported.sha256 }
+                        if (duplicate != null) {
                             File(imported.localPath).delete()
+                            if (firstPreviewSource == null) firstPreviewSource = duplicate
                         } else {
                             val sourceId = dao.insertSourceFile(imported)
-                            importedSources += sourceId to imported
+                            val saved = imported.copy(id = sourceId)
+                            importedSources += sourceId to saved
+                            if (firstPreviewSource == null) firstPreviewSource = saved
                         }
                     }
                     val targetTazieh = db.taziehDao().getByUid(selectedPlan!!.taziehUid)
@@ -177,9 +206,18 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                     parsedEntries.filter { it.turnNumber == null }.forEach { entry ->
                         saveTurn(nextUnnumberedTurn++, listOf(entry))
                     }
-                    previewText = importedSources.firstOrNull()?.second?.extractedText.orEmpty()
-                    message = if (parsedEntries.isEmpty()) {
-                        "${importedSources.size} فایل منبع ذخیره شد؛ متن ساختاریافته/پاراگرافی و نوبت‌های شماره‌دار بررسی شد. PDF اسکن‌شده و تصویر به OCR نیاز دارند."
+                    val parsedPreview = parsedEntries.joinToString("\n\n") { entry ->
+                        buildString {
+                            append("نقش: ").append(entry.roleTitle)
+                            entry.turnNumber?.let { append(" | شماره نوبت: ").append(it) }
+                            append("\n").append(entry.text)
+                        }
+                    }
+                    previewText = parsedPreview.ifBlank { firstPreviewSource?.extractedText.orEmpty() }
+                    if (firstPreviewSource != null && previewText.isBlank()) {
+                        message = "فایل ذخیره شد، اما متن قابل استخراجی در آن پیدا نشد. فایل Word/PDF متنی یا TXT را بررسی کنید."
+                    } else message = if (parsedEntries.isEmpty()) {
+                        "${importedSources.size} فایل جدید ذخیره شد؛ متن ساختاریافته قابل تطبیق پیدا نشد. متن منبع در پیش‌نمایش قرار گرفت تا قالب و نام نقش بررسی شود."
                     } else {
                         "$createdTurns نوبت ساخته شد؛ $collectiveTurns نوبت جمعی شناسایی شد. ${if (mismatchedTurns > 0) "$mismatchedTurns شماره با اختلاف متن نیازمند بازبینی است." else "اختلاف متن شناسایی نشد."}"
                     }
@@ -327,20 +365,23 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                     if (roleOptions.isEmpty()) Text("برای این مجلس هنوز نقشی در کتابخانه ثبت نشده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     else Text(roleOptions.joinToString("، ") { it.title }, style = MaterialTheme.typography.bodySmall)
                     if (planVersions.isNotEmpty()) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             planVersions.forEach { version ->
-                                TextButton(onClick = {
-                                    selectedVersion = version
-                                    scope.launch {
-                                        turns = dao.turns(version.id)
-                                        stageCues = dao.stageCues(version.id)
-                                    }
-                                }) { Text("${version.versionNumber}: ${version.title}") }
+                                TextButton(
+                                    onClick = {
+                                        selectedVersion = version
+                                        scope.launch {
+                                            turns = dao.turns(version.id)
+                                            stageCues = dao.stageCues(version.id)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("نسخه ${version.versionNumber}: ${version.title}  •  ${if (version.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "منتشرشده" else "پیش‌نویس"}") }
                             }
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(enabled = selectedPlan != null && selectedVersion != null && !busy, onClick = {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = selectedPlan != null && selectedVersion != null && !busy, onClick = {
                             scope.launch {
                                 busy = true
                                 try {
@@ -378,8 +419,8 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                                 } catch (e: Exception) { message = "ساخت نسخه جدید ناموفق بود: ${e.message}" }
                                 finally { busy = false }
                             }
-                        }) { Text("ساخت نسخه جدید از نسخه انتخابی") }
-                        Button(enabled = selectedPlan != null && selectedVersion != null && selectedVersion!!.status != DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy, onClick = {
+                        }) { Text("ساخت نسخه جدید از نسخه انتخابی", maxLines = 2) }
+                        Button(modifier = Modifier.fillMaxWidth(), enabled = selectedPlan != null && selectedVersion != null && selectedVersion!!.status != DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy, onClick = {
                             scope.launch {
                                 busy = true
                                 try {
@@ -400,7 +441,7 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                                 } catch (e: Exception) { message = "انتشار نسخه ناموفق بود: ${e.message}" }
                                 finally { busy = false }
                             }
-                        }) { Text("انتشار نسخه انتخابی") }
+                        }) { Text("انتشار نسخه انتخابی", maxLines = 2) }
                     }
                     Text("سه روش ورود: ۱) فایل کامل مجلس با نقش و ترتیب دیالوگ‌ها؛ ۲) فایل جدا برای هر نقش بدون شماره (نام فایل باید با نام نقش کتابخانه مطابق باشد)؛ ۳) فایل جدا برای هر نقش با شماره‌های مشترک اجرا. در روش سوم شماره یکسان، نوبت جمعی می‌سازد.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { importLauncher.launch(arrayOf("text/plain", "application/json", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "image/*")) }, enabled = !busy) {
@@ -555,7 +596,7 @@ fun DirectorOfficeScreen(db: AppDatabase, onBack: () -> Unit) {
                                 segmentState.value = dao.textSegments(turn.id).joinToString("\n") { it.text }
                                 participantsState.value = dao.participants(turn.id)
                             }
-                            Text(segmentState.value, style = MaterialTheme.typography.bodySmall, maxLines = 4)
+                            Text(segmentState.value.ifBlank { "متنی برای این نوبت ثبت نشده است." }, style = MaterialTheme.typography.bodySmall)
                             participantsState.value.filter { it.roleUid.startsWith("unmatched-") }.forEach { participant ->
                                 var mappingExpanded by remember(participant.id) { mutableStateOf(false) }
                                 ExposedDropdownMenuBox(expanded = mappingExpanded, onExpandedChange = { mappingExpanded = !mappingExpanded }) {
@@ -664,14 +705,14 @@ private fun parseDirectorSourceTurns(
                 val field = root.getJSONObject(fi)
                 val fieldTitle = ContentUid.normalize(field.optString("title"))
                 val fieldMatches = fieldTitle.equals(ContentUid.normalize(targetFieldTitle), true) ||
-                    (root.length() == 1 && fieldTitle == ContentUid.normalize("بدون زمینه"))
+                    root.length() == 1
                 if (!fieldMatches) continue
                 val taziehs = field.optJSONArray("taziehs") ?: continue
                 for (ti in 0 until taziehs.length()) {
                     val tazieh = taziehs.getJSONObject(ti)
                     val majlisTitle = ContentUid.normalize(tazieh.optString("title"))
                     val majlisMatches = majlisTitle.equals(ContentUid.normalize(targetTaziehTitle), true) ||
-                        (totalTaziehs == 1 && majlisTitle == ContentUid.normalize("بدون تعزیه"))
+                        totalTaziehs == 1
                     if (!majlisMatches) continue
                     val roles = tazieh.optJSONArray("roles") ?: continue
                     for (ri in 0 until roles.length()) {

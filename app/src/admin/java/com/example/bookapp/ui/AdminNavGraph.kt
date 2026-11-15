@@ -127,6 +127,15 @@ fun NavGraphBuilder.adminOnlyRoutes(
         )
     }
 
+    composable("$ROUTE_DIRECTOR_OFFICE/{taziehId}") { entry ->
+        val initialTaziehId = entry.arguments?.getString("taziehId")?.toLongOrNull()
+        DirectorOfficeScreen(
+            db = db,
+            initialTaziehId = initialTaziehId,
+            onBack = { navController.popBackStack() }
+        )
+    }
+
     composable(ROUTE_GLOSSARY_MANAGEMENT) {
         GlossaryManagementScreen(
             db = db,
