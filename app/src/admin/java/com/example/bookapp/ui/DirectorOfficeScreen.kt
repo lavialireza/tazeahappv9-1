@@ -188,11 +188,29 @@ private suspend fun buildDirectorVersionPreview(
     dao: DirectorDao,
     versionId: Long
 ): String {
-    return dao.turns(versionId).joinToString("\n\n") { turn ->
-        val roles = dao.participants(turn.id).joinToString("، ") { it.roleTitle }
-        val text = dao.textSegments(turn.id).joinToString("\n") { it.text }
-        "نوبت ${turn.turnNumber} — ${roles.ifBlank { turn.title }}\n$text"
+    // DAO methods are suspend functions; fetch each relation in a normal suspend loop
+    // instead of calling them from joinToString's non-suspending transform lambda.
+    val turns = dao.turns(versionId)
+    val previewBlocks = mutableListOf<String>()
+
+    for (turn in turns) {
+        val participants = dao.participants(turn.id)
+        val roleTitles = participants.joinToString("، ") { it.roleTitle }
+
+        val segments = dao.textSegments(turn.id)
+        val turnText = segments.joinToString("\n") { it.text }
+
+        previewBlocks += buildString {
+            append("نوبت ")
+            append(turn.turnNumber)
+            append(" — ")
+            append(roleTitles.ifBlank { turn.title })
+            append("\n")
+            append(turnText)
+        }
     }
+
+    return previewBlocks.joinToString("\n\n")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
