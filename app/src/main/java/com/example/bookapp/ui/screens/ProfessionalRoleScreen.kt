@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -40,7 +41,9 @@ fun ProfessionalRoleScreen(
     onBack: () -> Unit,
     readOnly: Boolean = false,
     showCompare: Boolean = true,
-    canSelectMine: Boolean = true
+    canSelectMine: Boolean = true,
+    showDirectorOffice: Boolean = false,
+    onOpenDirectorOffice: () -> Unit = {}
 ) {
     var query by remember { mutableStateOf("") }
 
@@ -206,6 +209,21 @@ fun ProfessionalRoleScreen(
                             }
                         }
                     }
+                }
+            }
+
+            // Direct access to the director's office for this exact ta'zieh.
+            if (showDirectorOffice && !readOnly) {
+                OutlinedButton(
+                    onClick = onOpenDirectorOffice,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 5.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Filled.Description, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("دفتر معین‌البکا همین مجلس")
                 }
             }
 

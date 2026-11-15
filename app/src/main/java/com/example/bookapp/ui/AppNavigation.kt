@@ -1153,7 +1153,9 @@ fun AppNavigation(
                 onBack = { navController.popBackStack() },
                 readOnly = publicViewer,
                 showCompare = featureEnabled("compare.view"),
-                canSelectMine = featureEnabled("myRole.select")
+                canSelectMine = featureEnabled("myRole.select"),
+                showDirectorOffice = !publicViewer,
+                onOpenDirectorOffice = { if (!publicViewer) navController.navigate("director_office/$taziehId") }
             )
         }
 
