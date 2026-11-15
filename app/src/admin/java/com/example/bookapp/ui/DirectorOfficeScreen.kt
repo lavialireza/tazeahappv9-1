@@ -44,16 +44,6 @@ private data class DirectorSelectorItem(
     val text: String
 )
 
-private fun splitDirectorDialogues(content: String): List<String> {
-    val normalized = content.replace("\r\n", "\n").replace('\r', '\n').trim()
-    if (normalized.isBlank()) return emptyList()
-    val blocks = normalized.splitRegex("\\n\\s*\\n+"))
-        .map { it.trim() }.filter { it.isNotBlank() }
-    return blocks.flatMap { block ->
-        val lines = block.lines().map { it.trim() }.filter { it.isNotBlank() }
-        if (lines.size > 1) lines else listOf(block)
-    }
-}
 
 private data class DirectorLibraryImportResult(
     val roleCount: Int,
@@ -61,7 +51,43 @@ private data class DirectorLibraryImportResult(
     val turnCount: Int,
     val usedDialogueOrder: Boolean
 )
+private fun splitDirectorDialogues(content: String): List<String> {
+    if (content.isBlank()) {
+        return emptyList()
+    }
 
+    val blocks = mutableListOf<String>()
+    val currentBlock = mutableListOf<String>()
+
+    content.lines().forEach { rawLine ->
+        val line = rawLine.trim()
+
+        if (line.isEmpty()) {
+            if (currentBlock.isNotEmpty()) {
+                blocks.add(currentBlock.joinToString(separator = "\n"))
+                currentBlock.clear()
+            }
+        } else {
+            currentBlock.add(line)
+        }
+    }
+
+    if (currentBlock.isNotEmpty()) {
+        blocks.add(currentBlock.joinToString(separator = "\n"))
+    }
+
+    return blocks.flatMap { block ->
+        val dialogueLines = block.lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+        if (dialogueLines.size > 1) {
+            dialogueLines
+        } else {
+            listOf(block)
+        }
+    }
+}
 /**
  * Copies the selected majlis' already-stored library text into an empty director version.
  * It never edits roles/sections or imports content from another majlis.
