@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,6 +36,24 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipInputStream
 
+
+private data class DirectorSelectorItem(
+    val key: String,
+    val section: SectionEntity,
+    val role: RoleEntity,
+    val text: String
+)
+
+private fun splitDirectorDialogues(content: String): List<String> {
+    val normalized = content.replace("\r\n", "\n").replace('\r', '\n').trim()
+    if (normalized.isBlank()) return emptyList()
+    val blocks = normalized.split(Regex("\n\s*\n+"))
+        .map { it.trim() }.filter { it.isNotBlank() }
+    return blocks.flatMap { block ->
+        val lines = block.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (lines.size > 1) lines else listOf(block)
+    }
+}
 
 private data class DirectorLibraryImportResult(
     val roleCount: Int,
@@ -246,6 +266,13 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
     var cueInstruction by remember { mutableStateOf("") }
     var cueTurnId by remember { mutableStateOf<Long?>(null) }
     var stageCues by remember { mutableStateOf(emptyList<DirectorStageCueEntity>()) }
+    var showBuildModeDialog by remember { mutableStateOf(false) }
+    var selectedBuildMode by remember { mutableStateOf("ROLE_NUMBERED") }
+    var selectorItems by remember { mutableStateOf(emptyList<DirectorSelectorItem>()) }
+    var selectorRole by remember { mutableStateOf<RoleEntity?>(null) }
+    var selectorRoleMenu by remember { mutableStateOf(false) }
+    var selectorTurnNumber by remember { mutableStateOf("1") }
+    var selectedDialogueKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     suspend fun loadPlans(reset: Boolean) {
         if (initialTaziehId != null) {
@@ -274,6 +301,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                 val versions = dao.versions(current.id)
                 planVersions = versions
                 selectedVersion = selectedVersion?.let { old -> versions.firstOrNull { it.id == old.id } } ?: versions.firstOrNull()
+                selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
                 selectedVersion?.let {
                     turns = dao.turns(it.id)
                     stageCues = dao.stageCues(it.id)
@@ -311,15 +339,17 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                 updatedAt = now
                             )
                         )
-                        dao.insertVersion(
+                        val createdVersionId = dao.insertVersion(
                             DirectorPlanVersionEntity(
                                 planId = newPlanId,
                                 versionNumber = 1,
                                 title = "نسخه اول",
-                                changeNotes = "نسخه پایه دفتر؛ آماده تکمیل از متن‌های داخلی کتابخانه",
+                                changeNotes = "نسخه پایه دفتر؛ روش تکمیل پس از انتخاب معین‌البکا تعیین می‌شود",
                                 createdAt = now
                             )
                         )
+                        selectedVersion = dao.version(createdVersionId)
+                        showBuildModeDialog = true
                         plan = dao.plan(newPlanId)
                     }
                     if (plan != null) {
@@ -331,9 +361,10 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         }
                         planVersions = dao.versions(plan.id)
                         selectedVersion = planVersions.firstOrNull()
+                        selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
                         sources = dao.sourceFiles(plan.id)
                         val currentVersion = selectedVersion
-                        if (currentVersion != null && !directorVersionHasText(dao, currentVersion.id)) {
+                        if (currentVersion != null && !showBuildModeDialog && !directorVersionHasText(dao, currentVersion.id)) {
                             val result = importExistingTaziehText(db, currentVersion.id, chosen.id)
                             turns = dao.turns(currentVersion.id)
                             message = if (result.sectionCount > 0) {
@@ -358,6 +389,36 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
     }
     LaunchedEffect(refresh) { reload() }
     LaunchedEffect(planSearch) { loadPlans(reset = true) }
+    LaunchedEffect(selectedVersion?.id, selectedBuildMode, roleOptions, selectedPlan?.id) {
+        val version = selectedVersion
+        val plan = selectedPlan
+        if (version != null && plan != null && selectedBuildMode == "SELECTOR" && roleOptions.isNotEmpty()) {
+            try {
+                val tazieh = db.taziehDao().getByUid(plan.taziehUid)
+                if (tazieh != null) {
+                    val roles = loadCurrentTaziehRoles(db, tazieh)
+                    val sections = db.sectionDao().getByRoles(roles.map { it.id })
+                        .filter { it.content.isNotBlank() }
+                        .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
+                    selectorItems = sections.flatMap { section ->
+                        val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
+                        splitDirectorDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
+                    }
+                    val used = mutableSetOf<String>()
+                    for (turn in dao.turns(version.id)) {
+                        for (segment in dao.textSegments(turn.id)) {
+                            if (!segment.sectionUid.isNullOrBlank()) {
+                                selectorItems.filter { it.section.uid == segment.sectionUid && it.text == segment.text }.forEach { used += it.key }
+                            }
+                        }
+                    }
+                    selectedDialogueKeys = used
+                    selectorRole = selectorRole?.let { old -> roles.firstOrNull { it.uid == old.uid } } ?: roles.firstOrNull()
+                    selectorTurnNumber = ((dao.turns(version.id).maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                }
+            } catch (e: Exception) { message = "بارگذاری متن‌های انتخابی ناموفق بود: ${e.message}" }
+        }
+    }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
@@ -524,6 +585,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                         selectedRole = roleOptions.firstOrNull()
                                         planVersions = dao.versions(existingPlan.id)
                                         selectedVersion = planVersions.firstOrNull()
+                                        selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
                                         sources = dao.sourceFiles(existingPlan.id)
                                         turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
                                         val currentVersion = selectedVersion
@@ -544,12 +606,13 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                         roleOptions = target?.let { loadCurrentTaziehRoles(db, it) }.orEmpty()
                                         selectedRole = roleOptions.firstOrNull()
                                         selectedVersion = dao.version(versionId)
-                                        val result = importExistingTaziehText(db, versionId, target?.id ?: selectedTazieh!!.id)
-                                        turns = dao.turns(versionId)
-                                        previewText = buildDirectorVersionPreview(dao, versionId)
+                                        turns = emptyList()
+                                        previewText = ""
+                                        selectorRole = roleOptions.firstOrNull()
                                         planTitle = ""
                                         selectedTazieh = null
-                                        message = if (result.sectionCount > 0) "دفتر ایجاد شد و ${result.sectionCount} بخش از متن‌های داخلی همین مجلس به نسخه اول منتقل شد." else "دفتر ایجاد شد؛ اما متن ذخیره‌شده‌ای در نقش‌های این مجلس پیدا نشد."
+                                        showBuildModeDialog = true
+                                        message = "دفتر ایجاد شد؛ روش تکمیل دفتر را انتخاب کنید."
                                     }
                                     reload()
                                 } catch (e: Exception) { message = "ایجاد دفتر ناموفق بود: ${e.message}" }
@@ -620,15 +683,24 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                     Text("نقش‌های ثبت‌شده در همین مجلس (${roleOptions.size})", fontWeight = FontWeight.SemiBold)
                     if (roleOptions.isEmpty()) Text("برای این مجلس هنوز نقشی در کتابخانه ثبت نشده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     else Text(roleOptions.joinToString("، ") { it.title }, style = MaterialTheme.typography.bodySmall)
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth().heightIn(min = 130.dp, max = 280.dp).verticalScroll(rememberScrollState()).padding(12.dp)) {
+                            Text("متن کامل دفتر (نمایش پیوسته)", fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(6.dp))
+                            Text(previewText.ifBlank { "پس از تکمیل دفتر، متن تمام نقش‌ها به ترتیب نوبت در همین کادر نمایش داده می‌شود." }, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                     if (planVersions.isNotEmpty()) {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             planVersions.forEach { version ->
                                 TextButton(
                                     onClick = {
                                         selectedVersion = version
+                                        version.changeNotes.substringAfter("روش تکمیل دفتر: ", "").takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
                                         scope.launch {
                                             turns = dao.turns(version.id)
                                             stageCues = dao.stageCues(version.id)
+                                            previewText = buildDirectorVersionPreview(dao, version.id)
                                         }
                                     },
                                     modifier = Modifier.fillMaxWidth()
@@ -637,6 +709,15 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         }
                     }
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = selectedPlan != null && selectedVersion != null && selectedVersion!!.status != DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy,
+                            onClick = {
+                                selectedBuildMode = selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")
+                                    ?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") } ?: "ROLE_NUMBERED"
+                                showBuildModeDialog = true
+                            }
+                        ) { Text("انتخاب روش ساخت / بازسازی این نسخه") }
                         OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = selectedPlan != null && selectedVersion != null && !busy, onClick = {
                             scope.launch {
                                 busy = true
@@ -783,6 +864,60 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         }
                     ) { Text("تشخیص نوبت‌های شماره‌دار از متن") }
                 }
+                if (selectedBuildMode == "SELECTOR" && selectedVersion != null) {
+                    item {
+                        Divider()
+                        Text("انتخاب دیالوگ با معین‌البکا", fontWeight = FontWeight.Bold)
+                        Text("ابتدا نقش نوبت جاری را انتخاب کنید. دیالوگ‌هایی که قبلاً در همین نسخه ثبت شده‌اند دوباره نمایش داده نمی‌شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        ExposedDropdownMenuBox(expanded = selectorRoleMenu, onExpandedChange = { selectorRoleMenu = !selectorRoleMenu }) {
+                            OutlinedTextField(
+                                value = selectorRole?.title ?: "انتخاب نقش",
+                                onValueChange = {}, readOnly = true,
+                                label = { Text("نقش نوبت جاری") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(selectorRoleMenu) },
+                                modifier = Modifier.menuAnchor().fillMaxWidth(), enabled = roleOptions.isNotEmpty()
+                            )
+                            ExposedDropdownMenu(expanded = selectorRoleMenu, onDismissRequest = { selectorRoleMenu = false }) {
+                                roleOptions.forEach { role -> DropdownMenuItem(text = { Text(role.title) }, onClick = { selectorRole = role; selectorRoleMenu = false }) }
+                            }
+                        }
+                        OutlinedTextField(selectorTurnNumber, { selectorTurnNumber = it.filter(Char::isDigit).take(6) }, label = { Text("شماره نوبت بعدی") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        val availableDialogues = selectorItems.filter { it.role.uid == selectorRole?.uid && it.key !in selectedDialogueKeys }
+                        Text("دیالوگ‌های باقی‌مانده: ${availableDialogues.size}", style = MaterialTheme.typography.labelMedium)
+                        if (availableDialogues.isEmpty()) {
+                            Text("برای این نقش دیالوگ انتخاب‌نشده‌ای باقی نمانده است یا متن نقش بارگذاری نشده است.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Column(Modifier.fillMaxWidth().heightIn(max = 340.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            availableDialogues.forEach { entry ->
+                                Card(Modifier.fillMaxWidth().clickable(enabled = !busy) {
+                                    scope.launch {
+                                        busy = true
+                                        try {
+                                            val version = selectedVersion!!
+                                            val number = selectorTurnNumber.toIntOrNull() ?: ((dao.turns(version.id).maxOfOrNull { it.turnNumber } ?: 0) + 1)
+                                            val nextIndex = (dao.turns(version.id).maxOfOrNull { it.sequenceIndex } ?: -1) + 1
+                                            val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = number, sequenceIndex = nextIndex, title = entry.role.title))
+                                            dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = entry.role.uid, roleTitle = entry.role.title, isLead = true))
+                                            dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = entry.text, sectionUid = entry.section.uid))
+                                            selectedDialogueKeys = selectedDialogueKeys + entry.key
+                                            selectorTurnNumber = (number + 1).toString()
+                                            turns = dao.turns(version.id)
+                                            previewText = buildDirectorVersionPreview(dao, version.id)
+                                            message = "دیالوگ نقش «${entry.role.title}» در نوبت $number ثبت شد."
+                                        } catch (e: Exception) { message = "ثبت دیالوگ ناموفق بود: ${e.message}" }
+                                        finally { busy = false }
+                                    }
+                                }) {
+                                    Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                                        Text("${entry.role.title} • ${entry.section.title}", fontWeight = FontWeight.SemiBold)
+                                        Text(entry.text, style = MaterialTheme.typography.bodySmall)
+                                        Text("انتخاب و ثبت در دفتر", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 item {
                     Text("ساخت نوبت دستی از متن", fontWeight = FontWeight.Bold)
                     ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
@@ -881,13 +1016,81 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         Column(Modifier.padding(12.dp)) {
                             Text("نوبت ${turn.turnNumber}  •  ترتیب ${turn.sequenceIndex}", fontWeight = FontWeight.Bold)
                             Text(turn.title + if (turn.turnType == DirectorTurnEntity.TYPE_COLLECTIVE) " • جمعی" else "")
+                            val turnPosition = turns.indexOfFirst { it.id == turn.id }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(enabled = turnPosition > 0, onClick = {
+                                    scope.launch {
+                                        val ordered = turns
+                                        if (turnPosition > 0) {
+                                            val previous = ordered[turnPosition - 1]
+                                            val temporary = (ordered.maxOfOrNull { it.sequenceIndex } ?: 0) + 1000
+                                            db.withTransaction {
+                                                dao.moveTurn(turn.id, temporary)
+                                                dao.moveTurn(previous.id, turn.sequenceIndex)
+                                                dao.moveTurn(turn.id, previous.sequenceIndex)
+                                            }
+                                            turns = dao.turns(turn.versionId)
+                                            previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                        }
+                                    }
+                                }) { Text("↑ انتقال به بالا") }
+                                TextButton(enabled = turnPosition >= 0 && turnPosition < turns.lastIndex, onClick = {
+                                    scope.launch {
+                                        val next = turns.getOrNull(turnPosition + 1)
+                                        if (next != null) {
+                                            val temporary = (turns.maxOfOrNull { it.sequenceIndex } ?: 0) + 1000
+                                            db.withTransaction {
+                                                dao.moveTurn(turn.id, temporary)
+                                                dao.moveTurn(next.id, turn.sequenceIndex)
+                                                dao.moveTurn(turn.id, next.sequenceIndex)
+                                            }
+                                            turns = dao.turns(turn.versionId)
+                                            previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                        }
+                                    }
+                                }) { Text("↓ انتقال به پایین") }
+                            }
+                            var editedNumber by remember(turn.id) { mutableStateOf(turn.turnNumber.toString()) }
+                            OutlinedTextField(editedNumber, { editedNumber = it.filter(Char::isDigit).take(6) }, label = { Text("اصلاح شماره نوبت") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                            if (editedNumber != turn.turnNumber.toString()) {
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        val value = editedNumber.toIntOrNull()
+                                        if (value != null && value > 0) {
+                                            dao.updateTurn(turn.copy(turnNumber = value))
+                                            turns = dao.turns(turn.versionId)
+                                            previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                            message = "شماره نوبت اصلاح شد؛ ترتیب نمایش حفظ شد."
+                                        } else message = "شماره نوبت معتبر نیست."
+                                    }
+                                }) { Text("ذخیره شماره نوبت") }
+                            }
                             if (turn.notes.isNotBlank()) Text(turn.notes, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                             val participantsState = remember(turn.id) { mutableStateOf(emptyList<DirectorParticipantEntity>()) }
                             LaunchedEffect(turn.id, refresh) {
                                 segmentState.value = dao.textSegments(turn.id).joinToString("\n") { it.text }
                                 participantsState.value = dao.participants(turn.id)
                             }
-                            Text(segmentState.value.ifBlank { "متنی برای این نوبت ثبت نشده است." }, style = MaterialTheme.typography.bodySmall)
+                            OutlinedTextField(
+                                value = segmentState.value,
+                                onValueChange = { segmentState.value = it },
+                                label = { Text("ویرایش متن دیالوگ این نوبت") },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp), minLines = 3
+                            )
+                            TextButton(enabled = segmentState.value.isNotBlank(), onClick = {
+                                scope.launch {
+                                    try {
+                                        val currentSegments = dao.textSegments(turn.id)
+                                        if (currentSegments.isEmpty()) dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turn.id, segmentIndex = 0, text = segmentState.value.trim()))
+                                        else {
+                                            dao.updateTextSegment(currentSegments.first().copy(text = segmentState.value.trim()))
+                                            currentSegments.drop(1).forEach { dao.deleteTextSegment(it.id) }
+                                        }
+                                        previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                        message = "متن دیالوگ در نسخه دفتر ذخیره شد؛ متن اصلی کتابخانه تغییر نکرد."
+                                    } catch (e: Exception) { message = "ذخیره ویرایش متن ناموفق بود: ${e.message}" }
+                                }
+                            }) { Text("ذخیره ویرایش دیالوگ") }
                             participantsState.value.filter { it.roleUid.startsWith("unmatched-") }.forEach { participant ->
                                 var mappingExpanded by remember(participant.id) { mutableStateOf(false) }
                                 ExposedDropdownMenuBox(expanded = mappingExpanded, onExpandedChange = { mappingExpanded = !mappingExpanded }) {
@@ -920,6 +1123,111 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
             if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             message?.let { msg -> item { Text(msg, color = MaterialTheme.colorScheme.primary) } }
         }
+    }
+    if (showBuildModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showBuildModeDialog = false },
+            title = { Text("روش تکمیل دفتر معین‌البکا") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("معین‌البکا تعیین کند دفتر چگونه ساخته شود. با تأیید، فقط نوبت‌های همین نسخه دفتر بازسازی می‌شوند؛ نسخه‌های دیگر و متن اصلی کتابخانه دست‌نخورده می‌مانند:")
+                    listOf(
+                        "ROLE_NUMBERED" to "۱) شماره‌گذاری خودکار متن نقش‌ها؛ هر دیالوگ به‌ترتیب نقش‌ها یک نوبت می‌شود.",
+                        "FULL_TEXT" to "۲) انتقال متن کامل به ترتیب نقش‌ها؛ متن هر نقش کامل و پشت سر هم ثبت می‌شود.",
+                        "MANUAL" to "۳) حالت دستی؛ نوبت و متن را خودتان وارد و ویرایش می‌کنید.",
+                        "SELECTOR" to "۴) انتخاب با معین‌البکا؛ نقش و سپس دیالوگ موردنظر را برای هر نوبت انتخاب می‌کنید."
+                    ).forEach { (value, label) ->
+                        Row(Modifier.fillMaxWidth().clickable { selectedBuildMode = value }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RadioButton(selected = selectedBuildMode == value, onClick = { selectedBuildMode = value })
+                            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val version = selectedVersion
+                    val plan = selectedPlan
+                    if (version == null || plan == null) {
+                        showBuildModeDialog = false
+                        return@TextButton
+                    }
+                    scope.launch {
+                        busy = true
+                        try {
+                            val tazieh = db.taziehDao().getByUid(plan.taziehUid)
+                            if (tazieh == null) throw IllegalStateException("مجلس مرتبط پیدا نشد")
+                            val roles = loadCurrentTaziehRoles(db, tazieh)
+                            val sections = db.sectionDao().getByRoles(roles.map { it.id })
+                                .filter { it.content.isNotBlank() }
+                                .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
+                            db.withTransaction {
+                                dao.turns(version.id).forEach { dao.deleteTurn(it.id) }
+                                if (selectedBuildMode == "ROLE_NUMBERED") {
+                                    var seq = 0
+                                    for (role in roles) {
+                                        val roleSections = sections.filter { it.roleId == role.id }
+                                        for (section in roleSections) {
+                                            val dialogueParts = splitDirectorDialogues(section.content)
+                                            for (part in dialogueParts) {
+                                                val number = seq + 1
+                                                val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = number, sequenceIndex = seq++, title = role.title))
+                                                dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = role.uid, roleTitle = role.title, isLead = true))
+                                                dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = part, sectionUid = section.uid))
+                                            }
+                                        }
+                                    }
+                                } else if (selectedBuildMode == "FULL_TEXT") {
+                                    var seq = 0
+                                    for (role in roles) {
+                                        val roleSections = sections.filter { it.roleId == role.id }
+                                        if (roleSections.isNotEmpty()) {
+                                            val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = seq + 1, sequenceIndex = seq++, title = role.title))
+                                            dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = role.uid, roleTitle = role.title, isLead = true))
+                                            roleSections.forEachIndexed { index, section ->
+                                                dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = index, text = section.content, sectionUid = section.uid))
+                                            }
+                                        }
+                                    }
+                                }
+                                dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $selectedBuildMode"))
+                            }
+                            selectedVersion = dao.version(version.id)
+                            turns = dao.turns(version.id)
+                            previewText = buildDirectorVersionPreview(dao, version.id)
+                            selectedRole = roles.firstOrNull()
+                            selectorRole = roles.firstOrNull()
+                            selectorTurnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                            selectedDialogueKeys = emptySet()
+                            selectorItems = sections.flatMap { section ->
+                                val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
+                                splitDirectorDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
+                            }
+                            if (selectedBuildMode == "SELECTOR") {
+                                val used = mutableSetOf<String>()
+                                for (turn in turns) {
+                                    for (segment in dao.textSegments(turn.id)) {
+                                        if (!segment.sectionUid.isNullOrBlank()) {
+                                            selectorItems.filter { it.section.uid == segment.sectionUid && it.text == segment.text }.forEach { used += it.key }
+                                        }
+                                    }
+                                }
+                                selectedDialogueKeys = used
+                            }
+                            message = when (selectedBuildMode) {
+                                "ROLE_NUMBERED" -> "دفتر به‌صورت خودکار شماره‌گذاری شد؛ ${turns.size} نوبت ساخته شد."
+                                "FULL_TEXT" -> "متن کامل ${turns.size} نقش به‌ترتیب در دفتر قرار گرفت."
+                                "MANUAL" -> "حالت دستی فعال شد؛ متن اصلی مجلس تغییری نکرد."
+                                else -> "حالت انتخاب با معین‌البکا فعال شد؛ دیالوگ‌های انتخاب‌شده دیگر در فهرست باقی‌مانده نمایش داده نمی‌شوند."
+                            }
+                            showBuildModeDialog = false
+                        } catch (e: Exception) { message = "ساخت دفتر با روش انتخابی ناموفق بود: ${e.message}" }
+                        finally { busy = false }
+                    }
+                }) { Text("ایجاد دفتر با این روش") }
+            },
+            dismissButton = { TextButton(onClick = { showBuildModeDialog = false }) { Text("بعداً") } }
+        )
     }
     deletePlanCandidate?.let { candidate ->
         AlertDialog(
