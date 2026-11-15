@@ -52,41 +52,15 @@ private data class DirectorLibraryImportResult(
     val usedDialogueOrder: Boolean
 )
 private fun splitDirectorDialogues(content: String): List<String> {
-    if (content.isBlank()) {
-        return emptyList()
-    }
+    if (content.isBlank()) return emptyList()
 
-    val blocks = mutableListOf<String>()
-    val currentBlock = mutableListOf<String>()
-
-    content.lines().forEach { rawLine ->
-        val line = rawLine.trim()
-
-        if (line.isEmpty()) {
-            if (currentBlock.isNotEmpty()) {
-                blocks.add(currentBlock.joinToString(separator = "\n"))
-                currentBlock.clear()
-            }
-        } else {
-            currentBlock.add(line)
-        }
-    }
-
-    if (currentBlock.isNotEmpty()) {
-        blocks.add(currentBlock.joinToString(separator = "\n"))
-    }
-
-    return blocks.flatMap { block ->
-        val dialogueLines = block.lines()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-
-        if (dialogueLines.size > 1) {
-            dialogueLines
-        } else {
-            listOf(block)
-        }
-    }
+    // Blank lines separate dialogue blocks. Preserve internal line breaks so
+    // verse lines and multi-line speeches remain one selectable dialogue.
+    return content.replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .split(Regex("\\n[\\t ]*\\n+"))
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
 }
 /**
  * Copies the selected majlis' already-stored library text into an empty director version.
@@ -257,6 +231,28 @@ private suspend fun buildDirectorVersionPreview(
     }
 
     return previewBlocks.joinToString("\n\n")
+}
+
+/**
+ * Matches saved section-backed segments to source dialogue items one-to-one.
+ * Repeated identical paragraphs in one section must remain independently selectable.
+ */
+private suspend fun usedDirectorDialogueKeys(
+    dao: DirectorDao,
+    versionId: Long,
+    items: List<DirectorSelectorItem>
+): Set<String> {
+    val used = mutableSetOf<String>()
+    for (turn in dao.turns(versionId)) {
+        for (segment in dao.textSegments(turn.id)) {
+            val sectionUid = segment.sectionUid ?: continue
+            val match = items.firstOrNull { item ->
+                item.key !in used && item.section.uid == sectionUid && item.text == segment.text
+            }
+            if (match != null) used += match.key
+        }
+    }
+    return used
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -430,15 +426,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
                         splitDirectorDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
                     }
-                    val used = mutableSetOf<String>()
-                    for (turn in dao.turns(version.id)) {
-                        for (segment in dao.textSegments(turn.id)) {
-                            if (!segment.sectionUid.isNullOrBlank()) {
-                                selectorItems.filter { it.section.uid == segment.sectionUid && it.text == segment.text }.forEach { used += it.key }
-                            }
-                        }
-                    }
-                    selectedDialogueKeys = used
+                    selectedDialogueKeys = usedDirectorDialogueKeys(dao, version.id, selectorItems)
                     selectorRole = selectorRole?.let { old -> roles.firstOrNull { it.uid == old.uid } } ?: roles.firstOrNull()
                     selectorTurnNumber = ((dao.turns(version.id).maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
                 }
@@ -474,7 +462,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                     val targetFieldTitle = targetTazieh?.let { target ->
                         db.fieldDao().getAll().firstOrNull { it.id == target.fieldId }?.title
                     }.orEmpty()
-                    val targetRoles = targetTazieh?.let { db.roleDao().getByTazieh(it.id) }.orEmpty()
+                    val targetRoles = targetTazieh?.let { loadCurrentTaziehRoles(db, it) }.orEmpty()
                     val parsedEntries = importedSources.flatMap { (sourceId, source) ->
                         parseDirectorSourceTurns(sourceId, source, targetFieldTitle, targetTaziehTitle, targetRoles)
                     }
@@ -1188,7 +1176,9 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                 .filter { it.content.isNotBlank() }
                                 .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
                             db.withTransaction {
-                                dao.turns(version.id).forEach { dao.deleteTurn(it.id) }
+                                if (selectedBuildMode != "MANUAL") {
+                                    dao.turns(version.id).forEach { dao.deleteTurn(it.id) }
+                                }
                                 if (selectedBuildMode == "ROLE_NUMBERED") {
                                     var seq = 0
                                     for (role in roles) {
@@ -1230,15 +1220,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                 splitDirectorDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
                             }
                             if (selectedBuildMode == "SELECTOR") {
-                                val used = mutableSetOf<String>()
-                                for (turn in turns) {
-                                    for (segment in dao.textSegments(turn.id)) {
-                                        if (!segment.sectionUid.isNullOrBlank()) {
-                                            selectorItems.filter { it.section.uid == segment.sectionUid && it.text == segment.text }.forEach { used += it.key }
-                                        }
-                                    }
-                                }
-                                selectedDialogueKeys = used
+                                selectedDialogueKeys = usedDirectorDialogueKeys(dao, version.id, selectorItems)
                             }
                             message = when (selectedBuildMode) {
                                 "ROLE_NUMBERED" -> "دفتر به‌صورت خودکار شماره‌گذاری شد؛ ${turns.size} نوبت ساخته شد."
@@ -1430,7 +1412,7 @@ private fun normalizeDirectorNumber(value: String): String = value.map { ch ->
 
 private suspend fun resolveDirectorRole(db: AppDatabase, taziehUid: String, roleTitle: String): RoleEntity? {
     val tazieh = db.taziehDao().getByUid(taziehUid) ?: return null
-    return db.roleDao().getByTazieh(tazieh.id).firstOrNull {
+    return loadCurrentTaziehRoles(db, tazieh).firstOrNull {
         ContentUid.normalize(it.title).equals(ContentUid.normalize(roleTitle), ignoreCase = true)
     }
 }
