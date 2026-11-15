@@ -47,7 +47,7 @@ private data class DirectorSelectorItem(
 private fun splitDirectorDialogues(content: String): List<String> {
     val normalized = content.replace("\r\n", "\n").replace('\r', '\n').trim()
     if (normalized.isBlank()) return emptyList()
-    val blocks = normalized.split(Regex("\n\s*\n+"))
+    val blocks = normalized.splitRegex("\\n\\s*\\n+"))
         .map { it.trim() }.filter { it.isNotBlank() }
     return blocks.flatMap { block ->
         val lines = block.lines().map { it.trim() }.filter { it.isNotBlank() }
