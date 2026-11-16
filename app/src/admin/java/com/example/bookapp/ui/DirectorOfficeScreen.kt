@@ -6,10 +6,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -17,6 +19,9 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +33,9 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.room.withTransaction
 import com.example.bookapp.data.*
+import com.example.bookapp.ui.theme.FontChoiceLabels
+import com.example.bookapp.ui.theme.colorSchemeFor
+import com.example.bookapp.ui.theme.typographyFor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -293,7 +301,23 @@ private suspend fun usedDirectorDialogueKeys(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack: () -> Unit) {
+fun DirectorOfficeScreen(
+    db: AppDatabase,
+    initialTaziehId: Long? = null,
+    darkMode: Boolean,
+    onDarkModeChange: (Boolean) -> Unit,
+    autoDarkMode: Boolean,
+    onAutoDarkModeChange: (Boolean) -> Unit,
+    fontScale: Float,
+    onFontScaleChange: (Float) -> Unit,
+    themeChoice: String,
+    onThemeChoiceChange: (String) -> Unit,
+    fontChoice: String,
+    onFontChoiceChange: (String) -> Unit,
+    keepScreenOn: Boolean,
+    onKeepScreenOnChange: (Boolean) -> Unit,
+    onBack: () -> Unit
+) {
     val context = LocalContext.current
     val dao = remember { db.directorDao() }
     val scope = rememberCoroutineScope()
@@ -331,6 +355,41 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
     var selectorRoleMenu by remember { mutableStateOf(false) }
     var selectorTurnNumber by remember { mutableStateOf("1") }
     var selectedDialogueKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var turnSearch by remember { mutableStateOf("") }
+    var showTurnSearch by remember { mutableStateOf(false) }
+    var turnSearchCorpus by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var showOfficeSettingsDialog by remember { mutableStateOf(false) }
+    var officeLineSpacing by remember { mutableFloatStateOf(Prefs.getLineSpacing(context)) }
+    val turnListState = rememberLazyListState()
+    val officeTypography = remember(fontChoice, fontScale, officeLineSpacing) {
+        val base = typographyFor(fontChoice, fontScale)
+        base.copy(
+            bodyLarge = base.bodyLarge.copy(lineHeight = base.bodyLarge.fontSize * officeLineSpacing),
+            bodyMedium = base.bodyMedium.copy(lineHeight = base.bodyMedium.fontSize * officeLineSpacing),
+            bodySmall = base.bodySmall.copy(lineHeight = base.bodySmall.fontSize * officeLineSpacing)
+        )
+    }
+    val visibleTurns = remember(turns, turnSearch, turnSearchCorpus) {
+        val query = ContentUid.normalize(normalizeDirectorNumber(turnSearch.trim()))
+        if (query.isBlank()) turns else turns.filter { turn ->
+            normalizeDirectorNumber(turn.turnNumber.toString()).contains(query, ignoreCase = true) ||
+                ContentUid.normalize(turn.title).contains(query, ignoreCase = true) ||
+                ContentUid.normalize(turnSearchCorpus[turn.id].orEmpty()).contains(query, ignoreCase = true)
+        }
+    }
+    LaunchedEffect(turns, refresh) {
+        turnSearchCorpus = turns.associate { turn ->
+            turn.id to dao.textSegments(turn.id).joinToString("\n") { it.text }
+        }
+    }
+    LaunchedEffect(turnSearch, visibleTurns.size, busy, message) {
+        if (turnSearch.isNotBlank() && visibleTurns.isNotEmpty()) {
+            withFrameNanos { }
+            val trailingItems = (if (busy) 1 else 0) + (if (message != null) 1 else 0)
+            val targetIndex = (turnListState.layoutInfo.totalItemsCount - visibleTurns.size - trailingItems).coerceAtLeast(0)
+            runCatching { turnListState.animateScrollToItem(targetIndex) }
+        }
+    }
 
     suspend fun loadPlans(reset: Boolean) {
         if (initialTaziehId != null) {
@@ -575,16 +634,50 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
     }
 
 
+    MaterialTheme(
+        colorScheme = colorSchemeFor(themeChoice, darkMode),
+        typography = officeTypography
+    ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("دفتر معین البکا") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") } },
-                actions = { IconButton(onClick = { refresh++ }) { Icon(Icons.Default.Refresh, contentDescription = "بروزرسانی") } }
-            )
+            Column {
+                TopAppBar(
+                    title = { Text("دفتر معین البکا") },
+                    navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") } },
+                    actions = {
+                        IconButton(onClick = { showTurnSearch = !showTurnSearch; if (!showTurnSearch) turnSearch = "" }) {
+                            Icon(if (showTurnSearch) Icons.Default.Close else Icons.Default.Search, contentDescription = "جستجوی نوبت و متن")
+                        }
+                        IconButton(onClick = { showOfficeSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر") }
+                        IconButton(onClick = { refresh++ }) { Icon(Icons.Default.Refresh, contentDescription = "بروزرسانی") }
+                    }
+                )
+                if (showTurnSearch) {
+                    OutlinedTextField(
+                        value = turnSearch,
+                        onValueChange = { turnSearch = it },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                        singleLine = true,
+                        label = { Text("شماره نوبت یا بخشی از متن دیالوگ را جستجو کنید") },
+                        trailingIcon = {
+                            if (turnSearch.isNotBlank()) IconButton(onClick = { turnSearch = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "پاک کردن جستجو")
+                            }
+                        }
+                    )
+                    if (turnSearch.isNotBlank()) {
+                        Text(
+                            if (visibleTurns.isEmpty()) "نتیجه‌ای پیدا نشد" else "${visibleTurns.size} نوبت پیدا شد؛ برای مشاهده به کارت نتیجه منتقل شدید.",
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         }
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(state = turnListState, modifier = Modifier.fillMaxSize().padding(padding).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text("ساخت و آماده‌سازی دفتر معین البکا برای هر تعزیه", style = MaterialTheme.typography.bodyMedium)
             }
@@ -813,7 +906,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                     turns = dao.turns(newVersionId)
                                     stageCues = dao.stageCues(newVersionId)
                                     previewText = buildDirectorVersionPreview(dao, newVersionId)
-                                    message = "نسخه پیش‌نویس جدید با کپی کامل ترتیب، نقش‌ها، متن‌ها و دستورهای صحنه ساخته شد."
+                                    message = "نسخه پیش‌نویس جدید با کپی کامل ترتیب، نقش‌ها، متن‌ها و راهنماهای صحنه ساخته شد."
                                 } catch (e: Exception) { message = "ساخت نسخه جدید ناموفق بود: ${e.message}" }
                                 finally { busy = false }
                             }
@@ -1041,8 +1134,8 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                 }
                 item {
                     Divider()
-                    Text("دستورهای صحنه", fontWeight = FontWeight.Bold)
-                    Text("برای ثبت دستور، یک نوبت را انتخاب کنید. دستور «بلافاصله» مانع عبور خودکار به نوبت بعدی می‌شود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("راهنماهای صحنه", fontWeight = FontWeight.Bold)
+                    Text("برای ثبت راهنما، یک نوبت را انتخاب کنید. راهنمای «بلافاصله» مانع عبور خودکار به نوبت بعدی می‌شود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     var expanded by remember { mutableStateOf(false) }
                     val selectedCueTurn = turns.firstOrNull { it.id == cueTurnId } ?: turns.firstOrNull()
                     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
@@ -1058,19 +1151,19 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                             }
                         }
                     }
-                    OutlinedTextField(cueInstruction, { cueInstruction = it }, label = { Text("شرح دستور صحنه") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                    OutlinedTextField(cueInstruction, { cueInstruction = it }, label = { Text("شرح راهنمای صحنه") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(enabled = selectedVersion != null && selectedCueTurn != null && cueInstruction.isNotBlank() && !busy, onClick = {
                             scope.launch {
                                 try {
                                     val order = dao.stageCues(selectedVersion!!.id).maxOfOrNull { it.orderIndex }?.plus(1) ?: 0
-                                    dao.insertStageCue(DirectorStageCueEntity(versionId = selectedVersion!!.id, turnId = selectedCueTurn!!.id, cueType = DirectorStageCueEntity.CUE_OTHER, title = "دستور صحنه", instruction = cueInstruction.trim(), orderIndex = order))
+                                    dao.insertStageCue(DirectorStageCueEntity(versionId = selectedVersion!!.id, turnId = selectedCueTurn!!.id, cueType = DirectorStageCueEntity.CUE_OTHER, title = "راهنمای صحنه", instruction = cueInstruction.trim(), orderIndex = order))
                                     cueInstruction = ""
-                                    message = "دستور صحنه ثبت شد."
+                                    message = "راهنمای صحنه ثبت شد."
                                     reload()
-                                } catch (e: Exception) { message = "ثبت دستور ناموفق بود: ${e.message}" }
+                                } catch (e: Exception) { message = "ثبت راهنما ناموفق بود: ${e.message}" }
                             }
-                        }) { Text("ثبت دستور") }
+                        }) { Text("ثبت راهنما") }
                         OutlinedButton(enabled = selectedVersion != null && selectedCueTurn != null && !busy, onClick = {
                             scope.launch {
                                 try {
@@ -1078,24 +1171,24 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                     val role = dao.participants(selectedCueTurn!!.id).firstOrNull()?.roleUid.orEmpty()
                                     dao.insertStageCue(DirectorStageCueEntity(versionId = selectedVersion!!.id, turnId = selectedCueTurn.id, cueType = DirectorStageCueEntity.CUE_IMMEDIATE, title = "بلافاصله", instruction = cueInstruction.ifBlank { "ادامه اجرا با همان نقش؛ به نوبت بعدی منتقل نشود." }, orderIndex = order, blocksNextTurn = true, continuationRoleUid = role))
                                     cueInstruction = ""
-                                    message = "دستور بلافاصله ثبت شد و عبور به نوبت بعدی را مسدود می‌کند."
+                                    message = "راهنمای بلافاصله ثبت شد و عبور به نوبت بعدی را مسدود می‌کند."
                                     reload()
-                                } catch (e: Exception) { message = "ثبت دستور بلافاصله ناموفق بود: ${e.message}" }
+                                } catch (e: Exception) { message = "ثبت راهنمای بلافاصله ناموفق بود: ${e.message}" }
                             }
                         }) { Text("بلافاصله") }
                     }
                     stageCues.forEach { cue ->
                         ListItem(
-                            headlineContent = { Text(cue.title.ifBlank { cue.cueType }) },
+                            headlineContent = { Text(cue.title.replace("دستور صحنه", "راهنمای صحنه").ifBlank { cue.cueType }) },
                             supportingContent = { Text(cue.instruction + if (cue.blocksNextTurn) " • ادامه همان نقش" else "") },
                             trailingContent = { TextButton(onClick = { scope.launch { dao.deleteStageCue(cue.id); reload() } }) { Text("حذف") } }
                         )
                     }
                 }
                 item {
-                    Text("نوبت‌های ثبت‌شده (${turns.size})", fontWeight = FontWeight.Bold)
+                    Text("نوبت‌های ثبت‌شده (${turns.size})${if (turnSearch.isNotBlank()) " • نتایج جستجو: ${visibleTurns.size}" else ""}", fontWeight = FontWeight.Bold)
                 }
-                items(turns, key = { it.id }) { turn ->
+                items(visibleTurns, key = { it.id }) { turn ->
                     val segmentState = remember(turn.id) { mutableStateOf("") }
                     var showTurnCueDialog by remember(turn.id) { mutableStateOf(false) }
                     var turnCueDraft by remember(turn.id) { mutableStateOf("") }
@@ -1109,7 +1202,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         )
                     ) {
                         Column(Modifier.padding(12.dp)) {
-                            Text("نوبت ${turn.turnNumber}  •  ترتیب ${turn.sequenceIndex}", fontWeight = FontWeight.Bold)
+                            Text("نوبت ${toPersianDirectorDigits(turn.turnNumber.toString())} از ۲۰۰  •  ترتیب ${toPersianDirectorDigits((turn.sequenceIndex + 1).toString())}", fontWeight = FontWeight.Bold)
                             Text(turn.title + if (turn.turnType == DirectorTurnEntity.TYPE_COLLECTIVE) " • جمعی" else "")
                             val turnPosition = turns.indexOfFirst { it.id == turn.id }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1146,7 +1239,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                 }) { Text("↓ انتقال به پایین") }
                             }
                             var editedNumber by remember(turn.id) { mutableStateOf(turn.turnNumber.toString()) }
-                            OutlinedTextField(editedNumber, { editedNumber = it.filter(Char::isDigit).take(6) }, label = { Text("اصلاح شماره نوبت") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                            OutlinedTextField(editedNumber, { editedNumber = it.filter(Char::isDigit).take(6) }, label = { Text("شماره نوبت") }, modifier = Modifier.width(132.dp), singleLine = true)
                             if (editedNumber != turn.turnNumber.toString()) {
                                 TextButton(onClick = {
                                     scope.launch {
@@ -1190,6 +1283,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                                     currentSegments.drop(1).forEach { dao.deleteTextSegment(it.id) }
                                                 }
                                                 previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                                turnSearchCorpus = turnSearchCorpus + (turn.id to segmentState.value)
                                                 message = "متن دیالوگ در نسخه دفتر ذخیره شد؛ متن اصلی کتابخانه تغییر نکرد."
                                             } catch (e: Exception) { message = "ذخیره ویرایش متن ناموفق بود: ${e.message}" }
                                         }
@@ -1202,7 +1296,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                         turnCueDraft = ""
                                         showTurnCueDialog = true
                                     }
-                                ) { Text("دستور صحنه (${turnStageCues.size})") }
+                                ) { Text("راهنمای صحنه (${turnStageCues.size})") }
                             }
                             if (turnStageCues.isNotEmpty()) {
                                 Card(
@@ -1213,10 +1307,10 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                         Modifier.fillMaxWidth().padding(10.dp),
                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Text("دستور صحنه این نوبت", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                                        Text("راهنمای صحنه این نوبت", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiaryContainer)
                                         turnStageCues.forEach { cue ->
                                             Column(Modifier.fillMaxWidth()) {
-                                                Text(cue.title.ifBlank { if (cue.cueType == DirectorStageCueEntity.CUE_IMMEDIATE) "بلافاصله" else "دستور اجرا" }, fontWeight = FontWeight.SemiBold)
+                                                Text(cue.title.replace("دستور صحنه", "راهنمای صحنه").ifBlank { if (cue.cueType == DirectorStageCueEntity.CUE_IMMEDIATE) "بلافاصله" else "راهنمای اجرا" }, fontWeight = FontWeight.SemiBold)
                                                 Text(
                                                     cue.instruction + if (cue.blocksNextTurn) " • ادامه همین نقش و توقف انتقال به نوبت بعد" else "",
                                                     style = MaterialTheme.typography.bodyMedium
@@ -1232,8 +1326,8 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                                             try {
                                                                 dao.deleteStageCue(cue.id)
                                                                 stageCues = dao.stageCues(turn.versionId)
-                                                                message = "دستور صحنه از این نوبت حذف شد؛ متن دیالوگ بدون تغییر ماند."
-                                                            } catch (e: Exception) { message = "حذف دستور صحنه انجام نشد: ${e.message}" }
+                                                                message = "راهنمای صحنه از این نوبت حذف شد؛ متن دیالوگ بدون تغییر ماند."
+                                                            } catch (e: Exception) { message = "حذف راهنمای صحنه انجام نشد: ${e.message}" }
                                                         }
                                                     }) { Text("حذف") }
                                                 }
@@ -1245,12 +1339,12 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                             if (showTurnCueDialog) {
                                 AlertDialog(
                                     onDismissRequest = { showTurnCueDialog = false },
-                                    title = { Text(if (editingTurnCueId == null) "ثبت دستور صحنه — نوبت ${turn.turnNumber}" else "ویرایش دستور صحنه — نوبت ${turn.turnNumber}") },
+                                    title = { Text(if (editingTurnCueId == null) "ثبت راهنمای صحنه — نوبت ${turn.turnNumber}" else "ویرایش راهنمای صحنه — نوبت ${turn.turnNumber}") },
                                     text = {
                                         OutlinedTextField(
                                             value = turnCueDraft,
                                             onValueChange = { turnCueDraft = it },
-                                            label = { Text("دستور مستقل کارگردان برای این نوبت") },
+                                            label = { Text("راهنمای مستقل کارگردان برای این نوبت") },
                                             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 240.dp),
                                             minLines = 4
                                         )
@@ -1264,7 +1358,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                                         val existingCue = editingTurnCueId?.let { id -> dao.cuesForTurn(turn.id).firstOrNull { it.id == id } }
                                                         if (existingCue != null) {
                                                             dao.updateStageCue(existingCue.copy(instruction = turnCueDraft.trim()))
-                                                            message = "دستور صحنه این نوبت ویرایش شد."
+                                                            message = "راهنمای صحنه این نوبت ویرایش شد."
                                                         } else {
                                                             val nextOrder = dao.cuesForTurn(turn.id).maxOfOrNull { it.orderIndex }?.plus(1) ?: 0
                                                             dao.insertStageCue(
@@ -1272,21 +1366,21 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                                                     versionId = turn.versionId,
                                                                     turnId = turn.id,
                                                                     cueType = DirectorStageCueEntity.CUE_OTHER,
-                                                                    title = "دستور صحنه",
+                                                                    title = "راهنمای صحنه",
                                                                     instruction = turnCueDraft.trim(),
                                                                     orderIndex = nextOrder
                                                                 )
                                                             )
-                                                            message = "دستور صحنه به نوبت ${turn.turnNumber} متصل شد."
+                                                            message = "راهنمای صحنه به نوبت ${turn.turnNumber} متصل شد."
                                                         }
                                                         stageCues = dao.stageCues(turn.versionId)
                                                         showTurnCueDialog = false
                                                     } catch (e: Exception) {
-                                                        message = "ذخیره دستور صحنه انجام نشد: ${e.message}"
+                                                        message = "ذخیره راهنمای صحنه انجام نشد: ${e.message}"
                                                     }
                                                 }
                                             }
-                                        ) { Text("ذخیره دستور") }
+                                        ) { Text("ذخیره راهنما") }
                                     },
                                     dismissButton = {
                                         TextButton(onClick = { showTurnCueDialog = false }) { Text("انصراف") }
@@ -1465,6 +1559,68 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
             dismissButton = { TextButton(onClick = { showBuildModeDialog = false }) { Text("بعداً") } }
         )
     }
+    if (showOfficeSettingsDialog) {
+        AlertDialog(
+            onDismissRequest = { showOfficeSettingsDialog = false },
+            title = { Text("تنظیمات دفتر معین‌البکا") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text("حالت شب")
+                        Switch(checked = darkMode, onCheckedChange = {
+                            onDarkModeChange(it)
+                            if (autoDarkMode) onAutoDarkModeChange(false)
+                        })
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("تغییر خودکار روز و شب")
+                            Text("بر اساس ساعت دستگاه", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = autoDarkMode, onCheckedChange = { enabled ->
+                            onAutoDarkModeChange(enabled)
+                            if (enabled) onDarkModeChange(Prefs.isNightTimeNow())
+                        })
+                    }
+                    Text("اندازه نوشته: ${(fontScale * 100).toInt()}٪")
+                    Slider(value = fontScale.coerceIn(0.8f, 2f), onValueChange = onFontScaleChange, valueRange = 0.8f..2f, steps = 11)
+                    Text("فاصله خطوط: ${"%.1f".format(officeLineSpacing)}")
+                    Slider(value = officeLineSpacing.coerceIn(1.1f, 1.8f), onValueChange = {
+                        officeLineSpacing = it
+                        Prefs.setLineSpacing(context, it)
+                    }, valueRange = 1.1f..1.8f, steps = 2)
+                    Text("نوع قلم")
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FontChoiceLabels.forEach { (key, label) ->
+                            Row(Modifier.fillMaxWidth().clickable {
+                                onFontChoiceChange(key)
+                            }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                RadioButton(selected = fontChoice == key, onClick = { onFontChoiceChange(key) })
+                                Text(label)
+                            }
+                        }
+                    }
+                    Text("رنگ‌بندی")
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("default" to "طلایی", "green" to "سبز", "red" to "قرمز").forEach { (key, label) ->
+                            FilterChip(selected = themeChoice == key, onClick = { onThemeChoiceChange(key) }, label = { Text(label) })
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("روشن ماندن صفحه")
+                            Text("هنگام کار با دفتر، صفحه خاموش نشود", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = keepScreenOn, onCheckedChange = onKeepScreenOnChange)
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showOfficeSettingsDialog = false }) { Text("بستن") } }
+        )
+    }
     deletePlanCandidate?.let { candidate ->
         AlertDialog(
             onDismissRequest = { deletePlanCandidate = null },
@@ -1488,6 +1644,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
             },
             dismissButton = { TextButton(onClick = { deletePlanCandidate = null }) { Text("انصراف") } }
         )
+    }
     }
 }
 
@@ -1629,6 +1786,10 @@ private fun parseRoleLabeledCombinedText(
     flush()
     return result
 }
+
+private fun toPersianDirectorDigits(value: String): String = value.map { ch ->
+    if (ch in '0'..'9') ('۰'.code + (ch.code - '0'.code)).toChar() else ch
+}.joinToString("")
 
 private fun normalizeDirectorNumber(value: String): String = value.map { ch ->
     when (ch) {

@@ -79,7 +79,19 @@ private const val ROUTE_DIRECTOR_OFFICE = "director_office"
 fun NavGraphBuilder.adminOnlyRoutes(
     navController: NavHostController,
     db: AppDatabase,
-    context: android.content.Context
+    context: android.content.Context,
+    darkMode: Boolean,
+    onDarkModeChange: (Boolean) -> Unit,
+    autoDarkMode: Boolean,
+    onAutoDarkModeChange: (Boolean) -> Unit,
+    fontScale: Float,
+    onFontScaleChange: (Float) -> Unit,
+    themeChoice: String,
+    onThemeChoiceChange: (String) -> Unit,
+    fontChoice: String,
+    onFontChoiceChange: (String) -> Unit,
+    keepScreenOn: Boolean,
+    onKeepScreenOnChange: (Boolean) -> Unit
 ) {
     composable(ROUTE_ENCYCLOPEDIA) {
         EncyclopediaManagementScreen(
@@ -123,6 +135,18 @@ fun NavGraphBuilder.adminOnlyRoutes(
     composable(ROUTE_DIRECTOR_OFFICE) {
         DirectorOfficeScreen(
             db = db,
+            darkMode = darkMode,
+            onDarkModeChange = onDarkModeChange,
+            autoDarkMode = autoDarkMode,
+            onAutoDarkModeChange = onAutoDarkModeChange,
+            fontScale = fontScale,
+            onFontScaleChange = onFontScaleChange,
+            themeChoice = themeChoice,
+            onThemeChoiceChange = onThemeChoiceChange,
+            fontChoice = fontChoice,
+            onFontChoiceChange = onFontChoiceChange,
+            keepScreenOn = keepScreenOn,
+            onKeepScreenOnChange = onKeepScreenOnChange,
             onBack = { navController.popBackStack() }
         )
     }
@@ -132,6 +156,18 @@ fun NavGraphBuilder.adminOnlyRoutes(
         DirectorOfficeScreen(
             db = db,
             initialTaziehId = initialTaziehId,
+            darkMode = darkMode,
+            onDarkModeChange = onDarkModeChange,
+            autoDarkMode = autoDarkMode,
+            onAutoDarkModeChange = onAutoDarkModeChange,
+            fontScale = fontScale,
+            onFontScaleChange = onFontScaleChange,
+            themeChoice = themeChoice,
+            onThemeChoiceChange = onThemeChoiceChange,
+            fontChoice = fontChoice,
+            onFontChoiceChange = onFontChoiceChange,
+            keepScreenOn = keepScreenOn,
+            onKeepScreenOnChange = onKeepScreenOnChange,
             onBack = { navController.popBackStack() }
         )
     }
