@@ -847,7 +847,14 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                 }
                 item {
                     Text("پیش‌نمایش و متن ورودی", fontWeight = FontWeight.Bold)
-                    OutlinedTextField(previewText, { previewText = it }, label = { Text("متن استخراج‌شده / متن قابل اصلاح") }, modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp), minLines = 5)
+                    OutlinedTextField(
+                        value = previewText,
+                        onValueChange = { previewText = it },
+                        label = { Text("متن استخراج‌شده / متن قابل اصلاح") },
+                        // Keep the preview compact; long content scrolls inside the field.
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp),
+                        minLines = 3
+                    )
                     Text("PDF متنی استخراج می‌شود؛ PDF اسکن‌شده و تصویر تا زمان نصب مدل OCR فارسی/عربی فقط به‌عنوان منبع نگهداری می‌شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 item {
@@ -948,7 +955,14 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         }
                     }
                     OutlinedTextField(turnNumber, { turnNumber = it.filter(Char::isDigit).take(6) }, label = { Text("شماره نوبت") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    OutlinedTextField(turnText, { turnText = it }, label = { Text("متن این نوبت") }, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp), minLines = 4)
+                    OutlinedTextField(
+                        value = turnText,
+                        onValueChange = { turnText = it },
+                        label = { Text("متن این نوبت") },
+                        // Match the other bounded turn fields; long content scrolls internally.
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp),
+                        minLines = 3
+                    )
                     Button(enabled = selectedVersion != null && selectedRole != null && turnText.isNotBlank() && !busy, onClick = {
                         scope.launch {
                             busy = true
