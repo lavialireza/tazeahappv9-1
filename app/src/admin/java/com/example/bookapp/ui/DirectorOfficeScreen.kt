@@ -1089,7 +1089,9 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                 value = segmentState.value,
                                 onValueChange = { segmentState.value = it },
                                 label = { Text("ویرایش متن دیالوگ این نوبت") },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp), minLines = 3
+                                // Keep each turn's editor bounded; long text scrolls inside this field
+                                // while the surrounding LazyColumn remains independently scrollable.
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp), minLines = 3
                             )
                             TextButton(enabled = segmentState.value.isNotBlank(), onClick = {
                                 scope.launch {
