@@ -62,6 +62,41 @@ private fun splitDirectorDialogues(content: String): List<String> {
         .map { it.trim() }
         .filter { it.isNotBlank() }
 }
+
+/**
+ * Reads dialogue numbers embedded in each role's own text.
+ * Accepted line starts include "1 - text", "۱) متن", "2: متن",
+ * "دیالوگ ۳: متن", and a number on its own line followed by the speech.
+ * Lines after a numbered heading remain part of that dialogue until the next heading.
+ */
+private fun parseRoleNumberedDialogues(content: String): List<Pair<Int, String>> {
+    if (content.isBlank()) return emptyList()
+    val heading = Regex("^\\s*(?:(?:دیالوگ|نوبت|شماره)\\s*)?([0-9۰-۹٠-٩]{1,6})(?:\\s*[-–—ـ.)،:：]\\s*|\\s+|$)(.*)$")
+    val result = mutableListOf<Pair<Int, String>>()
+    var currentNumber: Int? = null
+    val body = StringBuilder()
+
+    fun flush() {
+        val number = currentNumber
+        val text = body.toString().trim()
+        if (number != null && text.isNotBlank()) result += number to text
+        body.setLength(0)
+    }
+
+    content.replace("\r\n", "\n").replace('\r', '\n').lines().forEach { line ->
+        val match = heading.matchEntire(line)
+        if (match != null) {
+            flush()
+            currentNumber = normalizeDirectorNumber(match.groupValues[1]).toIntOrNull()
+            val inlineText = match.groupValues[2].trim()
+            if (inlineText.isNotBlank()) body.append(inlineText).append('\n')
+        } else if (currentNumber != null) {
+            body.append(line).append('\n')
+        }
+    }
+    flush()
+    return result
+}
 /**
  * Copies the selected majlis' already-stored library text into an empty director version.
  * It never edits roles/sections or imports content from another majlis.
@@ -1162,7 +1197,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("معین‌البکا تعیین کند دفتر چگونه ساخته شود. با تأیید، فقط نوبت‌های همین نسخه دفتر بازسازی می‌شوند؛ نسخه‌های دیگر و متن اصلی کتابخانه دست‌نخورده می‌مانند:")
                     listOf(
-                        "ROLE_NUMBERED" to "۱) شماره‌گذاری خودکار متن نقش‌ها؛ هر دیالوگ به‌ترتیب نقش‌ها یک نوبت می‌شود.",
+                        "ROLE_NUMBERED" to "۱) انتخاب بر اساس شماره دیالوگ داخل متن هر نقش؛ دیالوگ‌های هم‌شماره در یک نوبت قرار می‌گیرند.",
                         "FULL_TEXT" to "۲) انتقال متن کامل به ترتیب نقش‌ها؛ متن هر نقش کامل و پشت سر هم ثبت می‌شود.",
                         "MANUAL" to "۳) حالت دستی؛ نوبت و متن را خودتان وارد و ویرایش می‌کنید.",
                         "SELECTOR" to "۴) انتخاب با معین‌البکا؛ نقش و سپس دیالوگ موردنظر را برای هر نوبت انتخاب می‌کنید."
@@ -1196,17 +1231,57 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                     dao.turns(version.id).forEach { dao.deleteTurn(it.id) }
                                 }
                                 if (selectedBuildMode == "ROLE_NUMBERED") {
-                                    var seq = 0
-                                    for (role in roles) {
-                                        val roleSections = sections.filter { it.roleId == role.id }
-                                        for (section in roleSections) {
-                                            val dialogueParts = splitDirectorDialogues(section.content)
-                                            for (part in dialogueParts) {
-                                                val number = seq + 1
-                                                val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = number, sequenceIndex = seq++, title = role.title))
-                                                dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = role.uid, roleTitle = role.title, isLead = true))
-                                                dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = part, sectionUid = section.uid))
-                                            }
+                                    // Match each role's own dialogue number instead of assigning
+                                    // sequential numbers by role order. Equal numbers across roles
+                                    // become one collective turn (e.g. Shمر/Imam for turn 1/2).
+                                    data class NumberedEntry(
+                                        val role: RoleEntity,
+                                        val section: SectionEntity,
+                                        val text: String
+                                    )
+                                    val numberedEntries = sections.flatMap { section ->
+                                        val role = roles.firstOrNull { it.id == section.roleId }
+                                            ?: return@flatMap emptyList()
+                                        parseRoleNumberedDialogues(section.content).map { (number, text) ->
+                                            Triple(number, role, NumberedEntry(role, section, text))
+                                        }
+                                    }
+                                    if (numberedEntries.isEmpty()) {
+                                        throw IllegalStateException("در متن نقش‌ها شماره دیالوگ پیدا نشد. شماره هر دیالوگ را در ابتدای خط، مانند «۱- متن دیالوگ»، وارد کنید.")
+                                    }
+                                    var sequence = 0
+                                    for ((number, entriesForNumber) in numberedEntries.groupBy { it.first }.toSortedMap()) {
+                                        val entries = entriesForNumber.map { it.third }
+                                        val distinctRoles = entries.map { it.role }.distinctBy { it.uid }
+                                        val turnId = dao.insertTurn(
+                                            DirectorTurnEntity(
+                                                versionId = version.id,
+                                                turnNumber = number,
+                                                sequenceIndex = sequence++,
+                                                turnType = if (distinctRoles.size > 1) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
+                                                title = if (distinctRoles.size > 1) distinctRoles.joinToString("، ") { it.title } else distinctRoles.first().title
+                                            )
+                                        )
+                                        distinctRoles.forEachIndexed { index, role ->
+                                            dao.insertParticipant(
+                                                DirectorParticipantEntity(
+                                                    turnId = turnId,
+                                                    roleUid = role.uid,
+                                                    roleTitle = role.title,
+                                                    orderIndex = index,
+                                                    isLead = index == 0
+                                                )
+                                            )
+                                        }
+                                        entries.forEachIndexed { index, entry ->
+                                            dao.insertTextSegment(
+                                                DirectorTextSegmentEntity(
+                                                    turnId = turnId,
+                                                    segmentIndex = index,
+                                                    text = entry.text,
+                                                    sectionUid = entry.section.uid
+                                                )
+                                            )
                                         }
                                     }
                                 } else if (selectedBuildMode == "FULL_TEXT") {
@@ -1239,7 +1314,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                 selectedDialogueKeys = usedDirectorDialogueKeys(dao, version.id, selectorItems)
                             }
                             message = when (selectedBuildMode) {
-                                "ROLE_NUMBERED" -> "دفتر به‌صورت خودکار شماره‌گذاری شد؛ ${turns.size} نوبت ساخته شد."
+                                "ROLE_NUMBERED" -> "نوبت‌ها بر اساس شماره‌های داخل متن نقش‌ها ساخته شدند؛ ${turns.size} شماره دیالوگ شناسایی شد و متن همان دیالوگ‌ها ثبت شد."
                                 "FULL_TEXT" -> "متن کامل ${turns.size} نقش به‌ترتیب در دفتر قرار گرفت."
                                 "MANUAL" -> "حالت دستی فعال شد؛ متن اصلی مجلس تغییری نکرد."
                                 else -> "حالت انتخاب با معین‌البکا فعال شد؛ دیالوگ‌های انتخاب‌شده دیگر در فهرست باقی‌مانده نمایش داده نمی‌شوند."
