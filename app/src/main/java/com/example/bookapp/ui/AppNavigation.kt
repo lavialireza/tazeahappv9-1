@@ -1043,7 +1043,23 @@ fun AppNavigation(
         // app/src/admin/java/.../AdminNavGraph.kt (پیاده‌سازی واقعی) و
         // app/src/viewer/java/.../AdminNavGraph.kt (بدون کد، خالی). به همین
         // دلیل کد این صفحات هرگز در خروجی Viewer کامپایل نمی‌شود.
-        adminOnlyRoutes(navController = navController, db = db, context = context)
+        adminOnlyRoutes(
+            navController = navController,
+            db = db,
+            context = context,
+            darkMode = darkMode,
+            onDarkModeChange = onDarkModeChange,
+            autoDarkMode = autoDarkMode,
+            onAutoDarkModeChange = onAutoDarkModeChange,
+            fontScale = fontScale,
+            onFontScaleChange = onFontScaleChange,
+            themeChoice = themeChoice,
+            onThemeChoiceChange = onThemeChoiceChange,
+            fontChoice = fontChoice,
+            onFontChoiceChange = onFontChoiceChange,
+            keepScreenOn = keepScreenOn,
+            onKeepScreenOnChange = onKeepScreenOnChange
+        )
 
         dialogueFeatureRoutes(
             navController = navController,
