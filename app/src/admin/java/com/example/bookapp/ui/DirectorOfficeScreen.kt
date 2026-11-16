@@ -5,6 +5,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +29,10 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -368,6 +375,11 @@ fun DirectorOfficeScreen(
             bodyMedium = base.bodyMedium.copy(lineHeight = base.bodyMedium.fontSize * officeLineSpacing),
             bodySmall = base.bodySmall.copy(lineHeight = base.bodySmall.fontSize * officeLineSpacing)
         )
+    }
+    // The denominator is always derived from the complete turn list loaded for the selected office version.
+    // Search filtering affects visibleTurns only and must never affect the total count.
+    val totalTurnCount = remember(turns, selectedVersion?.id) {
+        turns.count { selectedVersion == null || it.versionId == selectedVersion.id }
     }
     val visibleTurns = remember(turns, turnSearch, turnSearchCorpus) {
         val query = ContentUid.normalize(normalizeDirectorNumber(turnSearch.trim()))
@@ -1198,11 +1210,23 @@ fun DirectorOfficeScreen(
                     Card(
                         Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.surfaceVariant else Color(0xFFE8F5E9)
+                            containerColor = if (turnCardIndex % 2 == 0) {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            } else if (darkMode) {
+                                Color(0xFF173D2B) // deep green for night mode
+                            } else {
+                                Color(0xFFE8F5E9) // soft green for day mode
+                            },
+                            contentColor = if (turnCardIndex % 2 == 0) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else if (darkMode) {
+                                Color(0xFFF1FFF5) // high-contrast text on deep green
+                            } else {
+                                Color(0xFF1B4332)
+                            }
                         )
                     ) {
                         Column(Modifier.padding(12.dp)) {
-                            Text("نوبت ${toPersianDirectorDigits(turn.turnNumber.toString())} از ۲۰۰  •  ترتیب ${toPersianDirectorDigits((turn.sequenceIndex + 1).toString())}", fontWeight = FontWeight.Bold)
                             Text(turn.title + if (turn.turnType == DirectorTurnEntity.TYPE_COLLECTIVE) " • جمعی" else "")
                             val turnPosition = turns.indexOfFirst { it.id == turn.id }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1239,7 +1263,47 @@ fun DirectorOfficeScreen(
                                 }) { Text("↓ انتقال به پایین") }
                             }
                             var editedNumber by remember(turn.id) { mutableStateOf(turn.turnNumber.toString()) }
-                            OutlinedTextField(editedNumber, { editedNumber = it.filter(Char::isDigit).take(6) }, label = { Text("شماره نوبت") }, modifier = Modifier.width(132.dp), singleLine = true)
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surface,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text(
+                                        "نوبت ${toPersianDirectorDigits(turn.turnNumber.toString())} از ${toPersianDirectorDigits(totalTurnCount.toString())}  •  ترتیب ${toPersianDirectorDigits((turn.sequenceIndex + 1).toString())}",
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Box(
+                                        modifier = Modifier.widthIn(min = 44.dp, max = 76.dp),
+                                        contentAlignment = Alignment.CenterEnd
+                                    ) {
+                                        BasicTextField(
+                                            value = editedNumber,
+                                            onValueChange = { editedNumber = it.filter(Char::isDigit).take(6) },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.End
+                                            ),
+                                            decorationBox = { innerTextField ->
+                                                Box(contentAlignment = Alignment.CenterEnd) {
+                                                    if (editedNumber.isBlank()) Text("شماره", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    innerTextField()
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                             if (editedNumber != turn.turnNumber.toString()) {
                                 TextButton(onClick = {
                                     scope.launch {
