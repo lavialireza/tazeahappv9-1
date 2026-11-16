@@ -637,6 +637,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                         selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
                                         sources = dao.sourceFiles(existingPlan.id)
                                         turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
+                                        stageCues = selectedVersion?.let { dao.stageCues(it.id) }.orEmpty()
                                         val currentVersion = selectedVersion
                                         if (currentVersion != null && !directorVersionHasText(dao, currentVersion.id)) {
                                             val result = importExistingTaziehText(db, currentVersion.id, target?.id ?: selectedTazieh!!.id)
@@ -689,7 +690,10 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         selectedVersion = versions.firstOrNull()
                         sources = dao.sourceFiles(plan.id)
                         turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
-                        selectedVersion?.let { previewText = buildDirectorVersionPreview(dao, it.id) }
+                        selectedVersion?.let {
+                            stageCues = dao.stageCues(it.id)
+                            previewText = buildDirectorVersionPreview(dao, it.id)
+                        } ?: run { stageCues = emptyList() }
                         val currentVersion = selectedVersion
                         if (currentVersion != null && !directorVersionHasText(dao, currentVersion.id)) {
                             val tazieh = db.taziehDao().getByUid(plan.taziehUid)
@@ -731,7 +735,10 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                     Text("نقش‌های ثبت‌شده در همین مجلس (${roleOptions.size})", fontWeight = FontWeight.SemiBold)
                     if (roleOptions.isEmpty()) Text("برای این مجلس هنوز نقشی در کتابخانه ثبت نشده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     else Text(roleOptions.joinToString("، ") { it.title }, style = MaterialTheme.typography.bodySmall)
-                    Card(Modifier.fillMaxWidth()) {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    ) {
                         Column(Modifier.fillMaxWidth().heightIn(min = 130.dp, max = 280.dp).verticalScroll(rememberScrollState()).padding(12.dp)) {
                             Text("متن کامل دفتر (نمایش پیوسته)", fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(6.dp))
@@ -739,20 +746,25 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         }
                     }
                     if (planVersions.isNotEmpty()) {
-                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            planVersions.forEach { version ->
-                                TextButton(
-                                    onClick = {
-                                        selectedVersion = version
-                                        version.changeNotes.substringAfter("روش تکمیل دفتر: ", "").takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
-                                        scope.launch {
-                                            turns = dao.turns(version.id)
-                                            stageCues = dao.stageCues(version.id)
-                                            previewText = buildDirectorVersionPreview(dao, version.id)
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("نسخه ${version.versionNumber}: ${version.title}  •  ${if (version.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "منتشرشده" else "پیش‌نویس"}") }
+                        Card(
+                            Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                planVersions.forEach { version ->
+                                    TextButton(
+                                        onClick = {
+                                            selectedVersion = version
+                                            version.changeNotes.substringAfter("روش تکمیل دفتر: ", "").takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
+                                            scope.launch {
+                                                turns = dao.turns(version.id)
+                                                stageCues = dao.stageCues(version.id)
+                                                previewText = buildDirectorVersionPreview(dao, version.id)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text("نسخه ${version.versionNumber}: ${version.title}  •  ${if (version.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "منتشرشده" else "پیش‌نویس"}") }
+                                }
                             }
                         }
                     }
@@ -829,41 +841,55 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                             }
                         }) { Text("انتشار نسخه انتخابی", maxLines = 2) }
                     }
-                    if (turns.isEmpty()) {
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = selectedPlan != null && selectedVersion != null && !busy,
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    try {
-                                        val plan = selectedPlan!!
-                                        val version = selectedVersion!!
-                                        val tazieh = db.taziehDao().getByUid(plan.taziehUid)
-                                        if (tazieh == null) {
-                                            message = "مجلس مرتبط با این دفتر در کتابخانه پیدا نشد."
-                                        } else {
-                                            val result = importExistingTaziehText(db, version.id, tazieh.id)
-                                            turns = dao.turns(version.id)
-                                            previewText = buildDirectorVersionPreview(dao, version.id)
-                                            message = if (result.sectionCount > 0) {
-                                                "${result.sectionCount} بخش از متن‌های داخلی ${result.roleCount} نقش در ${result.turnCount} نوبت به دفتر منتقل شد."
-                                            } else {
-                                                "در نقش‌های این مجلس متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (turns.isEmpty()) {
+                                OutlinedButton(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = selectedPlan != null && selectedVersion != null && !busy,
+                                    onClick = {
+                                        scope.launch {
+                                            busy = true
+                                            try {
+                                                val plan = selectedPlan!!
+                                                val version = selectedVersion!!
+                                                val tazieh = db.taziehDao().getByUid(plan.taziehUid)
+                                                if (tazieh == null) {
+                                                    message = "مجلس مرتبط با این دفتر در کتابخانه پیدا نشد."
+                                                } else {
+                                                    val result = importExistingTaziehText(db, version.id, tazieh.id)
+                                                    turns = dao.turns(version.id)
+                                                    previewText = buildDirectorVersionPreview(dao, version.id)
+                                                    message = if (result.sectionCount > 0) {
+                                                        "${result.sectionCount} بخش از متن‌های داخلی ${result.roleCount} نقش در ${result.turnCount} نوبت به دفتر منتقل شد."
+                                                    } else {
+                                                        "در نقش‌های این مجلس متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
+                                                    }
+                                                    refresh++
+                                                }
+                                            } catch (e: Exception) {
+                                                message = "انتقال متن‌های داخلی ناموفق بود: ${e.message}"
+                                            } finally {
+                                                busy = false
                                             }
-                                            refresh++
                                         }
-                                    } catch (e: Exception) {
-                                        message = "انتقال متن‌های داخلی ناموفق بود: ${e.message}"
-                                    } finally {
-                                        busy = false
                                     }
-                                }
+                                ) { Text("تکمیل دفتر از متن‌های موجود برنامه") }
                             }
-                        ) { Text("تکمیل دفتر از متن‌های موجود برنامه") }
-                    }
-                    Button(onClick = { importLauncher.launch(arrayOf("text/plain", "application/json", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "image/*")) }, enabled = !busy) {
-                        Icon(Icons.Default.FileOpen, null); Spacer(Modifier.width(6.dp)); Text("ورود فایل کامل یا فایل‌های جداگانه نقش‌ها")
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { importLauncher.launch(arrayOf("text/plain", "application/json", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "image/*")) },
+                                enabled = !busy
+                            ) {
+                                Icon(Icons.Default.FileOpen, null); Spacer(Modifier.width(6.dp)); Text("ورود فایل کامل یا فایل‌های جداگانه نقش‌ها")
+                            }
+                        }
                     }
                 }
                 item {
@@ -1071,6 +1097,10 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                 }
                 items(turns, key = { it.id }) { turn ->
                     val segmentState = remember(turn.id) { mutableStateOf("") }
+                    var showTurnCueDialog by remember(turn.id) { mutableStateOf(false) }
+                    var turnCueDraft by remember(turn.id) { mutableStateOf("") }
+                    var editingTurnCueId by remember(turn.id) { mutableStateOf<Long?>(null) }
+                    val turnStageCues = stageCues.filter { it.turnId == turn.id }
                     val turnCardIndex = turns.indexOfFirst { it.id == turn.id }
                     Card(
                         Modifier.fillMaxWidth(),
@@ -1143,20 +1173,126 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                                 // while the surrounding LazyColumn remains independently scrollable.
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp), minLines = 3
                             )
-                            TextButton(enabled = segmentState.value.isNotBlank(), onClick = {
-                                scope.launch {
-                                    try {
-                                        val currentSegments = dao.textSegments(turn.id)
-                                        if (currentSegments.isEmpty()) dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turn.id, segmentIndex = 0, text = segmentState.value.trim()))
-                                        else {
-                                            dao.updateTextSegment(currentSegments.first().copy(text = segmentState.value.trim()))
-                                            currentSegments.drop(1).forEach { dao.deleteTextSegment(it.id) }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                TextButton(
+                                    modifier = Modifier.weight(1f),
+                                    enabled = segmentState.value.isNotBlank(),
+                                    onClick = {
+                                        scope.launch {
+                                            try {
+                                                val currentSegments = dao.textSegments(turn.id)
+                                                if (currentSegments.isEmpty()) dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turn.id, segmentIndex = 0, text = segmentState.value.trim()))
+                                                else {
+                                                    dao.updateTextSegment(currentSegments.first().copy(text = segmentState.value.trim()))
+                                                    currentSegments.drop(1).forEach { dao.deleteTextSegment(it.id) }
+                                                }
+                                                previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                                message = "متن دیالوگ در نسخه دفتر ذخیره شد؛ متن اصلی کتابخانه تغییر نکرد."
+                                            } catch (e: Exception) { message = "ذخیره ویرایش متن ناموفق بود: ${e.message}" }
                                         }
-                                        previewText = buildDirectorVersionPreview(dao, turn.versionId)
-                                        message = "متن دیالوگ در نسخه دفتر ذخیره شد؛ متن اصلی کتابخانه تغییر نکرد."
-                                    } catch (e: Exception) { message = "ذخیره ویرایش متن ناموفق بود: ${e.message}" }
+                                    }
+                                ) { Text("ذخیره ویرایش دیالوگ") }
+                                OutlinedButton(
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        editingTurnCueId = null
+                                        turnCueDraft = ""
+                                        showTurnCueDialog = true
+                                    }
+                                ) { Text("دستور صحنه (${turnStageCues.size})") }
+                            }
+                            if (turnStageCues.isNotEmpty()) {
+                                Card(
+                                    Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                                ) {
+                                    Column(
+                                        Modifier.fillMaxWidth().padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text("دستور صحنه این نوبت", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                                        turnStageCues.forEach { cue ->
+                                            Column(Modifier.fillMaxWidth()) {
+                                                Text(cue.title.ifBlank { if (cue.cueType == DirectorStageCueEntity.CUE_IMMEDIATE) "بلافاصله" else "دستور اجرا" }, fontWeight = FontWeight.SemiBold)
+                                                Text(
+                                                    cue.instruction + if (cue.blocksNextTurn) " • ادامه همین نقش و توقف انتقال به نوبت بعد" else "",
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    TextButton(onClick = {
+                                                        editingTurnCueId = cue.id
+                                                        turnCueDraft = cue.instruction
+                                                        showTurnCueDialog = true
+                                                    }) { Text("ویرایش") }
+                                                    TextButton(onClick = {
+                                                        scope.launch {
+                                                            try {
+                                                                dao.deleteStageCue(cue.id)
+                                                                stageCues = dao.stageCues(turn.versionId)
+                                                                message = "دستور صحنه از این نوبت حذف شد؛ متن دیالوگ بدون تغییر ماند."
+                                                            } catch (e: Exception) { message = "حذف دستور صحنه انجام نشد: ${e.message}" }
+                                                        }
+                                                    }) { Text("حذف") }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                            }) { Text("ذخیره ویرایش دیالوگ") }
+                            }
+                            if (showTurnCueDialog) {
+                                AlertDialog(
+                                    onDismissRequest = { showTurnCueDialog = false },
+                                    title = { Text(if (editingTurnCueId == null) "ثبت دستور صحنه — نوبت ${turn.turnNumber}" else "ویرایش دستور صحنه — نوبت ${turn.turnNumber}") },
+                                    text = {
+                                        OutlinedTextField(
+                                            value = turnCueDraft,
+                                            onValueChange = { turnCueDraft = it },
+                                            label = { Text("دستور مستقل کارگردان برای این نوبت") },
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 240.dp),
+                                            minLines = 4
+                                        )
+                                    },
+                                    confirmButton = {
+                                        TextButton(
+                                            enabled = turnCueDraft.isNotBlank() && !busy,
+                                            onClick = {
+                                                scope.launch {
+                                                    try {
+                                                        val existingCue = editingTurnCueId?.let { id -> dao.cuesForTurn(turn.id).firstOrNull { it.id == id } }
+                                                        if (existingCue != null) {
+                                                            dao.updateStageCue(existingCue.copy(instruction = turnCueDraft.trim()))
+                                                            message = "دستور صحنه این نوبت ویرایش شد."
+                                                        } else {
+                                                            val nextOrder = dao.cuesForTurn(turn.id).maxOfOrNull { it.orderIndex }?.plus(1) ?: 0
+                                                            dao.insertStageCue(
+                                                                DirectorStageCueEntity(
+                                                                    versionId = turn.versionId,
+                                                                    turnId = turn.id,
+                                                                    cueType = DirectorStageCueEntity.CUE_OTHER,
+                                                                    title = "دستور صحنه",
+                                                                    instruction = turnCueDraft.trim(),
+                                                                    orderIndex = nextOrder
+                                                                )
+                                                            )
+                                                            message = "دستور صحنه به نوبت ${turn.turnNumber} متصل شد."
+                                                        }
+                                                        stageCues = dao.stageCues(turn.versionId)
+                                                        showTurnCueDialog = false
+                                                    } catch (e: Exception) {
+                                                        message = "ذخیره دستور صحنه انجام نشد: ${e.message}"
+                                                    }
+                                                }
+                                            }
+                                        ) { Text("ذخیره دستور") }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { showTurnCueDialog = false }) { Text("انصراف") }
+                                    }
+                                )
+                            }
                             participantsState.value.filter { it.roleUid.startsWith("unmatched-") }.forEach { participant ->
                                 var mappingExpanded by remember(participant.id) { mutableStateOf(false) }
                                 ExposedDropdownMenuBox(expanded = mappingExpanded, onExpandedChange = { mappingExpanded = !mappingExpanded }) {
