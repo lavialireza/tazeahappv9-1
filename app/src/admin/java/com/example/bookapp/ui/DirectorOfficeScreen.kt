@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -586,7 +587,6 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
         LazyColumn(Modifier.fillMaxSize().padding(padding).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text("ساخت و آماده‌سازی دفتر معین البکا برای هر تعزیه", style = MaterialTheme.typography.bodyMedium)
-                Text("فایل منبع بدون تغییر نگهداری می‌شود؛ اطلاعات دفتر مستقل از متن رسمی کتابخانه است.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item {
                 Card {
@@ -708,7 +708,6 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                             val tazieh = taziehOptions.firstOrNull { it.uid == plan.taziehUid }
                             val fieldTitle = tazieh?.let { t -> fieldOptions.firstOrNull { it.id == t.fieldId }?.title }.orEmpty()
                             Text("${fieldTitle.ifBlank { "زمینه نامشخص" }}  ←  ${tazieh?.title ?: plan.taziehUid}", style = MaterialTheme.typography.bodySmall)
-                            Text("وضعیت: ${if (plan.status == DirectorPlanEntity.STATUS_PUBLISHED) "منتشرشده" else "پیش‌نویس"}", style = MaterialTheme.typography.labelSmall)
                         }
                         IconButton(onClick = { deletePlanCandidate = plan }) {
                             Icon(Icons.Default.Delete, contentDescription = "حذف دفتر")
@@ -728,7 +727,7 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                 item {
                     Divider()
                     Text("مدیریت: ${selectedPlan!!.title}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("نسخه انتخابی: ${selectedVersion?.title ?: "ندارد"} | وضعیت: ${selectedVersion?.status ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                    Text("نسخه انتخابی: ${selectedVersion?.title ?: "ندارد"}", style = MaterialTheme.typography.bodySmall)
                     Text("نقش‌های ثبت‌شده در همین مجلس (${roleOptions.size})", fontWeight = FontWeight.SemiBold)
                     if (roleOptions.isEmpty()) Text("برای این مجلس هنوز نقشی در کتابخانه ثبت نشده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     else Text(roleOptions.joinToString("، ") { it.title }, style = MaterialTheme.typography.bodySmall)
@@ -863,8 +862,6 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                             }
                         ) { Text("تکمیل دفتر از متن‌های موجود برنامه") }
                     }
-                    Text("ورود فایل خارجی فقط در صورت نیاز و پس از تکمیل متن‌های داخلی استفاده شود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("سه روش ورود فایل: ۱) فایل کامل مجلس با نقش و ترتیب دیالوگ‌ها؛ ۲) فایل جدا برای هر نقش بدون شماره؛ ۳) فایل جدا برای هر نقش با شماره‌های مشترک اجرا.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { importLauncher.launch(arrayOf("text/plain", "application/json", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "image/*")) }, enabled = !busy) {
                         Icon(Icons.Default.FileOpen, null); Spacer(Modifier.width(6.dp)); Text("ورود فایل کامل یا فایل‌های جداگانه نقش‌ها")
                     }
@@ -890,7 +887,6 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                         modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp),
                         minLines = 3
                     )
-                    Text("PDF متنی استخراج می‌شود؛ PDF اسکن‌شده و تصویر تا زمان نصب مدل OCR فارسی/عربی فقط به‌عنوان منبع نگهداری می‌شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 item {
                     Button(
@@ -1075,7 +1071,13 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                 }
                 items(turns, key = { it.id }) { turn ->
                     val segmentState = remember(turn.id) { mutableStateOf("") }
-                    Card(Modifier.fillMaxWidth()) {
+                    val turnCardIndex = turns.indexOfFirst { it.id == turn.id }
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.surfaceVariant else Color(0xFFE8F5E9)
+                        )
+                    ) {
                         Column(Modifier.padding(12.dp)) {
                             Text("نوبت ${turn.turnNumber}  •  ترتیب ${turn.sequenceIndex}", fontWeight = FontWeight.Bold)
                             Text(turn.title + if (turn.turnType == DirectorTurnEntity.TYPE_COLLECTIVE) " • جمعی" else "")
@@ -1137,7 +1139,6 @@ fun DirectorOfficeScreen(db: AppDatabase, initialTaziehId: Long? = null, onBack:
                             OutlinedTextField(
                                 value = segmentState.value,
                                 onValueChange = { segmentState.value = it },
-                                label = { Text("ویرایش متن دیالوگ این نوبت") },
                                 // Keep each turn's editor bounded; long text scrolls inside this field
                                 // while the surrounding LazyColumn remains independently scrollable.
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp), minLines = 3
