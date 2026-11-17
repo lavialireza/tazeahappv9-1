@@ -417,13 +417,26 @@ fun DirectorOfficeScreen(
                 sources = dao.sourceFiles(current.id)
                 val versions = dao.versions(current.id)
                 planVersions = versions
-                selectedVersion = selectedVersion?.let { old -> versions.firstOrNull { it.id == old.id } } ?: versions.firstOrNull()
-                selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
-                selectedVersion?.let {
-                    turns = dao.turns(it.id)
-                    stageCues = dao.stageCues(it.id)
-                    previewText = buildDirectorVersionPreview(dao, it.id)
-                }
+                selectedVersion = selectedVersion?.let { old ->
+    versions.firstOrNull { it.id == old.id }
+} ?: versions.firstOrNull()
+
+val currentVersion = selectedVersion
+
+currentVersion?.changeNotes
+    ?.substringAfter("روش تکمیل دفتر: ", "")
+    ?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }
+    ?.let { selectedBuildMode = it }
+
+if (currentVersion != null) {
+    turns = dao.turns(currentVersion.id)
+    stageCues = dao.stageCues(currentVersion.id)
+    previewText = buildDirectorVersionPreview(dao, currentVersion.id)
+} else {
+    turns = emptyList()
+    stageCues = emptyList()
+    previewText = ""
+}
             }
         }
     }
