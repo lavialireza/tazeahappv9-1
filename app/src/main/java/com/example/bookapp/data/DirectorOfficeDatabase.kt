@@ -107,6 +107,26 @@ class ViewerDirectorOfficeStore(context: Context) {
         return officialDb.officialDao().publishedPlan(uid)
     }
 
+    suspend fun officialVersions(planUid: String): List<DirectorPlanVersionEntity> {
+        requireAccess("director.official.view")
+        return officialDb.officialDao().publishedVersions(planUid)
+    }
+
+    suspend fun officialTurns(versionId: Long): List<DirectorTurnEntity> {
+        requireAccess("director.official.view")
+        return officialDb.officialDao().turns(versionId)
+    }
+
+    suspend fun officialTextSegments(turnId: Long): List<DirectorTextSegmentEntity> {
+        requireAccess("director.official.view")
+        return officialDb.officialDao().textSegments(turnId)
+    }
+
+    suspend fun officialStageCues(versionId: Long): List<DirectorStageCueEntity> {
+        requireAccess("director.official.view")
+        return officialDb.officialDao().stageCues(versionId)
+    }
+
     suspend fun createPersonalPlan(plan: DirectorPlanEntity): Long {
         requireAccess("director.personal.create")
         require(plan.status == DirectorPlanEntity.STATUS_DRAFT) { "دفتر شخصی فقط به‌صورت پیش‌نویس ساخته می‌شود." }
@@ -123,13 +143,55 @@ class ViewerDirectorOfficeStore(context: Context) {
         personalDb.personalDao().updatePlan(plan.copy(status = DirectorPlanEntity.STATUS_DRAFT))
     }
 
-    suspend fun personalPlans(taziehUid: String): List<DirectorPlanEntity> {
-        requireAccess("director.personal.create")
-        return personalDb.personalDao().plansForTazieh(taziehUid)
+    suspend fun personalPlans(taziehUid: String? = null): List<DirectorPlanEntity> {
+        check(ViewerAccessPolicy.hasPermission(appContext, "director.personal.create") ||
+            ViewerAccessPolicy.hasPermission(appContext, "director.personal.edit")) {
+            "دسترسی مشاهده دفتر شخصی فعال نیست."
+        }
+        return if (taziehUid.isNullOrBlank()) personalDb.personalDao().plansPage("", 500, 0)
+        else personalDb.personalDao().plansForTazieh(taziehUid)
+    }
+
+    suspend fun personalVersions(planId: Long): List<DirectorPlanVersionEntity> {
+        check(ViewerAccessPolicy.hasPermission(appContext, "director.personal.create") || ViewerAccessPolicy.hasPermission(appContext, "director.personal.edit"))
+        return personalDb.personalDao().versions(planId)
+    }
+
+    suspend fun personalTurns(versionId: Long): List<DirectorTurnEntity> {
+        check(ViewerAccessPolicy.hasPermission(appContext, "director.personal.create") || ViewerAccessPolicy.hasPermission(appContext, "director.personal.edit"))
+        return personalDb.personalDao().turns(versionId)
+    }
+
+    suspend fun personalTextSegments(turnId: Long): List<DirectorTextSegmentEntity> {
+        check(ViewerAccessPolicy.hasPermission(appContext, "director.personal.create") || ViewerAccessPolicy.hasPermission(appContext, "director.personal.edit"))
+        return personalDb.personalDao().textSegments(turnId)
+    }
+
+    suspend fun personalStageCues(versionId: Long): List<DirectorStageCueEntity> {
+        check(ViewerAccessPolicy.hasPermission(appContext, "director.personal.create") || ViewerAccessPolicy.hasPermission(appContext, "director.personal.edit"))
+        return personalDb.personalDao().stageCues(versionId)
+    }
+
+    suspend fun createPersonalTurnWithText(turn: DirectorTurnEntity, text: String): Long {
+        check(ViewerAccessPolicy.hasPermission(appContext, "director.personal.create") ||
+            ViewerAccessPolicy.hasPermission(appContext, "director.personal.edit")) {
+            "دسترسی ساخت محتوای دفتر شخصی فعال نیست."
+        }
+        val version = personalDb.personalDao().version(turn.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
+        val plan = personalDb.personalDao().plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
+        require(plan.status == DirectorPlanEntity.STATUS_DRAFT && version.status == DirectorPlanVersionEntity.STATUS_DRAFT)
+        val id = personalDb.personalDao().insertTurn(turn.copy(id = 0))
+        if (text.isNotBlank()) {
+            personalDb.personalDao().insertTextSegment(DirectorTextSegmentEntity(turnId = id, segmentIndex = 0, text = text))
+        }
+        return id
     }
 
     suspend fun createPersonalVersion(version: DirectorPlanVersionEntity): Long {
-        requireAccess("director.personal.edit")
+        check(ViewerAccessPolicy.hasPermission(appContext, "director.personal.create") ||
+            ViewerAccessPolicy.hasPermission(appContext, "director.personal.edit")) {
+            "دسترسی ساخت دفتر شخصی فعال نیست."
+        }
         val plan = personalDb.personalDao().plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
         require(plan.status == DirectorPlanEntity.STATUS_DRAFT && version.status == DirectorPlanVersionEntity.STATUS_DRAFT)
         return personalDb.personalDao().insertVersion(version.copy(status = DirectorPlanVersionEntity.STATUS_DRAFT, publishedAt = null))
