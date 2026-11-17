@@ -26,6 +26,7 @@ import com.example.bookapp.ui.theme.typographyFor
 class MainActivity : ComponentActivity() {
     private fun handleViewerAccessIntent(incoming: android.content.Intent?) {
         if (!BuildConfig.PUBLIC_VIEWER) return
+        if (handleDirectorOfficePublicationIntent(this, incoming)) return
         if (incoming?.action != android.content.Intent.ACTION_SEND) return
         val uri = incoming.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM) ?: return
         runCatching { contentResolver.openInputStream(uri) ?: error("فایل سیاست دسترسی خوانده نشد.") }

@@ -39,6 +39,7 @@ fun LibraryHomeScreen(
     showGallery: Boolean = true,
     showCompare: Boolean = true,
     onOpenDirectorOffice: (() -> Unit)? = null,
+    directorOfficeDescription: String = "تنظیم نوبت‌ها، ترتیب اجرا و علائم صحنه",
     onBack: () -> Unit
 ) {
     val ink = Color(0xFF263B5B)
@@ -144,7 +145,7 @@ val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardContr
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text("دفتر معین البکا", fontWeight = FontWeight.ExtraBold, color = Color(0xFF28543D), style = MaterialTheme.typography.titleMedium)
-                            Text("تنظیم نوبت‌ها، ترتیب اجرا و علائم صحنه", color = Color(0xFF456B50), style = MaterialTheme.typography.bodySmall)
+                            Text(directorOfficeDescription, color = Color(0xFF456B50), style = MaterialTheme.typography.bodySmall)
                         }
                         Icon(Icons.Filled.ChevronLeft, contentDescription = "ورود", tint = Color(0xFF28543D))
                     }
