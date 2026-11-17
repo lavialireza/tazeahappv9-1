@@ -97,18 +97,20 @@ object ViewerAccessPolicy {
         "taziehCorrections.apply" to "اصلاحات تعزیه: اعمال اصلاح بر متن",
         "calendar.view" to "تقویم محرم: مشاهده",
         "calendar.suggestions" to "تقویم محرم: پیشنهاد تعزیه‌ها",
-        "director.official.view" to "دفتر معین‌البکا: مشاهده نسخه رسمی",
-        "director.personal.create" to "دفتر معین‌البکا: ساخت دفتر شخصی",
-        "director.personal.edit" to "دفتر معین‌البکا: ویرایش دفتر شخصی",
-        "director.build.roleNumbered" to "دفتر شخصی: ساخت بر اساس شماره دیالوگ/نقش",
-        "director.build.fullText" to "دفتر شخصی: ساخت از متن کامل مجلس",
-        "director.build.manual" to "دفتر شخصی: ساخت دستی",
-        "director.build.selector" to "دفتر شخصی: ساخت با انتخاب‌گر",
         "dialogues" to "گفتگوهای چندنقشی",
         "dialogues.view" to "گفتگوها: مشاهده",
         "dialogues.create" to "گفتگوها: ساخت گفتگوی جدید",
         "dialogues.edit" to "گفتگوها: ویرایش گفتگوی شخصی",
-        "dialogues.delete" to "گفتگوها: حذف گفتگوی شخصی"
+        "dialogues.delete" to "گفتگوها: حذف گفتگوی شخصی",
+
+        // دفتر معین‌البکا در Viewer؛ مجوز هر روش ساخت شخصی مستقل است.
+        "directorOffice" to "دفتر معین‌البکا",
+        "directorOffice.view" to "دفتر معین‌البکا: مشاهده نسخه رسمی",
+        "directorOffice.personal" to "دفتر معین‌البکا: دفتر شخصی",
+        "directorOffice.build.numbered" to "دفتر شخصی: ساخت شماره‌محور",
+        "directorOffice.build.fullText" to "دفتر شخصی: ساخت با متن کامل",
+        "directorOffice.build.manual" to "دفتر شخصی: ساخت دستی",
+        "directorOffice.build.selector" to "دفتر شخصی: ساخت با انتخاب‌گر"
     )
 
     /** والد هر مجوز فرزند. اگر والد خاموش باشد، فرزند نیز مؤثرًا خاموش است. */
@@ -132,16 +134,18 @@ object ViewerAccessPolicy {
         "taziehCorrections.view" to "taziehCorrections", "taziehCorrections.add" to "taziehCorrections",
         "taziehCorrections.edit" to "taziehCorrections", "taziehCorrections.delete" to "taziehCorrections", "taziehCorrections.apply" to "taziehCorrections",
         "calendar.view" to "calendar", "calendar.suggestions" to "calendar",
-        "director.build.roleNumbered" to "director.personal.create",
-        "director.build.fullText" to "director.personal.create",
-        "director.build.manual" to "director.personal.create",
-        "director.build.selector" to "director.personal.create",
         "encyclopedia.view" to "encyclopedia",
         "ai.analysis" to "ai", "ai.speaker" to "ai", "ai.glossary" to "ai", "ai.semanticSearch" to "ai", "ai.transcription" to "ai",
  "dialogues.view" to "dialogues",
 "dialogues.create" to "dialogues",
 "dialogues.edit" to "dialogues",
-"dialogues.delete" to "dialogues"
+"dialogues.delete" to "dialogues",
+        "directorOffice.view" to "directorOffice",
+        "directorOffice.personal" to "directorOffice",
+        "directorOffice.build.numbered" to "directorOffice.personal",
+        "directorOffice.build.fullText" to "directorOffice.personal",
+        "directorOffice.build.manual" to "directorOffice.personal",
+        "directorOffice.build.selector" to "directorOffice.personal"
     )
 
     data class SpecialUser(
@@ -178,7 +182,7 @@ object ViewerAccessPolicy {
     private const val MAX_HISTORY_PER_USER = 20
 
     fun defaultPermissions(): Map<String, Boolean> = permissionLabels.keys.associateWith { key ->
-        key !in setOf("copy", "share", "pdf", "appIntro", "ai", "ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription", "director.official.view", "director.personal.create", "director.personal.edit", "director.build.roleNumbered", "director.build.fullText", "director.build.manual", "director.build.selector")
+        key !in setOf("copy", "share", "pdf", "appIntro", "ai", "ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription", "directorOffice", "directorOffice.view", "directorOffice.personal", "directorOffice.build.numbered", "directorOffice.build.fullText", "directorOffice.build.manual", "directorOffice.build.selector")
     }
 
     fun normalizedPermissions(input: Map<String, Boolean>): Map<String, Boolean> {
@@ -246,13 +250,6 @@ object ViewerAccessPolicy {
                 "taziehCorrections.delete", "taziehCorrections.apply"
             )
             protectedWrites.forEach { key -> permissions[key] = false }
-            // قابلیت‌های دفتر معین‌البکا به‌صورت opt-in هستند؛ تا زمانی که Admin
-            // سیاست امضاشده‌ای با این مجوزها ارسال نکند، در Viewer بسته می‌مانند.
-            setOf(
-                "director.official.view", "director.personal.create", "director.personal.edit",
-                "director.build.roleNumbered", "director.build.fullText",
-                "director.build.manual", "director.build.selector"
-            ).forEach { key -> permissions[key] = false }
             // والدها نیز باید خاموش شود؛ وگرنه والد/فرزند می‌تواند رفتار UI را
             // در نسخه‌های قدیمی‌تر به شکل ناهمسان فعال کند. مشاهده گالری/پاورقی/
             // دیکشنری/اصلاحات همچنان مجاز می‌ماند.

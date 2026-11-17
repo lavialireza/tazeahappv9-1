@@ -9,6 +9,18 @@ import androidx.room.Update
 /** Data access for the director workspace. All records are independent from existing rehearsal/dialogue tables. */
 @Dao
 interface DirectorDao {
+    /** Published-only queries used by the public Viewer. Draft and archived plans are never exposed. */
+    @Query("SELECT * FROM director_plans WHERE isDeleted = 0 AND status = 'PUBLISHED' AND (:query = '' OR title LIKE '%' || :query || '%') ORDER BY updatedAt DESC, id DESC LIMIT :limit OFFSET :offset")
+    suspend fun publishedPlansPage(query: String, limit: Int, offset: Int): List<DirectorPlanEntity>
+
+    @Query("SELECT * FROM director_plans WHERE uid = :uid AND isDeleted = 0 AND status = 'PUBLISHED' LIMIT 1")
+    suspend fun publishedPlanByUid(uid: String): DirectorPlanEntity?
+
+    @Query("SELECT * FROM director_plan_versions WHERE planId = :planId AND status = 'PUBLISHED' ORDER BY versionNumber DESC")
+    suspend fun publishedVersions(planId: Long): List<DirectorPlanVersionEntity>
+
+    @Query("SELECT * FROM director_plan_versions WHERE id = :versionId AND status = 'PUBLISHED' LIMIT 1")
+    suspend fun publishedVersion(versionId: Long): DirectorPlanVersionEntity?
     @Query("SELECT * FROM director_plans WHERE isDeleted = 0 AND (:query = '' OR title LIKE '%' || :query || '%') ORDER BY updatedAt DESC, id DESC LIMIT :limit OFFSET :offset") suspend fun plansPage(query: String, limit: Int, offset: Int): List<DirectorPlanEntity>
     @Query("SELECT * FROM director_plans WHERE id=:id LIMIT 1") suspend fun plan(id: Long): DirectorPlanEntity?
     @Query("SELECT * FROM director_plans WHERE taziehUid=:taziehUid AND isDeleted = 0 ORDER BY updatedAt DESC") suspend fun plansForTazieh(taziehUid: String): List<DirectorPlanEntity>
