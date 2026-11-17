@@ -58,15 +58,6 @@ fun ViewerDirectorOfficeScreen(
     var newTurnNumber by remember { mutableStateOf("1") }
     var newTurnTitle by remember { mutableStateOf("") }
     var newTurnText by remember { mutableStateOf("") }
-    val officialImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            loading = true
-            runCatching { ViewerDirectorOfficePublicationImporter.import(context, uri).getOrThrow() }
-                .onSuccess { message = it; selectedPlan = null; selectedVersion = null; reloadLists() }
-                .onFailure { message = it.message ?: "دریافت بسته رسمی انجام نشد." }
-            loading = false
-        }
-    }
 
     fun reloadLists() {
         scope.launch {
@@ -78,6 +69,16 @@ fun ViewerDirectorOfficeScreen(
             loading = false
         }
     }
+    val officialImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            loading = true
+            runCatching { ViewerDirectorOfficePublicationImporter.import(context, uri).getOrThrow() }
+                .onSuccess { message = it; selectedPlan = null; selectedVersion = null; reloadLists() }
+                .onFailure { message = it.message ?: "دریافت بسته رسمی انجام نشد." }
+            loading = false
+        }
+    }
+
     LaunchedEffect(tab, taziehUid) { reloadLists() }
 
     fun openPlan(plan: DirectorPlanEntity, official: Boolean) {
