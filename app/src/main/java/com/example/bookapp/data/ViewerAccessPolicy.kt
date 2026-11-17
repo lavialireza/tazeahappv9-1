@@ -102,15 +102,16 @@ object ViewerAccessPolicy {
         "dialogues.create" to "گفتگوها: ساخت گفتگوی جدید",
         "dialogues.edit" to "گفتگوها: ویرایش گفتگوی شخصی",
         "dialogues.delete" to "گفتگوها: حذف گفتگوی شخصی",
-
-        // دفتر معین‌البکا در Viewer؛ مجوز هر روش ساخت شخصی مستقل است.
-        "directorOffice" to "دفتر معین‌البکا",
-        "directorOffice.view" to "دفتر معین‌البکا: مشاهده نسخه رسمی",
-        "directorOffice.personal" to "دفتر معین‌البکا: دفتر شخصی",
-        "directorOffice.build.numbered" to "دفتر شخصی: ساخت شماره‌محور",
-        "directorOffice.build.fullText" to "دفتر شخصی: ساخت با متن کامل",
-        "directorOffice.build.manual" to "دفتر شخصی: ساخت دستی",
-        "directorOffice.build.selector" to "دفتر شخصی: ساخت با انتخاب‌گر"
+        "director.official.view" to "دفتر معین‌البکا: مشاهده دفتر رسمی منتشرشده",
+        "director.personal.create" to "دفتر معین‌البکا: ساخت دفتر شخصی",
+        "director.personal.method.number" to "دفتر شخصی: ساخت شماره‌محور",
+        "director.personal.method.fulltext" to "دفتر شخصی: ساخت با متن کامل",
+        "director.personal.method.manual" to "دفتر شخصی: ساخت دستی",
+        "director.personal.method.selector" to "دفتر شخصی: ساخت با انتخاب‌گر",
+        "director.personal.edit" to "دفتر شخصی: ویرایش دیالوگ و راهنمای صحنه",
+        "director.official.publish" to "دفتر معین‌البکا: انتشار رسمی (همیشه ممنوع در Viewer)",
+        "director.copy" to "دفتر معین‌البکا: کپی (همیشه ممنوع در Viewer)",
+        "director.export" to "دفتر معین‌البکا: خروجی گرفتن (همیشه ممنوع در Viewer)"
     )
 
     /** والد هر مجوز فرزند. اگر والد خاموش باشد، فرزند نیز مؤثرًا خاموش است. */
@@ -140,12 +141,6 @@ object ViewerAccessPolicy {
 "dialogues.create" to "dialogues",
 "dialogues.edit" to "dialogues",
 "dialogues.delete" to "dialogues",
-        "directorOffice.view" to "directorOffice",
-        "directorOffice.personal" to "directorOffice",
-        "directorOffice.build.numbered" to "directorOffice.personal",
-        "directorOffice.build.fullText" to "directorOffice.personal",
-        "directorOffice.build.manual" to "directorOffice.personal",
-        "directorOffice.build.selector" to "directorOffice.personal"
     )
 
     data class SpecialUser(
@@ -182,7 +177,10 @@ object ViewerAccessPolicy {
     private const val MAX_HISTORY_PER_USER = 20
 
     fun defaultPermissions(): Map<String, Boolean> = permissionLabels.keys.associateWith { key ->
-        key !in setOf("copy", "share", "pdf", "appIntro", "ai", "ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription", "directorOffice", "directorOffice.view", "directorOffice.personal", "directorOffice.build.numbered", "directorOffice.build.fullText", "directorOffice.build.manual", "directorOffice.build.selector")
+        key !in setOf("copy", "share", "pdf", "appIntro", "ai", "ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription",
+            "director.official.view", "director.personal.create", "director.personal.method.number", "director.personal.method.fulltext",
+            "director.personal.method.manual", "director.personal.method.selector", "director.personal.edit",
+            "director.official.publish", "director.copy", "director.export")
     }
 
     fun normalizedPermissions(input: Map<String, Boolean>): Map<String, Boolean> {
@@ -250,6 +248,9 @@ object ViewerAccessPolicy {
                 "taziehCorrections.delete", "taziehCorrections.apply"
             )
             protectedWrites.forEach { key -> permissions[key] = false }
+            // Viewer هرگز مالک انتشار رسمی، کپی یا خروجی دفتر نیست؛ حتی اگر
+            // یک Policy قدیمی یا دست‌کاری‌شده این کلیدها را فعال کرده باشد.
+            setOf("director.official.publish", "director.copy", "director.export").forEach { permissions[it] = false }
             // والدها نیز باید خاموش شود؛ وگرنه والد/فرزند می‌تواند رفتار UI را
             // در نسخه‌های قدیمی‌تر به شکل ناهمسان فعال کند. مشاهده گالری/پاورقی/
             // دیکشنری/اصلاحات همچنان مجاز می‌ماند.
