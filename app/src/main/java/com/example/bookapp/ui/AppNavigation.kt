@@ -346,7 +346,8 @@ fun AppNavigation(
                 showGlossary = featureEnabled("dictionary.view"),
                 showGallery = featureEnabled("gallery.view"),
                 showCompare = featureEnabled("compare.view"),
-                onOpenDirectorOffice = if (!publicViewer) ({ navController.navigate("director_office") }) else null,
+                onOpenDirectorOffice = if (!publicViewer) ({ navController.navigate("director_office") })
+                    else if (featureEnabled("director.official.view") || featureEnabled("director.personal.create") || featureEnabled("director.personal.edit")) ({ navController.navigate("viewer_director_office") }) else null,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -413,9 +414,10 @@ fun AppNavigation(
         composable(ROUTE_EXECUTION_CENTER) {
             ExecutionCenterScreen(
                 showAdminActions = !publicViewer,
+                showDirectorOffice = !publicViewer || featureEnabled("director.official.view") || featureEnabled("director.personal.create") || featureEnabled("director.personal.edit"),
                 onOpenGroups = { if (!publicViewer) navController.navigate("performance_groups") },
                 onOpenExecutionManagement = { if (!publicViewer) navController.navigate("performance_execution") },
-                onOpenDirectorOffice = { if (!publicViewer) navController.navigate("director_office") },
+                onOpenDirectorOffice = { if (!publicViewer) navController.navigate("director_office") else if (featureEnabled("director.official.view") || featureEnabled("director.personal.create") || featureEnabled("director.personal.edit")) navController.navigate("viewer_director_office") },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -1061,6 +1063,13 @@ fun AppNavigation(
             onKeepScreenOnChange = onKeepScreenOnChange
         )
 
+        viewerDirectorOfficeRoutes(
+            navController = navController,
+            context = context,
+            db = db,
+            onBack = { navController.popBackStack() }
+        )
+
         dialogueFeatureRoutes(
             navController = navController,
             db = db,
@@ -1170,8 +1179,8 @@ fun AppNavigation(
                 readOnly = publicViewer,
                 showCompare = featureEnabled("compare.view"),
                 canSelectMine = featureEnabled("myRole.select"),
-                showDirectorOffice = !publicViewer,
-                onOpenDirectorOffice = { if (!publicViewer) navController.navigate("director_office/$taziehId") }
+                showDirectorOffice = !publicViewer || featureEnabled("director.official.view") || featureEnabled("director.personal.create") || featureEnabled("director.personal.edit"),
+                onOpenDirectorOffice = { if (!publicViewer) navController.navigate("director_office/$taziehId") else if (featureEnabled("director.official.view") || featureEnabled("director.personal.create") || featureEnabled("director.personal.edit")) navController.navigate("viewer_director_office/$taziehId") }
             )
         }
 
