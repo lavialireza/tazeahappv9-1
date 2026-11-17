@@ -213,7 +213,7 @@ fun ProfessionalRoleScreen(
             }
 
             // Direct access to the director's office for this exact ta'zieh.
-            if (showDirectorOffice) {
+            if (showDirectorOffice && !readOnly) {
                 OutlinedButton(
                     onClick = onOpenDirectorOffice,
                     modifier = Modifier

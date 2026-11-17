@@ -405,7 +405,7 @@ private fun ResearchAction(title: String, subtitle: String, icon: ImageVector, o
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExecutionCenterScreen(showAdminActions: Boolean = true, showDirectorOffice: Boolean = false, onOpenGroups: () -> Unit, onOpenExecutionManagement: () -> Unit, onOpenDirectorOffice: () -> Unit = {}, onBack: () -> Unit) {
+fun ExecutionCenterScreen(showAdminActions: Boolean = true, onOpenGroups: () -> Unit, onOpenExecutionManagement: () -> Unit, onOpenDirectorOffice: () -> Unit = {}, onBack: () -> Unit) {
     Scaffold(topBar = { TopAppBar(title = { Text("مرکز اجرا") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("مدیریت چرخه آماده‌سازی، تمرین و اجرای تعزیه", style = MaterialTheme.typography.bodyMedium)
@@ -415,9 +415,6 @@ fun ExecutionCenterScreen(showAdminActions: Boolean = true, showDirectorOffice: 
                 ResearchAction("دفتر معین البکا", "بارگذاری فایل نقش‌ها، تنظیم نوبت‌های جمعی و دستورهای صحنه", Icons.Filled.Description, onOpenDirectorOffice, Color(0xFFF4EBD7))
             } else {
                 Text("امکانات مدیریتی مرکز اجرا در نسخه مدیر فعال هستند. امکانات مطالعه و تمرین متن از کتابخانه در دسترس‌اند.", style = MaterialTheme.typography.bodyMedium)
-                if (showDirectorOffice) {
-                    ResearchAction("دفتر معین‌البکا", "مشاهده دفتر رسمی یا ساخت دفتر شخصی با مجوز مدیر", Icons.Filled.Description, onOpenDirectorOffice, Color(0xFFF4EBD7))
-                }
             }
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
