@@ -21,6 +21,7 @@ import androidx.room.RoomDatabase
 )
 abstract class OfficialDirectorOfficeDatabase : RoomDatabase() {
     abstract fun officialDao(): OfficialDirectorOfficeDao
+    abstract fun importDao(): OfficialDirectorOfficeImportDao
 
     companion object {
         const val FILE_NAME = "director_official.db"
@@ -172,7 +173,11 @@ class ViewerDirectorOfficeStore(context: Context) {
         return personalDb.personalDao().stageCues(versionId)
     }
 
-    suspend fun createPersonalTurnWithText(turn: DirectorTurnEntity, text: String): Long {
+    suspend fun createPersonalTurnWithText(
+        turn: DirectorTurnEntity,
+        text: String,
+        participants: List<DirectorParticipantEntity> = emptyList()
+    ): Long {
         check(ViewerAccessPolicy.hasPermission(appContext, "director.personal.create") ||
             ViewerAccessPolicy.hasPermission(appContext, "director.personal.edit")) {
             "دسترسی ساخت محتوای دفتر شخصی فعال نیست."
@@ -181,6 +186,9 @@ class ViewerDirectorOfficeStore(context: Context) {
         val plan = personalDb.personalDao().plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
         require(plan.status == DirectorPlanEntity.STATUS_DRAFT && version.status == DirectorPlanVersionEntity.STATUS_DRAFT)
         val id = personalDb.personalDao().insertTurn(turn.copy(id = 0))
+        participants.distinctBy { it.roleUid }.forEachIndexed { index, participant ->
+            personalDb.personalDao().insertParticipant(participant.copy(id = 0, turnId = id, orderIndex = index, isLead = index == 0))
+        }
         if (text.isNotBlank()) {
             personalDb.personalDao().insertTextSegment(DirectorTextSegmentEntity(turnId = id, segmentIndex = 0, text = text))
         }
@@ -233,4 +241,36 @@ class ViewerDirectorOfficeStore(context: Context) {
         return ViewerAccessPolicy.hasPermission(appContext, key) &&
             ViewerAccessPolicy.hasPermission(appContext, "director.personal.create")
     }
+}
+
+
+/**
+ * DAO نوشتن فقط برای واردکردن بسته رسمیِ امضاشده؛ UI ویرایش رسمی ندارد.
+ * این DAO در APK Viewer فقط از Importer اختصاصی استفاده می‌شود.
+ */
+@Dao
+interface OfficialDirectorOfficeImportDao {
+    @Query("SELECT * FROM director_plans WHERE uid = :uid LIMIT 1")
+    suspend fun existingPlan(uid: String): DirectorPlanEntity?
+
+    @Query("DELETE FROM director_plans WHERE uid = :uid")
+    suspend fun deletePlan(uid: String)
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.ABORT)
+    suspend fun insertPlan(value: DirectorPlanEntity): Long
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.ABORT)
+    suspend fun insertVersion(value: DirectorPlanVersionEntity): Long
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.ABORT)
+    suspend fun insertTurn(value: DirectorTurnEntity): Long
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.ABORT)
+    suspend fun insertParticipant(value: DirectorParticipantEntity): Long
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.ABORT)
+    suspend fun insertTextSegment(value: DirectorTextSegmentEntity): Long
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.ABORT)
+    suspend fun insertStageCue(value: DirectorStageCueEntity): Long
 }
