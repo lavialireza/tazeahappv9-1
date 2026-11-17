@@ -686,27 +686,29 @@ if (currentVersion != null) {
                     if (turnSearch.isNotBlank()) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                         ) {
                             Text(
-                                if (visibleTurns.isEmpty()) "نتیجه‌ای پیدا نشد"
-                                else "نتیجه ${toPersianDirectorDigits((selectedSearchResultIndex + 1).toString())} از ${toPersianDirectorDigits(visibleTurns.size.toString())} • ${toPersianDirectorDigits(turns.size.toString())} نوبت در دفتر",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
+                                if (visibleTurns.isEmpty()) "۰ نتیجه"
+                                else "${toPersianDirectorDigits((selectedSearchResultIndex + 1).toString())} از ${toPersianDirectorDigits(visibleTurns.size.toString())}",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 1
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                TextButton(
-                                    enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex > 0,
-                                    onClick = { selectedSearchResultIndex-- },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                                ) { Text("نتیجه قبلی", style = MaterialTheme.typography.labelSmall) }
-                                TextButton(
-                                    enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex < visibleTurns.lastIndex,
-                                    onClick = { selectedSearchResultIndex++ },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                                ) { Text("نتیجه بعدی", style = MaterialTheme.typography.labelSmall) }
-                            }
+                            TextButton(
+                                modifier = Modifier.weight(0.75f).height(32.dp),
+                                enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex > 0,
+                                onClick = { selectedSearchResultIndex-- },
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                            ) { Text("نتیجه قبلی", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
+                            TextButton(
+                                modifier = Modifier.weight(0.75f).height(32.dp),
+                                enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex < visibleTurns.lastIndex,
+                                onClick = { selectedSearchResultIndex++ },
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                            ) { Text("نتیجه بعدی", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
                         }
                     }
                 }
@@ -1228,6 +1230,7 @@ if (currentVersion != null) {
                     val segmentState = remember(turn.id) { mutableStateOf("") }
                     var savingDialogue by remember(turn.id) { mutableStateOf(false) }
                     var showTurnCueDialog by remember(turn.id) { mutableStateOf(false) }
+                    var showTurnCuePanel by remember(turn.id) { mutableStateOf(false) }
                     var turnCueDraft by remember(turn.id) { mutableStateOf("") }
                     var editingTurnCueId by remember(turn.id) { mutableStateOf<Long?>(null) }
                     val turnStageCues = stageCues.filter { it.turnId == turn.id }
@@ -1365,14 +1368,10 @@ if (currentVersion != null) {
                                 OutlinedButton(
                                     modifier = Modifier.weight(1f).height(36.dp),
                                     contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
-                                    onClick = {
-                                        editingTurnCueId = null
-                                        turnCueDraft = ""
-                                        showTurnCueDialog = true
-                                    }
+                                    onClick = { showTurnCuePanel = !showTurnCuePanel }
                                 ) { Text("راهنمای صحنه (${turnStageCues.size})", style = MaterialTheme.typography.labelSmall) }
                             }
-                            if (turnStageCues.isNotEmpty()) {
+                            if (showTurnCuePanel) {
                                 Card(
                                     Modifier.fillMaxWidth(),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
@@ -1381,9 +1380,17 @@ if (currentVersion != null) {
                                         Modifier.fillMaxWidth().padding(10.dp),
                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
+                                        if (turnStageCues.isEmpty()) {
+                                            Text("برای این نوبت هنوز راهنمای صحنه ثبت نشده است.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                                        }
                                         turnStageCues.forEach { cue ->
                                             Column(Modifier.fillMaxWidth()) {
-                                                Text(cue.title.replace("دستور صحنه", "راهنمای صحنه").ifBlank { if (cue.cueType == DirectorStageCueEntity.CUE_IMMEDIATE) "بلافاصله" else "راهنمای اجرا" }, fontWeight = FontWeight.SemiBold)
+                                                Text(
+                                                    cue.title.replace("دستور صحنه", "راهنمای صحنه").ifBlank { if (cue.cueType == DirectorStageCueEntity.CUE_IMMEDIATE) "بلافاصله" else "راهنمای اجرا" },
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
                                                 Text(
                                                     cue.instruction + if (cue.blocksNextTurn) " • ادامه همین نقش و توقف انتقال به نوبت بعد" else "",
                                                     style = MaterialTheme.typography.bodyMedium
@@ -1406,6 +1413,15 @@ if (currentVersion != null) {
                                                 }
                                             }
                                         }
+                                        OutlinedButton(
+                                            modifier = Modifier.align(androidx.compose.ui.Alignment.End).height(32.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                            onClick = {
+                                                editingTurnCueId = null
+                                                turnCueDraft = ""
+                                                showTurnCueDialog = true
+                                            }
+                                        ) { Text("افزودن راهنما", style = MaterialTheme.typography.labelSmall) }
                                     }
                                 }
                             }
