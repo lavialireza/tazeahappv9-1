@@ -2,183 +2,323 @@ package com.example.bookapp.data
 
 import android.content.Context
 import android.net.Uri
-import android.util.Base64
 import androidx.room.withTransaction
 import org.json.JSONObject
-import java.security.KeyFactory
-import java.security.MessageDigest
-import java.security.Signature
-import java.security.spec.X509EncodedKeySpec
+import java.io.InputStream
+import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-/** فقط Flavor Viewer این importer را دارد؛ فایل‌های فاقد امضای Admin پذیرفته نمی‌شوند. */
+/** واردکردن بسته رسمی فقط در پایگاه داده رسمی Viewer؛ دیتابیس شخصی اصلاً باز نمی‌شود. */
 object ViewerDirectorOfficePublicationImporter {
-    private const val SCHEMA = "tazieh-director-office"
-    private const val SCHEMA_VERSION = 1
-    private const val MAX_PACKAGE_BYTES = 50 * 1024 * 1024
-    private const val MAX_VERSIONS = 100
-    private const val MAX_TURNS = 100_000
-    private const val MAX_TEXT_CHARS = 20_000_000
+    private const val MAX_BYTES = 50L * 1024L * 1024L
 
-    private fun verify(payloadText: String, signatureText: String): Boolean {
-        val encoded = com.example.bookapp.BuildConfig.POLICY_PUBLIC_KEY
-        if (encoded.isBlank()) return false
-        return runCatching {
-            val keyBytes = Base64.decode(encoded, Base64.NO_WRAP)
-            val publicKey = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(keyBytes))
-            val verifier = Signature.getInstance("SHA256withRSA")
-            verifier.initVerify(publicKey)
-            verifier.update(payloadText.toByteArray(Charsets.UTF_8))
-            verifier.verify(Base64.decode(signatureText, Base64.DEFAULT))
-        }.getOrDefault(false)
+    suspend fun import(context: Context, uri: Uri, officialDb: ViewerDirectorOfficeDatabase): String {
+        require(DirectorOfficeAccessRules.canViewOfficial(ViewerAccessPolicy.getEffectivePermissions(context))) { "مجوز مشاهده و دریافت دفتر رسمی فعال نیست." }
+        val input = context.contentResolver.openInputStream(uri) ?: error("فایل انتخاب‌شده باز نشد.")
+        return import(context, input, officialDb)
     }
 
-    suspend fun import(context: Context, uri: Uri): Result<String> = runCatching {
-        check(ViewerAccessPolicy.hasPermission(context, "director.official.view")) {
-            "دسترسی دریافت و مشاهده دفتر رسمی توسط مدیر فعال نشده است."
-        }
-        val input = context.contentResolver.openInputStream(uri) ?: error("فایل انتخاب‌شده قابل خواندن نیست.")
-        val bytes = input.use { stream ->
-            val out = java.io.ByteArrayOutputStream()
-            val buffer = ByteArray(8192)
-            var total = 0
-            while (true) {
-                val count = stream.read(buffer)
-                if (count < 0) break
-                total += count
-                require(total <= MAX_PACKAGE_BYTES) { "حجم بسته رسمی بیش از حد مجاز است." }
-                out.write(buffer, 0, count)
+    suspend fun import(context: Context, input: InputStream, officialDb: ViewerDirectorOfficeDatabase): String {
+        require(DirectorOfficeAccessRules.canViewOfficial(ViewerAccessPolicy.getEffectivePermissions(context))) { "مجوز مشاهده و دریافت دفتر رسمی فعال نیست." }
+        val envelope = withContext(Dispatchers.IO) {
+            val bytes = input.use { stream ->
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0L
+                while (true) {
+                    val count = stream.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    require(total <= MAX_BYTES) { "حجم بسته بیش از ۵۰ مگابایت است." }
+                    out.write(buffer, 0, count)
+                }
+                out.toByteArray()
             }
-            out.toByteArray()
+            JSONObject(bytes.toString(Charsets.UTF_8))
         }
-        val envelope = JSONObject(bytes.toString(Charsets.UTF_8))
-        require(envelope.optString("schema") == SCHEMA && envelope.optInt("schemaVersion", -1) == SCHEMA_VERSION) {
-            "ساختار فایل دفتر رسمی پشتیبانی نمی‌شود."
+        require(envelope.optString("schema") == DirectorOfficePublicationContract.SCHEMA && envelope.optInt("schemaVersion") == DirectorOfficePublicationContract.SCHEMA_VERSION) {
+            "ساختار بسته دفتر پشتیبانی نمی‌شود."
         }
-        val payloadText = envelope.getString("payload")
-        require(verify(payloadText, envelope.optString("signature"))) {
-            "امضای بسته معتبر نیست؛ فقط فایل صادرشده از نسخه معتبر Admin پذیرفته می‌شود."
+        val payload = envelope.getJSONObject("payload")
+        require(payload.optString("schema") == DirectorOfficePublicationContract.SCHEMA && payload.optInt("schemaVersion") == DirectorOfficePublicationContract.SCHEMA_VERSION) {
+            "شناسه ساختار محتوای بسته معتبر نیست."
         }
-        val payload = JSONObject(payloadText)
-        require(payload.optString("schema") == SCHEMA && payload.optInt("schemaVersion", -1) == SCHEMA_VERSION) {
-            "نسخه اطلاعات دفتر رسمی معتبر نیست."
+        require(ViewerAccessTransfer.verify(payload.toString(), envelope.optString("signature"))) {
+            "امضای دیجیتال بسته معتبر نیست؛ فایل فقط باید از Admin اصلی دریافت شود."
         }
         val planJson = payload.getJSONObject("plan")
-        val planUid = planJson.getString("uid").trim()
-        require(planUid.isNotBlank() && planUid.length <= 200) { "شناسه دفتر معتبر نیست." }
-        val updatedAt = planJson.getLong("updatedAt")
-        val versionsJson = payload.getJSONArray("versions")
-        require(versionsJson.length() in 1..MAX_VERSIONS) { "تعداد نسخه‌های بسته معتبر نیست." }
+        val versionJson = payload.getJSONObject("version")
+        val planUid = planJson.optString("uid").trim()
+        require(planUid.isNotBlank()) { "شناسه دفتر در بسته خالی است." }
+        require(versionJson.optInt("versionNumber") > 0) { "شماره نسخه منتشرشده معتبر نیست." }
+        val turnsJson = payload.getJSONArray("turns")
+        require(turnsJson.length() <= 20000) { "تعداد نوبت‌های بسته از حد مجاز بیشتر است." }
 
-        val planDigest = MessageDigest.getInstance("SHA-256").digest(payloadText.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        val prefs = context.getSharedPreferences("director_official_imports", Context.MODE_PRIVATE)
-        val previousDigest = prefs.getString("digest_$planUid", null)
-        if (previousDigest == planDigest) return@runCatching "این نسخه رسمی قبلاً دریافت شده است؛ اطلاعات تغییری نکرده است."
-
-        val db = OfficialDirectorOfficeDatabase.get(context)
-        val dao = db.importDao()
-        db.withTransaction {
-            val existing = dao.existingPlan(planUid)
-            if (existing != null) {
-                require(updatedAt >= existing.updatedAt) { "این فایل از نسخه رسمی موجود قدیمی‌تر است و برای جلوگیری از بازگشت نسخه پذیرفته نشد." }
-                dao.deletePlan(planUid) // حذف آبشاری فقط در دیتابیس رسمی؛ دیتابیس شخصی مستقل می‌ماند.
+        val dao = officialDb.directorDao()
+        val existingPlan = dao.planByUid(planUid)
+        if (existingPlan != null) {
+            val installedVersion = dao.versions(existingPlan.id).filter { it.status == DirectorPlanVersionEntity.STATUS_PUBLISHED }.maxOfOrNull { it.versionNumber } ?: 0
+            require(versionJson.getInt("versionNumber") > installedVersion) {
+                "نسخه دریافتی قدیمی یا تکراری است؛ نسخه نصب‌شده $installedVersion و نسخه فایل ${versionJson.getInt("versionNumber")} است."
             }
-            val planId = dao.insertPlan(
-                DirectorPlanEntity(
-                    uid = planUid,
-                    taziehUid = planJson.optString("taziehUid"),
-                    title = planJson.getString("title"),
-                    status = DirectorPlanEntity.STATUS_PUBLISHED,
-                    description = planJson.optString("description"),
-                    createdAt = planJson.getLong("createdAt"),
-                    updatedAt = updatedAt,
-                    isDeleted = false,
-                    deletedAt = null
-                )
-            )
-            var totalTurns = 0
-            var totalTextChars = 0L
-            for (vi in 0 until versionsJson.length()) {
-                val versionJson = versionsJson.getJSONObject(vi)
-                val versionId = dao.insertVersion(
-                    DirectorPlanVersionEntity(
-                        planId = planId,
-                        versionNumber = versionJson.getInt("versionNumber"),
-                        title = versionJson.optString("title"),
-                        status = DirectorPlanVersionEntity.STATUS_PUBLISHED,
-                        changeNotes = versionJson.optString("changeNotes"),
-                        createdAt = versionJson.getLong("createdAt"),
-                        publishedAt = if (versionJson.isNull("publishedAt")) null else versionJson.optLong("publishedAt")
-                    )
-                )
-                val turnJsonArray = versionJson.getJSONArray("turns")
-                require(totalTurns + turnJsonArray.length() <= MAX_TURNS) { "تعداد نوبت‌های بسته بیش از حد مجاز است." }
-                val turnIdsBySequence = mutableMapOf<Int, Long>()
-                for (ti in 0 until turnJsonArray.length()) {
-                    val turnJson = turnJsonArray.getJSONObject(ti)
-                    val sequence = turnJson.getInt("sequenceIndex")
-                    require(sequence >= 0 && sequence !in turnIdsBySequence) { "ترتیب نوبت‌ها در بسته تکراری یا نامعتبر است." }
-                    val turnId = dao.insertTurn(
-                        DirectorTurnEntity(
-                            versionId = versionId,
-                            turnNumber = turnJson.getInt("turnNumber"),
-                            sequenceIndex = sequence,
-                            turnType = turnJson.optString("turnType", DirectorTurnEntity.TYPE_NORMAL),
-                            title = turnJson.optString("title"),
-                            continuityGroupUid = turnJson.optString("continuityGroupUid"),
-                            isEnabled = turnJson.optBoolean("isEnabled", true),
-                            notes = turnJson.optString("notes")
-                        )
-                    )
-                    turnIdsBySequence[sequence] = turnId
-                    val participants = turnJson.getJSONArray("participants")
-                    for (pi in 0 until participants.length()) {
-                        val item = participants.getJSONObject(pi)
-                        dao.insertParticipant(DirectorParticipantEntity(
-                            turnId = turnId,
-                            roleUid = item.getString("roleUid"),
-                            roleTitle = item.getString("roleTitle"),
-                            orderIndex = item.optInt("orderIndex"),
-                            isLead = item.optBoolean("isLead")
-                        ))
-                    }
-                    val segments = turnJson.getJSONArray("segments")
-                    for (si in 0 until segments.length()) {
-                        val item = segments.getJSONObject(si)
-                        val text = item.optString("text")
-                        totalTextChars += text.length
-                        require(totalTextChars <= MAX_TEXT_CHARS) { "حجم متن بسته رسمی بیش از حد مجاز است." }
-                        dao.insertTextSegment(DirectorTextSegmentEntity(
-                            turnId = turnId,
-                            segmentIndex = item.getInt("segmentIndex"),
-                            text = text,
-                            sectionUid = if (item.isNull("sectionUid")) null else item.optString("sectionUid"),
-                            sourceFileId = null,
-                            sourcePageStart = if (item.isNull("sourcePageStart")) null else item.optInt("sourcePageStart"),
-                            sourcePageEnd = if (item.isNull("sourcePageEnd")) null else item.optInt("sourcePageEnd")
-                        ))
-                    }
-                    totalTurns++
+        }
+        val writable = officialDb.openHelper.writableDatabase
+        // قفل دیتابیس رسمی فقط در مسیر واردکردن بسته‌ای که امضایش تأیید شده باز می‌شود.
+        ViewerDirectorOfficeDatabase.unlockOfficialForVerifiedImport(writable)
+        try {
+        officialDb.withTransaction {
+            // فقط همان دفتر رسمی جایگزین می‌شود؛ director_personal.db جداست و لمس نمی‌شود.
+            dao.replaceImportedOfficialPlan(planUid)
+            val now = System.currentTimeMillis()
+            val planId = dao.insertPlan(DirectorPlanEntity(
+                uid = planUid,
+                taziehUid = planJson.optString("taziehUid"),
+                title = planJson.optString("title"),
+                status = DirectorPlanEntity.STATUS_PUBLISHED,
+                description = planJson.optString("description"),
+                createdAt = planJson.optLong("createdAt", now),
+                updatedAt = now
+            ))
+            val publishedAt = versionJson.optLong("publishedAt", now)
+            val versionId = dao.insertVersion(DirectorPlanVersionEntity(
+                planId = planId,
+                versionNumber = versionJson.getInt("versionNumber"),
+                title = versionJson.optString("title"),
+                status = DirectorPlanVersionEntity.STATUS_PUBLISHED,
+                changeNotes = versionJson.optString("changeNotes"),
+                createdAt = publishedAt,
+                publishedAt = publishedAt
+            ))
+            val turnIds = mutableListOf<Long>()
+            for (i in 0 until turnsJson.length()) {
+                val item = turnsJson.getJSONObject(i)
+                val turnId = dao.insertTurn(DirectorTurnEntity(
+                    versionId = versionId,
+                    turnNumber = item.optInt("turnNumber"),
+                    sequenceIndex = item.optInt("sequenceIndex", i),
+                    turnType = item.optString("turnType", DirectorTurnEntity.TYPE_NORMAL),
+                    title = item.optString("title"),
+                    continuityGroupUid = item.optString("continuityGroupUid"),
+                    isEnabled = item.optBoolean("isEnabled", true),
+                    notes = item.optString("notes")
+                ))
+                turnIds += turnId
+                val participants = item.optJSONArray("participants")
+                if (participants != null) for (j in 0 until participants.length()) {
+                    val person = participants.getJSONObject(j)
+                    dao.insertParticipant(DirectorParticipantEntity(
+                        turnId = turnId, roleUid = person.optString("roleUid"),
+                        roleTitle = person.optString("roleTitle"), orderIndex = person.optInt("orderIndex"),
+                        isLead = person.optBoolean("isLead")
+                    ))
                 }
-                val cues = versionJson.getJSONArray("cues")
-                for (ci in 0 until cues.length()) {
-                    val item = cues.getJSONObject(ci)
-                    val turnSequence = if (item.isNull("turnSequenceIndex")) null else item.optInt("turnSequenceIndex")
-                    val turnId = turnSequence?.let { turnIdsBySequence[it] ?: error("راهنمای صحنه به نوبت ناموجود متصل شده است.") }
-                    dao.insertStageCue(DirectorStageCueEntity(
-                        versionId = versionId,
-                        turnId = turnId,
-                        cueType = item.optString("cueType", DirectorStageCueEntity.CUE_OTHER),
-                        title = item.optString("title"),
-                        instruction = item.getString("instruction"),
-                        orderIndex = item.optInt("orderIndex"),
-                        blocksNextTurn = item.optBoolean("blocksNextTurn"),
-                        continuationRoleUid = item.optString("continuationRoleUid")
+                val segments = item.optJSONArray("segments")
+                if (segments != null) for (j in 0 until segments.length()) {
+                    val segment = segments.getJSONObject(j)
+                    val section = if (segment.isNull("sectionUid")) null else segment.optString("sectionUid")
+                    dao.insertTextSegment(DirectorTextSegmentEntity(
+                        turnId = turnId, segmentIndex = segment.optInt("segmentIndex", j),
+                        text = segment.optString("text"), sectionUid = section
                     ))
                 }
             }
+            val cues = payload.optJSONArray("stageCues")
+            if (cues != null) for (i in 0 until cues.length()) {
+                val cue = cues.getJSONObject(i)
+                val index = cue.optInt("turnIndex", -1)
+                dao.insertStageCue(DirectorStageCueEntity(
+                    versionId = versionId,
+                    turnId = turnIds.getOrNull(index),
+                    cueType = cue.optString("cueType", DirectorStageCueEntity.CUE_OTHER),
+                    title = cue.optString("title"), instruction = cue.optString("instruction"),
+                    orderIndex = cue.optInt("orderIndex", i),
+                    blocksNextTurn = cue.optBoolean("blocksNextTurn"),
+                    continuationRoleUid = cue.optString("continuationRoleUid")
+                ))
+            }
         }
-        check(prefs.edit().putString("digest_$planUid", planDigest).commit()) { "ثبت سابقه دریافت بسته انجام نشد." }
-        "دفتر رسمی «${planJson.optString("title") }» با موفقیت و با تأیید امضای دیجیتال دریافت شد. تعداد نسخه‌های دریافت‌شده: ${versionsJson.length()}"
+        } finally {
+            ViewerDirectorOfficeDatabase.lockOfficialAfterImport(writable)
+        }
+        return "دفتر رسمی «${planJson.optString("title")}" +
+            "»، نسخه ${versionJson.optInt("versionNumber")} با موفقیت و پس از اعتبارسنجی امضا وارد شد. دفتر شخصی بدون تغییر باقی ماند."
     }
+
+    data class SelectorEntry(
+        val key: String,
+        val roleUid: String,
+        val roleTitle: String,
+        val sectionUid: String,
+        val sectionTitle: String,
+        val text: String
+    )
+
+    /** ساخت دفتر شخصی با روش واقعی انتخاب‌شده از محتوای محلی همان مجلس. */
+    suspend fun createPersonalFromOfficial(
+        context: Context,
+        contentDb: AppDatabase,
+        officialDb: ViewerDirectorOfficeDatabase,
+        personalDb: ViewerDirectorOfficeDatabase,
+        officialPlan: DirectorPlanEntity,
+        method: String
+    ): Long {
+        val permissions = ViewerAccessPolicy.getEffectivePermissions(context)
+        require(DirectorOfficeAccessRules.canViewOfficial(permissions)) { "برای ساخت دفتر شخصی، مشاهده محتوای رسمی باید مجاز باشد." }
+        require(DirectorOfficeAccessRules.canCreatePersonal(permissions, method)) { "مدیر ساخت دفتر شخصی با این روش را برای Viewer مجاز نکرده است." }
+        require(officialPlan.status == DirectorPlanEntity.STATUS_PUBLISHED) { "فقط از دفتر رسمی منتشرشده می‌توان دفتر شخصی ساخت." }
+
+        val sourceDao = officialDb.directorDao()
+        val sourceVersion = sourceDao.versions(officialPlan.id).firstOrNull { it.status == DirectorPlanVersionEntity.STATUS_PUBLISHED }
+            ?: error("نسخه رسمی منتشرشده پیدا نشد.")
+        val tazieh = if (method == "MANUAL") null else {
+            contentDb.taziehDao().getByUid(officialPlan.taziehUid)
+                ?: error("محتوای مجلس مرتبط در کتابخانه آفلاین Viewer پیدا نشد.")
+        }
+        val currentContentVersion = tazieh?.let { local ->
+            contentDb.archiveDao().currentVersion(local.uid) ?: contentDb.archiveDao().versionsForTazieh(local.uid).firstOrNull()
+        }
+        val roles = when {
+            tazieh == null -> emptyList()
+            currentContentVersion != null -> contentDb.roleDao().getByVersionUid(currentContentVersion.uid)
+            else -> contentDb.roleDao().getByTazieh(tazieh.id).filter { it.versionUid.isBlank() }
+                .sortedWith(compareBy<com.example.bookapp.data.RoleEntity> { it.orderIndex }.thenBy { it.id })
+        }
+        val sections = if (roles.isEmpty()) emptyList() else contentDb.sectionDao().getByRoles(roles.map { it.id })
+            .filter { it.content.isNotBlank() }
+            .sortedWith(compareBy<com.example.bookapp.data.SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }
+                .thenBy { it.orderIndex }.thenBy { it.id })
+        if (method == "SELECTOR") require(sections.isNotEmpty()) { "برای روش انتخاب‌گر، متن محلی نقش‌های مجلس در Viewer پیدا نشد." }
+        val now = System.currentTimeMillis()
+        val targetDao = personalDb.directorDao()
+        return personalDb.withTransaction {
+            val newPlanId = targetDao.insertPlan(DirectorPlanEntity(
+                uid = "personal-${UUID.randomUUID()}", taziehUid = officialPlan.taziehUid,
+                title = "دفتر شخصی — ${officialPlan.title}", status = DirectorPlanEntity.STATUS_DRAFT,
+                description = "دفتر مستقل این Viewer؛ روش ساخت: $method؛ انتشار رسمی و خروجی‌گیری ندارد.",
+                createdAt = now, updatedAt = now
+            ))
+            val newVersionId = targetDao.insertVersion(DirectorPlanVersionEntity(
+                planId = newPlanId, versionNumber = 1, title = "نسخه شخصی اول",
+                status = DirectorPlanVersionEntity.STATUS_DRAFT,
+                changeNotes = "دفتر شخصی؛ روش ساخت: $method؛ منشأ: ${officialPlan.uid}",
+                createdAt = now
+            ))
+            val newTurnsByNumber = mutableMapOf<Int, Long>()
+            val newTurnsByRole = mutableMapOf<String, Long>()
+
+            when (method) {
+                "ROLE_NUMBERED" -> {
+                    data class NumberedEntry(val number: Int, val role: com.example.bookapp.data.RoleEntity, val section: com.example.bookapp.data.SectionEntity, val text: String)
+                    val entries = sections.flatMap { section ->
+                        val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
+                        parseNumberedDialogues(section.content).map { (number, text) -> NumberedEntry(number, role, section, text) }
+                    }
+                    require(entries.isNotEmpty()) { "در متن محلی نقش‌های این مجلس شماره دیالوگ پیدا نشد؛ روش شماره‌محور قابل اجرا نیست." }
+                    var sequence = 0
+                    entries.groupBy { it.number }.toSortedMap().forEach { (number, numberEntries) ->
+                        val distinctRoles = numberEntries.map { it.role }.distinctBy { it.uid }
+                        val turnId = targetDao.insertTurn(DirectorTurnEntity(
+                            versionId = newVersionId, turnNumber = number, sequenceIndex = sequence++,
+                            turnType = if (distinctRoles.size > 1) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
+                            title = if (distinctRoles.size > 1) distinctRoles.joinToString("، ") { it.title } else distinctRoles.first().title
+                        ))
+                        newTurnsByNumber[number] = turnId
+                        distinctRoles.forEachIndexed { index, role ->
+                            targetDao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = role.uid, roleTitle = role.title, orderIndex = index, isLead = index == 0))
+                        }
+                        numberEntries.forEachIndexed { index, entry ->
+                            targetDao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = index, text = entry.text, sectionUid = entry.section.uid))
+                        }
+                    }
+                }
+                "FULL_TEXT" -> {
+                    var sequence = 0
+                    roles.forEach { role ->
+                        val roleSections = sections.filter { it.roleId == role.id }
+                        if (roleSections.isNotEmpty()) {
+                            val turnId = targetDao.insertTurn(DirectorTurnEntity(
+                                versionId = newVersionId, turnNumber = sequence + 1, sequenceIndex = sequence++, title = role.title
+                            ))
+                            newTurnsByRole[role.uid] = turnId
+                            targetDao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = role.uid, roleTitle = role.title, isLead = true))
+                            roleSections.forEachIndexed { index, section ->
+                                targetDao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = index, text = section.content, sectionUid = section.uid))
+                            }
+                        }
+                    }
+                    require(newTurnsByRole.isNotEmpty()) { "متن کاملی برای نقش‌های این مجلس در کتابخانه Viewer پیدا نشد." }
+                }
+                "MANUAL", "SELECTOR" -> {
+                    // این دو روش عمداً با دفتر خالی شروع می‌شوند؛ نوبت‌ها بعداً در Viewer
+                    // به‌صورت دستی یا از فهرست انتخاب‌گر افزوده می‌شوند.
+                }
+            }
+
+            // راهنماهای صحنه رسمی به دفتر شخصی منتقل می‌شوند، اما به شناسه‌های تازه
+            // متصل می‌گردند؛ هیچ رکوردی در پایگاه داده رسمی تغییر نمی‌کند.
+            val sourceTurns = sourceDao.turns(sourceVersion.id)
+            val sourceTurnById = sourceTurns.associateBy { it.id }
+            sourceDao.stageCues(sourceVersion.id).forEach { cue ->
+                val targetTurnId = when (method) {
+                    "ROLE_NUMBERED" -> cue.turnId?.let { sourceTurnById[it]?.turnNumber }?.let { newTurnsByNumber[it] }
+                    "FULL_TEXT" -> cue.turnId?.let { sourceTurnById[it]?.title }?.let { title -> roles.firstOrNull { it.title == title }?.uid }?.let { newTurnsByRole[it] }
+                    else -> null
+                }
+                targetDao.insertStageCue(cue.copy(id = 0, versionId = newVersionId, turnId = targetTurnId))
+            }
+            newPlanId
+        }
+    }
+
+    suspend fun selectorEntries(contentDb: AppDatabase, taziehUid: String): List<SelectorEntry> = withContext(Dispatchers.IO) {
+        val tazieh = contentDb.taziehDao().getByUid(taziehUid) ?: return@withContext emptyList()
+        val version = contentDb.archiveDao().currentVersion(tazieh.uid)
+            ?: contentDb.archiveDao().versionsForTazieh(tazieh.uid).firstOrNull()
+        val roles = if (version != null) contentDb.roleDao().getByVersionUid(version.uid)
+        else contentDb.roleDao().getByTazieh(tazieh.id).filter { it.versionUid.isBlank() }
+            .sortedWith(compareBy<com.example.bookapp.data.RoleEntity> { it.orderIndex }.thenBy { it.id })
+        if (roles.isEmpty()) return@withContext emptyList()
+        val sections = contentDb.sectionDao().getByRoles(roles.map { it.id })
+            .filter { it.content.isNotBlank() }
+            .sortedWith(compareBy<com.example.bookapp.data.SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }
+                .thenBy { it.orderIndex }.thenBy { it.id })
+        sections.flatMap { section ->
+            val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
+            section.content.replace("\r\n", "\n").replace('\r', '\n')
+                .split(Regex("\\n[\\t ]*\\n+"))
+                .map { it.trim() }.filter { it.isNotBlank() }
+                .mapIndexed { index, text -> SelectorEntry("${section.uid}:$index", role.uid, role.title, section.uid, section.title, text) }
+        }
+    }
+
+    private fun parseNumberedDialogues(content: String): List<Pair<Int, String>> {
+        val heading = Regex("^\\s*(?:(?:دیالوگ|نوبت|شماره)\\s*)?([0-9۰-۹٠-٩]{1,6})(?:\\s*[-–—ـ.)،:：]\\s*|\\s+|$)(.*)$")
+        val result = mutableListOf<Pair<Int, String>>()
+        var current: Int? = null
+        val body = StringBuilder()
+        fun flush() {
+            val number = current
+            val text = body.toString().trim()
+            if (number != null && text.isNotBlank()) result += number to text
+            body.setLength(0)
+        }
+        content.replace("\r\n", "\n").replace('\r', '\n').lines().forEach { line ->
+            val match = heading.matchEntire(line)
+            if (match != null) {
+                flush()
+                val digits = match.groupValues[1].map { ch -> when (ch) {
+                    in '۰'..'۹' -> ('0'.code + (ch.code - '۰'.code)).toChar()
+                    in '٠'..'٩' -> ('0'.code + (ch.code - '٠'.code)).toChar()
+                    else -> ch
+                } }.joinToString("")
+                current = digits.toIntOrNull()
+                val inline = match.groupValues[2].trim()
+                if (inline.isNotBlank()) body.append(inline).append('\n')
+            } else if (current != null) body.append(line).append('\n')
+        }
+        flush()
+        return result
+    }
+
 }

@@ -51,8 +51,7 @@ private val accessPermissionTrees = listOf(
     PermissionTree("نقش و تمرین", listOf("myRole")),
     PermissionTree("خروجی", listOf("pdf")),
     PermissionTree("تقویم و اطلاعات", listOf("calendar", "appIntro")),
-    PermissionTree("هوش مصنوعی و پژوهش هوشمند", listOf("ai")),
-    PermissionTree("دفتر معین‌البکا", listOf("directorOffice"))
+    PermissionTree("هوش مصنوعی و پژوهش هوشمند", listOf("ai"))
 )
 
 private val permissionChildren = mapOf(
@@ -75,8 +74,7 @@ private val permissionChildren = mapOf(
     "dictionary" to listOf("dictionary.view", "dictionary.add", "dictionary.edit", "dictionary.delete"),
     "taziehCorrections" to listOf("taziehCorrections.view", "taziehCorrections.add", "taziehCorrections.edit", "taziehCorrections.delete", "taziehCorrections.apply"),
     "calendar" to listOf("calendar.view", "calendar.suggestions"),
-    "ai" to listOf("ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription"),
-    "directorOffice" to listOf("directorOffice.view", "directorOffice.personal", "directorOffice.build.numbered", "directorOffice.build.fullText", "directorOffice.build.manual", "directorOffice.build.selector")
+    "ai" to listOf("ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription")
 )
 
 private fun permissionDescription(key: String): String = when (key) {
@@ -100,13 +98,6 @@ private fun permissionDescription(key: String): String = when (key) {
     "taziehCorrections" -> "والد دیکشنری اصلاحات تعزیه؛ مستقل از دیکشنری اصطلاحات"
     "calendar" -> "والد تقویم محرم و پیشنهادهای مرتبط"
     "ai" -> "والد دسترسی به ابزارهای هوشمند؛ خاموش‌کردن آن همه قابلیت‌های هوش مصنوعی کاربر را مسدود می‌کند"
-    "directorOffice" -> "والد دفتر معین‌البکا؛ کنترل مشاهده دفتر رسمی و دسترسی به دفتر شخصی"
-    "directorOffice.view" -> "فقط مشاهده نسخه‌های رسمی منتشرشده دفتر معین‌البکا"
-    "directorOffice.personal" -> "اجازه ایجاد و نگهداری دفتر شخصی مستقل در دستگاه کاربر"
-    "directorOffice.build.numbered" -> "ساخت دفتر شخصی با تفکیک خودکار متن به نوبت‌های شماره‌دار"
-    "directorOffice.build.fullText" -> "ساخت دفتر شخصی با انتقال متن کامل هر نقش"
-    "directorOffice.build.manual" -> "ساخت و تکمیل نوبت‌ها به‌صورت دستی"
-    "directorOffice.build.selector" -> "ساخت دفتر با انتخاب نقش و دیالوگ توسط کاربر"
     "ai.analysis" -> "تحلیل ساختار، عنوان‌ها و تکرارهای احتمالی متن؛ فقط پیشنهاد"
     "ai.speaker" -> "شناسایی الگوهای نام گوینده و پیشنهاد تفکیک گفتار"
     "ai.glossary" -> "استخراج واژه‌های پرتکرار برای بررسی و ورود احتمالی به واژه‌نامه"
@@ -211,8 +202,7 @@ private fun PermissionGroupEditor(
                                                         Text("فرزند: $label")
                                                         Text(permissionDescription(key), style = MaterialTheme.typography.bodySmall)
                                                     }
-                                                    val requiredParentEnabled = ViewerAccessPolicy.permissionParents[key]?.let { permissions[it] == true } ?: true
-                                                    Switch(enabled = parentEnabled && requiredParentEnabled, checked = permissions[key] == true, onCheckedChange = { value -> onChange(key, value) })
+                                                    Switch(enabled = parentEnabled, checked = permissions[key] == true, onCheckedChange = { value -> onChange(key, value) })
                                                 }
                                             }
                                             if (allChildren) Text("همه فرزندان فعال هستند.", style = MaterialTheme.typography.labelSmall)
@@ -225,6 +215,46 @@ private fun PermissionGroupEditor(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DirectorOfficePermissionEditor(
+    permissions: Map<String, Boolean>,
+    onChange: (String, Boolean) -> Unit,
+    title: String
+) {
+    val rows = listOf(
+        "director.official.view" to "مشاهده دفتر رسمی منتشرشده",
+        "director.personal.create" to "ساخت دفتر شخصی",
+        "director.personal.method.number" to "ساخت شماره‌محور",
+        "director.personal.method.fulltext" to "ساخت با متن کامل",
+        "director.personal.method.manual" to "ساخت به روش دستی",
+        "director.personal.method.selector" to "استفاده از انتخاب‌گر",
+        "director.personal.edit" to "ویرایش دفتر شخصی"
+    )
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text("روش‌های ساخت مستقل کنترل می‌شوند. روش ناسازگار با روش محتوای منتشرشده فقط در صورت فعال‌سازی صریح مدیر در دسترس قرار می‌گیرد.", style = MaterialTheme.typography.bodySmall)
+            rows.forEach { (key, label) ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = permissions[key] == true, onCheckedChange = { onChange(key, it) })
+                }
+            }
+            listOf(
+                "director.official.publish" to "انتشار نسخه رسمی",
+                "director.copy" to "کپی دفتر",
+                "director.export" to "خروجی گرفتن"
+            ).forEach { (key, label) ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = false, onCheckedChange = {}, enabled = false)
+                }
+            }
+            Text("انتشار رسمی، کپی و خروجی در نسخه Viewer همواره مسدود است.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -426,6 +456,11 @@ fun ViewerAccessManagementScreen(
                             onBulkChange = { keys, value -> requestBulkChange(keys, value, false) },
                             searchQuery = permissionSearch
                         )
+                        DirectorOfficePermissionEditor(
+                            permissions = publicPermissions,
+                            title = "دسترسی دفتر معین‌البکا — پروفایل عمومی",
+                            onChange = { key, value -> publicPermissions = publicPermissions + (key to value) }
+                        )
                         Button(onClick = { ViewerAccessPolicy.setPublicPermissions(context, publicPermissions); savedPublicPermissions = publicPermissions; lastPublicChangeAt = System.currentTimeMillis(); message = "پروفایل عمومی ذخیره شد و آماده ارسال است." }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Filled.Save, null); Spacer(Modifier.width(6.dp)); Text("ذخیره پروفایل عمومی") }
                         if (publicDirty) {
                             Text("تغییرات ذخیره‌نشده: ${publicPermissions.keys.count { publicPermissions[it] != savedPublicPermissions[it] }} مورد", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -503,6 +538,11 @@ fun ViewerAccessManagementScreen(
                                 }
                             }
                         }
+                        DirectorOfficePermissionEditor(
+                            permissions = customPermissions,
+                            title = "دسترسی دفتر معین‌البکا — این Viewer",
+                            onChange = { key, value -> customPermissions = customPermissions + (key to value) }
+                        )
                         OutlinedTextField(expiryText, { expiryText = it }, label = { Text("انقضا (YYYY-MM-DD، خالی = بدون انقضا)") }, modifier = Modifier.fillMaxWidth())
                         Spacer(Modifier.height(6.dp))
                         if (profile == ViewerAccessPolicy.PROFILE_CUSTOM) {

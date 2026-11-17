@@ -6,13 +6,9 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 /**
- * Viewer-only storage for the Director Office.
- *
- * The official publication and the user's private workspace are deliberately
- * two different SQLite files. Importing/replacing official data can therefore
- * never delete or overwrite personal plans.
- *
- * This class exists only in src/viewer and is not compiled into the Admin APK.
+ * پایگاه داده مستقل دفتر معین‌البکای Viewer.
+ * دو فایل کاملاً مجزا دارد: رسمی فقط برای واردکردن بسته امضاشده Admin و
+ * شخصی فقط برای داده‌های قابل ویرایش همین نصب. هیچ‌کدام bookapp.db ادمین نیستند.
  */
 @Database(
     entities = [
@@ -22,20 +18,15 @@ import androidx.room.RoomDatabase
         DirectorTurnEntity::class,
         DirectorParticipantEntity::class,
         DirectorTextSegmentEntity::class,
-        DirectorStageCueEntity::class,
-        DirectorSessionEntity::class,
-        DirectorTurnProgressEntity::class
+        DirectorStageCueEntity::class
     ],
     version = 1,
     exportSchema = false
 )
 abstract class ViewerDirectorOfficeDatabase : RoomDatabase() {
-    abstract fun directorDao(): DirectorDao
+    abstract fun directorDao(): ViewerDirectorOfficeDao
 
     companion object {
-        private const val OFFICIAL_DB = "director_official.db"
-        private const val PERSONAL_DB = "director_personal.db"
-
         @Volatile private var officialInstance: ViewerDirectorOfficeDatabase? = null
         @Volatile private var personalInstance: ViewerDirectorOfficeDatabase? = null
 
@@ -44,8 +35,13 @@ abstract class ViewerDirectorOfficeDatabase : RoomDatabase() {
                 officialInstance ?: Room.databaseBuilder(
                     context.applicationContext,
                     ViewerDirectorOfficeDatabase::class.java,
-                    OFFICIAL_DB
-                ).build().also { officialInstance = it }
+                    "director_official.db"
+                ).addCallback(object : RoomDatabase.Callback() {
+                    override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        installOfficialReadOnlyTriggers(db)
+                    }
+                }).build().also { officialInstance = it }
             }
 
         fun personal(context: Context): ViewerDirectorOfficeDatabase =
@@ -53,18 +49,39 @@ abstract class ViewerDirectorOfficeDatabase : RoomDatabase() {
                 personalInstance ?: Room.databaseBuilder(
                     context.applicationContext,
                     ViewerDirectorOfficeDatabase::class.java,
-                    PERSONAL_DB
-                ).build().also { personalInstance = it }
+                    "director_personal_${ViewerAccessPolicy.installationId(context).replace(Regex("[^A-Za-z0-9_-]"), "_")}.db"
+                ).addCallback(object : RoomDatabase.Callback() {
+                    override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        installPersonalNoPublishTriggers(db)
+                    }
+                }).build().also { personalInstance = it }
             }
 
-        /** Test/support hook; never deletes either database file. */
-        fun closeInstances() {
-            synchronized(this) {
-                officialInstance?.close()
-                personalInstance?.close()
-                officialInstance = null
-                personalInstance = null
+        internal fun unlockOfficialForVerifiedImport(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+            officialTables.forEach { table -> db.execSQL("DROP TRIGGER IF EXISTS `ro_${table}_insert`"); db.execSQL("DROP TRIGGER IF EXISTS `ro_${table}_update`"); db.execSQL("DROP TRIGGER IF EXISTS `ro_${table}_delete`") }
+        }
+
+        internal fun lockOfficialAfterImport(db: androidx.sqlite.db.SupportSQLiteDatabase) = installOfficialReadOnlyTriggers(db)
+
+        private val officialTables = listOf(
+            "director_plans", "director_plan_versions", "director_source_files", "director_turns",
+            "director_turn_participants", "director_text_segments", "director_stage_cues"
+        )
+
+        private fun installOfficialReadOnlyTriggers(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+            officialTables.forEach { table ->
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS `ro_${table}_insert` BEFORE INSERT ON `$table` BEGIN SELECT RAISE(ABORT, 'official director office is read-only'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS `ro_${table}_update` BEFORE UPDATE ON `$table` BEGIN SELECT RAISE(ABORT, 'official director office is read-only'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS `ro_${table}_delete` BEFORE DELETE ON `$table` BEGIN SELECT RAISE(ABORT, 'official director office is read-only'); END")
             }
+        }
+
+        private fun installPersonalNoPublishTriggers(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS `personal_plan_no_publish_insert` BEFORE INSERT ON `director_plans` WHEN NEW.status = 'PUBLISHED' BEGIN SELECT RAISE(ABORT, 'personal director office cannot be published'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS `personal_plan_no_publish_update` BEFORE UPDATE OF status ON `director_plans` WHEN NEW.status = 'PUBLISHED' BEGIN SELECT RAISE(ABORT, 'personal director office cannot be published'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS `personal_version_no_publish_insert` BEFORE INSERT ON `director_plan_versions` WHEN NEW.status = 'PUBLISHED' BEGIN SELECT RAISE(ABORT, 'personal director office cannot be published'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS `personal_version_no_publish_update` BEFORE UPDATE OF status ON `director_plan_versions` WHEN NEW.status = 'PUBLISHED' BEGIN SELECT RAISE(ABORT, 'personal director office cannot be published'); END")
         }
     }
 }

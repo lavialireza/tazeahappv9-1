@@ -1,15 +1,11 @@
 package com.example.bookapp.ui
 
 import android.content.Context
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import com.example.bookapp.data.AppDatabase
 
-/** The Viewer-only director-office UI is deliberately absent from the Admin source set. */
-fun viewerDirectorOfficeRoutes(
-    navController: NavHostController,
-    context: Context,
-    db: AppDatabase,
-    onBack: () -> Unit
-) {
-    // No Viewer routes are registered in the Admin APK.
+/** این مسیر فقط در Viewer واقعی است؛ Admin از این route استفاده نمی‌کند. */
+fun NavGraphBuilder.viewerOnlyRoutes(navController: NavHostController, context: Context, db: AppDatabase) {
+    // عمداً خالی؛ صفحه و منطق Viewer در APK ادمین کامپایل نمی‌شوند.
 }

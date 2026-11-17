@@ -1,6 +1,7 @@
 package com.example.bookapp.ui
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -971,6 +972,32 @@ if (currentVersion != null) {
                                 finally { busy = false }
                             }
                         }) { Text("انتشار نسخه انتخابی", maxLines = 2) }
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = selectedPlan != null && selectedVersion?.status == DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy,
+                            onClick = {
+                                val plan = selectedPlan
+                                val version = selectedVersion
+                                if (plan == null || version == null) return@OutlinedButton
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        val uri = withContext(Dispatchers.IO) {
+                                            DirectorOfficePublicationSigner.createShareUri(context, db, plan.id, version.id)
+                                        }
+                                        val send = Intent(Intent.ACTION_SEND).apply {
+                                            type = DirectorOfficePublicationContract.MIME_TYPE
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(send, "ارسال دفتر رسمی به Viewer"))
+                                        message = "بسته رسمی امضاشده آماده ارسال آفلاین است. در دستگاه Viewer فایل را باز و وارد کنید."
+                                    } catch (e: Exception) {
+                                        message = "ساخت بسته رسمی ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                    } finally { busy = false }
+                                }
+                            }
+                        ) { Text("ارسال آفلاین نسخه رسمی به Viewer") }
                     }
                     Card(
                         Modifier.fillMaxWidth(),
