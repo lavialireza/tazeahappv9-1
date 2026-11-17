@@ -51,7 +51,8 @@ private val accessPermissionTrees = listOf(
     PermissionTree("نقش و تمرین", listOf("myRole")),
     PermissionTree("خروجی", listOf("pdf")),
     PermissionTree("تقویم و اطلاعات", listOf("calendar", "appIntro")),
-    PermissionTree("هوش مصنوعی و پژوهش هوشمند", listOf("ai"))
+    PermissionTree("هوش مصنوعی و پژوهش هوشمند", listOf("ai")),
+    PermissionTree("دفتر معین‌البکا", listOf("directorOffice"))
 )
 
 private val permissionChildren = mapOf(
@@ -74,7 +75,8 @@ private val permissionChildren = mapOf(
     "dictionary" to listOf("dictionary.view", "dictionary.add", "dictionary.edit", "dictionary.delete"),
     "taziehCorrections" to listOf("taziehCorrections.view", "taziehCorrections.add", "taziehCorrections.edit", "taziehCorrections.delete", "taziehCorrections.apply"),
     "calendar" to listOf("calendar.view", "calendar.suggestions"),
-    "ai" to listOf("ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription")
+    "ai" to listOf("ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription"),
+    "directorOffice" to listOf("directorOffice.view", "directorOffice.personal", "directorOffice.build.numbered", "directorOffice.build.fullText", "directorOffice.build.manual", "directorOffice.build.selector")
 )
 
 private fun permissionDescription(key: String): String = when (key) {
@@ -98,6 +100,13 @@ private fun permissionDescription(key: String): String = when (key) {
     "taziehCorrections" -> "والد دیکشنری اصلاحات تعزیه؛ مستقل از دیکشنری اصطلاحات"
     "calendar" -> "والد تقویم محرم و پیشنهادهای مرتبط"
     "ai" -> "والد دسترسی به ابزارهای هوشمند؛ خاموش‌کردن آن همه قابلیت‌های هوش مصنوعی کاربر را مسدود می‌کند"
+    "directorOffice" -> "والد دفتر معین‌البکا؛ کنترل مشاهده دفتر رسمی و دسترسی به دفتر شخصی"
+    "directorOffice.view" -> "فقط مشاهده نسخه‌های رسمی منتشرشده دفتر معین‌البکا"
+    "directorOffice.personal" -> "اجازه ایجاد و نگهداری دفتر شخصی مستقل در دستگاه کاربر"
+    "directorOffice.build.numbered" -> "ساخت دفتر شخصی با تفکیک خودکار متن به نوبت‌های شماره‌دار"
+    "directorOffice.build.fullText" -> "ساخت دفتر شخصی با انتقال متن کامل هر نقش"
+    "directorOffice.build.manual" -> "ساخت و تکمیل نوبت‌ها به‌صورت دستی"
+    "directorOffice.build.selector" -> "ساخت دفتر با انتخاب نقش و دیالوگ توسط کاربر"
     "ai.analysis" -> "تحلیل ساختار، عنوان‌ها و تکرارهای احتمالی متن؛ فقط پیشنهاد"
     "ai.speaker" -> "شناسایی الگوهای نام گوینده و پیشنهاد تفکیک گفتار"
     "ai.glossary" -> "استخراج واژه‌های پرتکرار برای بررسی و ورود احتمالی به واژه‌نامه"
@@ -202,7 +211,8 @@ private fun PermissionGroupEditor(
                                                         Text("فرزند: $label")
                                                         Text(permissionDescription(key), style = MaterialTheme.typography.bodySmall)
                                                     }
-                                                    Switch(enabled = parentEnabled, checked = permissions[key] == true, onCheckedChange = { value -> onChange(key, value) })
+                                                    val requiredParentEnabled = ViewerAccessPolicy.permissionParents[key]?.let { permissions[it] == true } ?: true
+                                                    Switch(enabled = parentEnabled && requiredParentEnabled, checked = permissions[key] == true, onCheckedChange = { value -> onChange(key, value) })
                                                 }
                                             }
                                             if (allChildren) Text("همه فرزندان فعال هستند.", style = MaterialTheme.typography.labelSmall)
