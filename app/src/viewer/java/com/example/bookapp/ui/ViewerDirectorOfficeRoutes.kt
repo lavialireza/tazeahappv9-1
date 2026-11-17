@@ -1,7 +1,7 @@
 package com.example.bookapp.ui
 
-import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import androidx.navigation.NavType
@@ -10,7 +10,7 @@ import com.example.bookapp.data.AppDatabase
 import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 
-fun viewerDirectorOfficeRoutes(
+fun NavGraphBuilder.viewerDirectorOfficeRoutes(
     navController: NavHostController,
     context: Context,
     db: AppDatabase,
