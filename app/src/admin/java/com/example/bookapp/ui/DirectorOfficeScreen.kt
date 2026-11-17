@@ -357,7 +357,6 @@ fun DirectorOfficeScreen(
     var selectedDialogueKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var turnSearch by remember { mutableStateOf("") }
     var showTurnSearch by remember { mutableStateOf(false) }
-    var selectedSearchResultIndex by remember { mutableIntStateOf(0) }
     var turnSearchCorpus by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var showOfficeSettingsDialog by remember { mutableStateOf(false) }
     var officeLineSpacing by remember { mutableFloatStateOf(Prefs.getLineSpacing(context)) }
@@ -383,16 +382,12 @@ fun DirectorOfficeScreen(
             turn.id to dao.textSegments(turn.id).joinToString("\n") { it.text }
         }
     }
-    LaunchedEffect(turnSearch, visibleTurns.size) {
-        selectedSearchResultIndex = 0
-    }
-    LaunchedEffect(turnSearch, selectedSearchResultIndex, visibleTurns.size, busy, message) {
+    LaunchedEffect(turnSearch, visibleTurns.size, busy, message) {
         if (turnSearch.isNotBlank() && visibleTurns.isNotEmpty()) {
             withFrameNanos { }
             val trailingItems = (if (busy) 1 else 0) + (if (message != null) 1 else 0)
-            val firstTurnItemIndex = (turnListState.layoutInfo.totalItemsCount - visibleTurns.size - trailingItems).coerceAtLeast(0)
-            val safeResultIndex = selectedSearchResultIndex.coerceIn(0, visibleTurns.lastIndex)
-            runCatching { turnListState.animateScrollToItem(firstTurnItemIndex + safeResultIndex) }
+            val targetIndex = (turnListState.layoutInfo.totalItemsCount - visibleTurns.size - trailingItems).coerceAtLeast(0)
+            runCatching { turnListState.animateScrollToItem(targetIndex) }
         }
     }
 
@@ -684,32 +679,12 @@ if (currentVersion != null) {
                         }
                     )
                     if (turnSearch.isNotBlank()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                        ) {
-                            Text(
-                                if (visibleTurns.isEmpty()) "۰ نتیجه"
-                                else "${toPersianDirectorDigits((selectedSearchResultIndex + 1).toString())} از ${toPersianDirectorDigits(visibleTurns.size.toString())}",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.error,
-                                maxLines = 1
-                            )
-                            TextButton(
-                                modifier = Modifier.weight(0.75f).height(32.dp),
-                                enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex > 0,
-                                onClick = { selectedSearchResultIndex-- },
-                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
-                            ) { Text("نتیجه قبلی", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
-                            TextButton(
-                                modifier = Modifier.weight(0.75f).height(32.dp),
-                                enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex < visibleTurns.lastIndex,
-                                onClick = { selectedSearchResultIndex++ },
-                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
-                            ) { Text("نتیجه بعدی", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
-                        }
+                        Text(
+                            if (visibleTurns.isEmpty()) "نتیجه‌ای پیدا نشد" else "${visibleTurns.size} نوبت پیدا شد؛ برای مشاهده به کارت نتیجه منتقل شدید.",
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
@@ -1228,9 +1203,7 @@ if (currentVersion != null) {
                 }
                 items(visibleTurns, key = { it.id }) { turn ->
                     val segmentState = remember(turn.id) { mutableStateOf("") }
-                    var savingDialogue by remember(turn.id) { mutableStateOf(false) }
                     var showTurnCueDialog by remember(turn.id) { mutableStateOf(false) }
-                    var showTurnCuePanel by remember(turn.id) { mutableStateOf(false) }
                     var turnCueDraft by remember(turn.id) { mutableStateOf("") }
                     var editingTurnCueId by remember(turn.id) { mutableStateOf<Long?>(null) }
                     val turnStageCues = stageCues.filter { it.turnId == turn.id }
@@ -1296,7 +1269,7 @@ if (currentVersion != null) {
                                 onValueChange = { editedNumber = it.filter(Char::isDigit).take(6) },
                                 label = {
                                     Text(
-                                        "نوبت ${toPersianDirectorDigits(turn.turnNumber.toString())} از ${toPersianDirectorDigits(turns.size.toString())} • جایگاه اجرا ${toPersianDirectorDigits((turnPosition + 1).coerceAtLeast(1).toString())}",
+                                        "نوبت ${toPersianDirectorDigits(turn.turnNumber.toString())} از ${toPersianDirectorDigits(turns.size.toString())} • ترتیب ${toPersianDirectorDigits((turn.sequenceIndex + 1).toString())}",
                                         maxLines = 1
                                     )
                                 },
@@ -1334,44 +1307,34 @@ if (currentVersion != null) {
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 TextButton(
-                                    modifier = Modifier.weight(1f).height(36.dp),
-                                    enabled = !savingDialogue,
-                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+                                    modifier = Modifier.weight(1f),
+                                    enabled = segmentState.value.isNotBlank(),
                                     onClick = {
                                         scope.launch {
-                                            savingDialogue = true
                                             try {
-                                                val textToSave = segmentState.value.trim()
-                                                db.withTransaction {
-                                                    val currentSegments = dao.textSegments(turn.id)
-                                                    if (currentSegments.isEmpty()) {
-                                                        dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turn.id, segmentIndex = 0, text = textToSave))
-                                                    } else {
-                                                        dao.updateTextSegment(currentSegments.first().copy(text = textToSave, segmentIndex = 0))
-                                                        currentSegments.drop(1).forEach { dao.deleteTextSegment(it.id) }
-                                                    }
+                                                val currentSegments = dao.textSegments(turn.id)
+                                                if (currentSegments.isEmpty()) dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turn.id, segmentIndex = 0, text = segmentState.value.trim()))
+                                                else {
+                                                    dao.updateTextSegment(currentSegments.first().copy(text = segmentState.value.trim()))
+                                                    currentSegments.drop(1).forEach { dao.deleteTextSegment(it.id) }
                                                 }
-                                                val savedSegments = dao.textSegments(turn.id)
-                                                val savedText = savedSegments.joinToString("\n") { it.text }
-                                                segmentState.value = savedText
-                                                turnSearchCorpus = turnSearchCorpus + (turn.id to savedText)
                                                 previewText = buildDirectorVersionPreview(dao, turn.versionId)
-                                                message = "متن دیالوگ نوبت ${turn.turnNumber} ذخیره شد؛ متن اصلی کتابخانه تغییر نکرد."
-                                            } catch (e: Exception) {
-                                                message = "ذخیره ویرایش دیالوگ ناموفق بود: ${e.message ?: "خطای نامشخص"}"
-                                            } finally {
-                                                savingDialogue = false
-                                            }
+                                                turnSearchCorpus = turnSearchCorpus + (turn.id to segmentState.value)
+                                                message = "متن دیالوگ در نسخه دفتر ذخیره شد؛ متن اصلی کتابخانه تغییر نکرد."
+                                            } catch (e: Exception) { message = "ذخیره ویرایش متن ناموفق بود: ${e.message}" }
                                         }
                                     }
-                                ) { Text(if (savingDialogue) "در حال ذخیره…" else "ذخیره ویرایش دیالوگ", style = MaterialTheme.typography.labelSmall) }
+                                ) { Text("ذخیره ویرایش دیالوگ") }
                                 OutlinedButton(
-                                    modifier = Modifier.weight(1f).height(36.dp),
-                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
-                                    onClick = { showTurnCuePanel = !showTurnCuePanel }
-                                ) { Text("راهنمای صحنه (${turnStageCues.size})", style = MaterialTheme.typography.labelSmall) }
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        editingTurnCueId = null
+                                        turnCueDraft = ""
+                                        showTurnCueDialog = true
+                                    }
+                                ) { Text("راهنمای صحنه (${turnStageCues.size})") }
                             }
-                            if (showTurnCuePanel) {
+                            if (turnStageCues.isNotEmpty()) {
                                 Card(
                                     Modifier.fillMaxWidth(),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
@@ -1380,17 +1343,10 @@ if (currentVersion != null) {
                                         Modifier.fillMaxWidth().padding(10.dp),
                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        if (turnStageCues.isEmpty()) {
-                                            Text("برای این نوبت هنوز راهنمای صحنه ثبت نشده است.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
-                                        }
+                                        Text("راهنمای صحنه این نوبت", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiaryContainer)
                                         turnStageCues.forEach { cue ->
                                             Column(Modifier.fillMaxWidth()) {
-                                                Text(
-                                                    cue.title.replace("دستور صحنه", "راهنمای صحنه").ifBlank { if (cue.cueType == DirectorStageCueEntity.CUE_IMMEDIATE) "بلافاصله" else "راهنمای اجرا" },
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
+                                                Text(cue.title.replace("دستور صحنه", "راهنمای صحنه").ifBlank { if (cue.cueType == DirectorStageCueEntity.CUE_IMMEDIATE) "بلافاصله" else "راهنمای اجرا" }, fontWeight = FontWeight.SemiBold)
                                                 Text(
                                                     cue.instruction + if (cue.blocksNextTurn) " • ادامه همین نقش و توقف انتقال به نوبت بعد" else "",
                                                     style = MaterialTheme.typography.bodyMedium
@@ -1413,15 +1369,6 @@ if (currentVersion != null) {
                                                 }
                                             }
                                         }
-                                        OutlinedButton(
-                                            modifier = Modifier.align(androidx.compose.ui.Alignment.End).height(32.dp),
-                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                                            onClick = {
-                                                editingTurnCueId = null
-                                                turnCueDraft = ""
-                                                showTurnCueDialog = true
-                                            }
-                                        ) { Text("افزودن راهنما", style = MaterialTheme.typography.labelSmall) }
                                     }
                                 }
                             }
