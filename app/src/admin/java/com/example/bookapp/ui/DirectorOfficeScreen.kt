@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
@@ -662,6 +663,24 @@ if (currentVersion != null) {
                             Icon(if (showTurnSearch) Icons.Default.Close else Icons.Default.Search, contentDescription = "جستجوی نوبت و متن")
                         }
                         IconButton(onClick = { showOfficeSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر") }
+                        IconButton(
+                            enabled = selectedPlan?.status == DirectorPlanEntity.STATUS_PUBLISHED &&
+                                selectedVersion?.status == DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy,
+                            onClick = {
+                                val plan = selectedPlan
+                                if (plan != null) scope.launch {
+                                    busy = true
+                                    try {
+                                        val uri = DirectorOfficePublicationExporter.createShareUri(context, db, plan.id)
+                                        val send = DirectorOfficePublicationExporter.createShareIntent(uri)
+                                        context.startActivity(android.content.Intent.createChooser(send, "انتقال دفتر رسمی به Viewer"))
+                                        message = "بسته امضاشده دفتر رسمی آماده انتقال است. آن را به دستگاه Viewer ارسال کنید."
+                                    } catch (e: Exception) {
+                                        message = "ساخت بسته رسمی ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                    } finally { busy = false }
+                                }
+                            }
+                        ) { Icon(Icons.Default.Share, contentDescription = "انتقال امن نسخه رسمی به Viewer") }
                         IconButton(onClick = { refresh++ }) { Icon(Icons.Default.Refresh, contentDescription = "بروزرسانی") }
                     }
                 )
