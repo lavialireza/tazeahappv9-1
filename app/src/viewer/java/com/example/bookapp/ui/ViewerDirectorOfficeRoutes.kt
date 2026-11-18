@@ -12,6 +12,10 @@ fun NavGraphBuilder.viewerOnlyRoutes(
     db: AppDatabase
 ) {
     composable("viewer_director_office") {
-        ViewerDirectorOfficeScreen(contentDb = db, onBack = { navController.popBackStack() })
+        ViewerDirectorOfficeScreen(contentDb = db, taziehId = null, onBack = { navController.popBackStack() })
+    }
+    composable("viewer_director_office/{taziehId}") { entry ->
+        val taziehId = entry.arguments?.getString("taziehId")?.toLongOrNull()
+        ViewerDirectorOfficeScreen(contentDb = db, taziehId = taziehId, onBack = { navController.popBackStack() })
     }
 }

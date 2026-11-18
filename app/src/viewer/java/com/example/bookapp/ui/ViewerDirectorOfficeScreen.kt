@@ -64,7 +64,7 @@ private data class ViewerBuildMethod(val code: String, val label: String, val pe
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, onBack: () -> Unit) {
+fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val officialDb = remember { ViewerDirectorOfficeDatabase.official(context) }
@@ -115,9 +115,18 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, onBack: () -> Unit) {
     var editingCueTitle by remember { mutableStateOf("") }
     var editingCueText by remember { mutableStateOf("") }
 
+    var selectedTaziehUid by remember(taziehId) { mutableStateOf<String?>(null) }
+    var selectedTaziehResolved by remember(taziehId) { mutableStateOf(taziehId == null) }
+
     suspend fun reload() {
-        officialPlans = if (canOfficial) officialDao.plansPage("", 500, 0).filter { it.status == DirectorPlanEntity.STATUS_PUBLISHED } else emptyList()
-        personalPlans = personalDao.plansPage("", 500, 0).filter { it.uid.startsWith("personal-") }
+        officialPlans = if (canOfficial) {
+            officialDao.plansPage("", 500, 0)
+                .filter { it.status == DirectorPlanEntity.STATUS_PUBLISHED }
+                .filter { taziehId == null || (selectedTaziehUid != null && it.taziehUid == selectedTaziehUid) }
+        } else emptyList()
+        personalPlans = personalDao.plansPage("", 500, 0)
+            .filter { it.uid.startsWith("personal-") }
+            .filter { taziehId == null || (selectedTaziehUid != null && it.taziehUid == selectedTaziehUid) }
         selectedOfficial = selectedOfficial?.let { old -> officialPlans.firstOrNull { it.uid == old.uid } }
         selectedPersonal = selectedPersonal?.let { old -> personalPlans.firstOrNull { it.uid == old.uid } }
         val officialPlan = selectedOfficial
@@ -161,7 +170,17 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, onBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(refresh, canOfficial) {
+    LaunchedEffect(taziehId) {
+        selectedTaziehResolved = taziehId == null
+        selectedTaziehUid = null
+        if (taziehId != null) {
+            selectedTaziehUid = withContext(Dispatchers.IO) { contentDb.taziehDao().getById(taziehId)?.uid }
+            selectedTaziehResolved = true
+        }
+    }
+
+    LaunchedEffect(refresh, canOfficial, selectedTaziehResolved, selectedTaziehUid) {
+        if (!selectedTaziehResolved) return@LaunchedEffect
         try { reload() } catch (e: Exception) { message = "بارگذاری دفتر ناموفق بود: ${e.message}" }
     }
 
@@ -174,6 +193,13 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, onBack: () -> Unit) {
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (taziehId != null) {
+                Text(
+                    "دفتر معین‌البکای همین مجلس",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.titleSmall
+                )
+            }
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("دفتر رسمی") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("دفتر شخصی") })
@@ -189,7 +215,13 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, onBack: () -> Unit) {
                     }
                     Text("فقط نسخه منتشرشده و امضاشده Admin نمایش داده می‌شود. این بخش امکان ویرایش، کپی، خروجی یا انتشار ندارد.", Modifier.padding(horizontal = 14.dp), style = MaterialTheme.typography.bodySmall)
                     LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (officialPlans.isEmpty()) item { Text("هنوز بسته رسمی از Admin دریافت نشده است.") }
+                        if (officialPlans.isEmpty()) item {
+                            Text(
+                                if (taziehId == null) "هنوز بسته رسمی از Admin دریافت نشده است."
+                                else "برای این مجلس هنوز بسته رسمی منتشرشده و دریافت‌شده‌ای وجود ندارد. ابتدا بسته همین مجلس را از Admin دریافت کنید.",
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+                        }
                         items(officialPlans, key = { it.uid }) { plan ->
                             Card(Modifier.fillMaxWidth().clickable {
                                 selectedOfficial = plan
