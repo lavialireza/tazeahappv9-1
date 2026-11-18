@@ -32,10 +32,18 @@ jobs:
         with:
           gradle-version: '8.6'
 
+    
       - name: Build isolated Admin QA APK
+        env:
+          POLICY_PUBLIC_KEY: ${{ vars.POLICY_PUBLIC_KEY }}
+          ADMIN_POLICY_PRIVATE_KEY: ${{ secrets.ADMIN_POLICY_PRIVATE_KEY }}
         run: gradle :app:assembleAdminQa -PreleaseNumber=$GITHUB_RUN_NUMBER --stacktrace --warning-mode all
 
+
+      
       - name: Build isolated Viewer QA APK
+        env:
+          POLICY_PUBLIC_KEY: ${{ vars.POLICY_PUBLIC_KEY }}
         run: gradle :app:assembleViewerQa -PreleaseNumber=$GITHUB_RUN_NUMBER --stacktrace --warning-mode all
 
       - name: Verify package IDs, version, and Viewer assets
