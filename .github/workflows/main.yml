@@ -32,6 +32,28 @@ jobs:
         with:
           gradle-version: '8.6'
 
+      - name: Check Policy signing configuration
+        shell: bash
+        env:
+          POLICY_PUBLIC_KEY: ${{ vars.POLICY_PUBLIC_KEY }}
+          ADMIN_POLICY_PRIVATE_KEY: ${{ secrets.ADMIN_POLICY_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ADMIN_POLICY_PRIVATE_KEY:-}" ]; then
+            echo "ERROR: ADMIN_POLICY_PRIVATE_KEY is empty or unavailable."
+            exit 1
+          fi
+
+          if [ -z "${POLICY_PUBLIC_KEY:-}" ]; then
+            echo "ERROR: POLICY_PUBLIC_KEY is empty or unavailable."
+            exit 1
+          fi
+
+          echo "SUCCESS: Both policy keys are available."
+          echo "Private key length: ${#ADMIN_POLICY_PRIVATE_KEY}"
+          echo "Public key length: ${#POLICY_PUBLIC_KEY}"
+
     
       - name: Build isolated Admin QA APK
         env:
