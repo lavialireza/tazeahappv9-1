@@ -1177,8 +1177,13 @@ fun AppNavigation(
                 readOnly = publicViewer,
                 showCompare = featureEnabled("compare.view"),
                 canSelectMine = featureEnabled("myRole.select"),
-                showDirectorOffice = !publicViewer,
-                onOpenDirectorOffice = { if (!publicViewer) navController.navigate("director_office/$taziehId") }
+                // Entry is always visible in the Viewer roles page. Actual operations
+                // remain guarded by signed Viewer permissions inside the feature.
+                showDirectorOffice = true,
+                onOpenDirectorOffice = {
+                    if (publicViewer) navController.navigate("viewer_director_office/$taziehId")
+                    else navController.navigate("director_office/$taziehId")
+                }
             )
         }
 
