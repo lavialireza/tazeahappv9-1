@@ -12,13 +12,26 @@ object ViewerPermissionEngine {
         ViewerAccessPolicy.getEffectivePermissions(context)
 
     fun can(context: Context, key: String): Boolean =
-        ViewerAccessPolicy.hasPermission(context, key)
+        can(permissions(context), key)
+
+    /** Fast path for Compose: evaluate a previously loaded immutable policy snapshot. */
+    fun can(permissions: Map<String, Boolean>, key: String): Boolean {
+        if (key !in ViewerAccessPolicy.permissionLabels) return false
+        val parent = ViewerAccessPolicy.permissionParents[key]
+        return permissions[key] == true && (parent == null || permissions[parent] == true)
+    }
 
     fun canAny(context: Context, vararg keys: String): Boolean =
-        keys.any { can(context, it) }
+        canAny(permissions(context), *keys)
+
+    fun canAny(permissions: Map<String, Boolean>, vararg keys: String): Boolean =
+        keys.any { can(permissions, it) }
 
     fun canAll(context: Context, vararg keys: String): Boolean =
-        keys.all { can(context, it) }
+        canAll(permissions(context), *keys)
+
+    fun canAll(permissions: Map<String, Boolean>, vararg keys: String): Boolean =
+        keys.all { can(permissions, it) }
 
     fun parentOf(key: String): String? =
         ViewerAccessPolicy.permissionParents[key]
