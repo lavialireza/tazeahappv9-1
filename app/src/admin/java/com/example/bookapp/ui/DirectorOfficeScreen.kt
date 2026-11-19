@@ -275,6 +275,7 @@ fun DirectorOfficeScreen(
 ) {
     val context = LocalContext.current
     val dao = remember { db.directorDao() }
+    val transactionRunner = remember(db) { RoomDirectorOfficeTransactionRunner(db) }
     val scope = rememberCoroutineScope()
     var plans by remember { mutableStateOf(emptyList<DirectorPlanEntity>()) }
     var planSearch by remember { mutableStateOf("") }
@@ -1091,8 +1092,9 @@ if (currentVersion != null) {
                                                     text = entry.text
                                                 ),
                                                 number,
-                                                allowPublishedPlan = true
-                                            ) { operation -> db.withTransaction { operation() } }
+                                                allowPublishedPlan = true,
+                                                transactionRunner = transactionRunner
+                                            )
                                             selectedDialogueKeys = selectedDialogueKeys + entry.key
                                             selectorTurnNumber = (number + 1).toString()
                                             turns = dao.turns(version.id)
@@ -1145,8 +1147,9 @@ if (currentVersion != null) {
                                 val linkedRole = selectedRole!!
                                 DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
                                     dao, version.id, number, linkedRole.uid, linkedRole.title, turnText.trim(),
-                                    allowPublishedPlan = true
-                                ) { operation -> db.withTransaction { operation() } }
+                                    allowPublishedPlan = true,
+                                    transactionRunner = transactionRunner
+                                )
                                 turnText = ""
                                 message = "نوبت $number به دفتر اضافه شد."
                                 reload()
@@ -1187,8 +1190,9 @@ if (currentVersion != null) {
                                 try {
                                     DirectorOfficeWorkspaceOperations.addStageCue(
                                         dao, selectedVersion!!.id, "راهنمای صحنه", cueInstruction.trim(), selectedCueTurn!!.id,
-                                        allowPublishedPlan = true
-                                    ) { operation -> db.withTransaction { operation() } }
+                                        allowPublishedPlan = true,
+                                        transactionRunner = transactionRunner
+                                    )
                                     cueInstruction = ""
                                     message = "راهنمای صحنه ثبت شد."
                                     reload()
@@ -1257,9 +1261,10 @@ if (currentVersion != null) {
                                         if (turnPosition > 0) {
                                             val previous = ordered[turnPosition - 1]
                                             val reordered = ordered.toMutableList().apply { add(turnPosition - 1, removeAt(turnPosition)) }
-                                            DirectorOfficeWorkspaceOperations.reorderTurns(dao, reordered, allowPublishedPlan = true) { operation ->
-                                                db.withTransaction { operation() }
-                                            }
+                                            DirectorOfficeWorkspaceOperations.reorderTurns(
+                                                dao, reordered, allowPublishedPlan = true,
+                                                transactionRunner = transactionRunner
+                                            )
                                             turns = dao.turns(turn.versionId)
                                             previewText = buildDirectorVersionPreview(dao, turn.versionId)
                                         }
@@ -1270,9 +1275,10 @@ if (currentVersion != null) {
                                         val next = turns.getOrNull(turnPosition + 1)
                                         if (next != null) {
                                             val reordered = turns.toMutableList().apply { add(turnPosition + 1, removeAt(turnPosition)) }
-                                            DirectorOfficeWorkspaceOperations.reorderTurns(dao, reordered, allowPublishedPlan = true) { operation ->
-                                                db.withTransaction { operation() }
-                                            }
+                                            DirectorOfficeWorkspaceOperations.reorderTurns(
+                                                dao, reordered, allowPublishedPlan = true,
+                                                transactionRunner = transactionRunner
+                                            )
                                             turns = dao.turns(turn.versionId)
                                             previewText = buildDirectorVersionPreview(dao, turn.versionId)
                                         }
@@ -1297,7 +1303,10 @@ if (currentVersion != null) {
                                     scope.launch {
                                         val value = editedNumber.toIntOrNull()
                                         if (value != null && value > 0) {
-                                            DirectorOfficeWorkspaceOperations.updateTurn(dao, turn.copy(turnNumber = value), allowPublishedPlan = true) { operation -> db.withTransaction { operation() } }
+                                            DirectorOfficeWorkspaceOperations.updateTurn(
+                                                dao, turn.copy(turnNumber = value), allowPublishedPlan = true,
+                                                transactionRunner = transactionRunner
+                                            )
                                             turns = dao.turns(turn.versionId)
                                             previewText = buildDirectorVersionPreview(dao, turn.versionId)
                                             message = "شماره نوبت اصلاح شد؛ ترتیب نمایش حفظ شد."
@@ -1435,13 +1444,17 @@ if (currentVersion != null) {
                                                     try {
                                                         val existingCue = editingTurnCueId?.let { id -> dao.cuesForTurn(turn.id).firstOrNull { it.id == id } }
                                                         if (existingCue != null) {
-                                                            DirectorOfficeWorkspaceOperations.updateCue(dao, existingCue.copy(instruction = turnCueDraft.trim()), allowPublishedPlan = true) { operation -> db.withTransaction { operation() } }
+                                                            DirectorOfficeWorkspaceOperations.updateCue(
+                                                                dao, existingCue.copy(instruction = turnCueDraft.trim()),
+                                                                allowPublishedPlan = true, transactionRunner = transactionRunner
+                                                            )
                                                             message = "راهنمای صحنه این نوبت ویرایش شد."
                                                         } else {
                                                             DirectorOfficeWorkspaceOperations.addStageCue(
                                                                 dao, turn.versionId, "راهنمای صحنه", turnCueDraft.trim(), turn.id,
-                                                                allowPublishedPlan = true
-                                                            ) { operation -> db.withTransaction { operation() } }
+                                                                allowPublishedPlan = true,
+                                                                transactionRunner = transactionRunner
+                                                            )
                                                             message = "راهنمای صحنه به نوبت ${turn.turnNumber} متصل شد."
                                                         }
                                                         stageCues = dao.stageCues(turn.versionId)

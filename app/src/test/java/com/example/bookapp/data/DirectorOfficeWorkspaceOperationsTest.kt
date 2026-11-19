@@ -17,7 +17,7 @@ class DirectorOfficeWorkspaceOperationsTest {
             roleTitle = "حضرت عباس",
             text = "متن نوبت",
             sectionUid = "section-4",
-            inTransaction = { it() }
+            transactionRunner = DirectDirectorOfficeTransactionRunner
         )
 
         val turn = dao.turnRows.values.single()
@@ -38,11 +38,14 @@ class DirectorOfficeWorkspaceOperationsTest {
 
         DirectorOfficeWorkspaceOperations.reorderTurns(
             dao,
-            listOf(dao.turnRows.getValue(2), dao.turnRows.getValue(1))
-        ) { operation ->
-            transactionCalled = true
-            operation()
-        }
+            listOf(dao.turnRows.getValue(2), dao.turnRows.getValue(1)),
+            transactionRunner = object : DirectorOfficeTransactionRunner {
+                override suspend fun run(block: suspend () -> Unit) {
+                    transactionCalled = true
+                    block()
+                }
+            }
+        )
 
         assertTrue(transactionCalled)
         assertEquals(listOf(2L, 1L), dao.turnRows.values.sortedBy { it.sequenceIndex }.map { it.id })
@@ -75,7 +78,7 @@ class DirectorOfficeWorkspaceOperationsTest {
             roleTitle = "امام حسین",
             text = "متن نسخه جدید",
             allowPublishedPlan = true,
-            inTransaction = { it() }
+            transactionRunner = DirectDirectorOfficeTransactionRunner
         )
         assertEquals(1, dao.turnRows.size)
     }
@@ -94,7 +97,7 @@ class DirectorOfficeWorkspaceOperationsTest {
                 roleTitle = "امام حسین",
                 text = "متن",
                 allowPublishedPlan = true,
-                inTransaction = { it() }
+                transactionRunner = DirectDirectorOfficeTransactionRunner
             )
         }.exceptionOrNull()
         assertTrue(error is IllegalArgumentException)

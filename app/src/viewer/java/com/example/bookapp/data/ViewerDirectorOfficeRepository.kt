@@ -1,7 +1,6 @@
 package com.example.bookapp.data
 
 import android.content.Context
-import androidx.room.withTransaction
 
 /**
  * Adapter اختصاصی Viewer: فقط مجوزها و دیتابیس شخصی Viewer را مدیریت می‌کند.
@@ -14,35 +13,34 @@ object ViewerDirectorOfficeRepository {
         }
     }
 
-    private suspend fun inTransaction(db: ViewerDirectorOfficeDatabase, operation: suspend () -> Unit) {
-        db.withTransaction { operation() }
-    }
+    private fun transactionRunner(db: ViewerDirectorOfficeDatabase): DirectorOfficeTransactionRunner =
+        RoomDirectorOfficeTransactionRunner(db)
 
     suspend fun updateText(context: Context, db: ViewerDirectorOfficeDatabase, value: DirectorTextSegmentEntity) {
         requireEdit(context)
-        DirectorOfficeWorkspaceOperations.updateText(db.directorDao(), value) { operation -> inTransaction(db, operation) }
+        DirectorOfficeWorkspaceOperations.updateText(db.directorDao(), value, transactionRunner = transactionRunner(db))
     }
 
     suspend fun updateTurn(context: Context, db: ViewerDirectorOfficeDatabase, value: DirectorTurnEntity) {
         requireEdit(context)
-        DirectorOfficeWorkspaceOperations.updateTurn(db.directorDao(), value) { operation -> inTransaction(db, operation) }
+        DirectorOfficeWorkspaceOperations.updateTurn(db.directorDao(), value, transactionRunner = transactionRunner(db))
     }
 
     suspend fun addDialogueSegment(context: Context, db: ViewerDirectorOfficeDatabase, turnId: Long, text: String) {
         requireEdit(context)
-        DirectorOfficeWorkspaceOperations.addDialogueSegment(db.directorDao(), turnId, text) { operation -> inTransaction(db, operation) }
+        DirectorOfficeWorkspaceOperations.addDialogueSegment(db.directorDao(), turnId, text, transactionRunner = transactionRunner(db))
     }
 
     suspend fun updateCue(context: Context, db: ViewerDirectorOfficeDatabase, value: DirectorStageCueEntity) {
         requireEdit(context)
-        DirectorOfficeWorkspaceOperations.updateCue(db.directorDao(), value) { operation -> inTransaction(db, operation) }
+        DirectorOfficeWorkspaceOperations.updateCue(db.directorDao(), value, transactionRunner = transactionRunner(db))
     }
 
     suspend fun reorderTurns(context: Context, db: ViewerDirectorOfficeDatabase, orderedTurns: List<DirectorTurnEntity>) {
         requireEdit(context)
-        DirectorOfficeWorkspaceOperations.reorderTurns(db.directorDao(), orderedTurns) { operation ->
-            inTransaction(db, operation)
-        }
+        DirectorOfficeWorkspaceOperations.reorderTurns(
+            db.directorDao(), orderedTurns, transactionRunner = transactionRunner(db)
+        )
     }
 
     suspend fun addManualTurn(
@@ -57,9 +55,9 @@ object ViewerDirectorOfficeRepository {
         require(ViewerAccessPolicy.hasPermission(context, "director.personal.method.manual")) {
             "روش دستی برای این Viewer مجاز نیست."
         }
-        DirectorOfficeWorkspaceOperations.addManualTurn(db.directorDao(), planId, turnNumber, title, text) { operation ->
-            inTransaction(db, operation)
-        }
+        DirectorOfficeWorkspaceOperations.addManualTurn(
+            db.directorDao(), planId, turnNumber, title, text, transactionRunner = transactionRunner(db)
+        )
     }
 
     suspend fun addSelectorDialogue(
@@ -83,8 +81,9 @@ object ViewerDirectorOfficeRepository {
                 roleTitle = entry.roleTitle,
                 sectionUid = entry.sectionUid,
                 text = entry.text
-            )
-        ) { operation -> inTransaction(db, operation) }
+            ),
+            transactionRunner = transactionRunner(db)
+        )
     }
 
     suspend fun addStageCue(
@@ -98,8 +97,9 @@ object ViewerDirectorOfficeRepository {
         requireEdit(context)
         val versionId = db.directorDao().versions(planId).firstOrNull()?.id
             ?: error("نسخه دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceOperations.addStageCue(db.directorDao(), versionId, title, instruction, turnId) { operation ->
-            inTransaction(db, operation)
-        }
+        DirectorOfficeWorkspaceOperations.addStageCue(
+            db.directorDao(), versionId, title, instruction, turnId,
+            transactionRunner = transactionRunner(db)
+        )
     }
 }
