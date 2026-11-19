@@ -30,13 +30,13 @@ object DirectorOfficeWorkspaceOperations {
         dao: DirectorOfficeWorkspaceDao,
         value: DirectorTextSegmentEntity,
         allowPublishedPlan: Boolean = false,
-        inTransaction: suspend (suspend () -> Unit) -> Unit = { operation -> operation() }
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         val turn = dao.turn(value.turnId) ?: error("نوبت دفتر پیدا نشد.")
         val version = dao.version(turn.versionId) ?: error("نسخه دفتر پیدا نشد.")
         val plan = dao.plan(version.planId) ?: error("دفتر پیدا نشد.")
         requireEditableDraft(plan, version, allowPublishedPlan)
-        inTransaction {
+        transactionRunner.run {
             dao.updateTextSegment(value)
             dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
         }
@@ -46,7 +46,7 @@ object DirectorOfficeWorkspaceOperations {
         dao: DirectorOfficeWorkspaceDao,
         value: DirectorTurnEntity,
         allowPublishedPlan: Boolean = false,
-        inTransaction: suspend (suspend () -> Unit) -> Unit = { operation -> operation() }
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         require(value.turnNumber > 0) { "شماره نوبت باید بزرگ‌تر از صفر باشد." }
         require(value.title.isNotBlank()) { "عنوان نقش یا نوبت خالی است." }
@@ -57,7 +57,7 @@ object DirectorOfficeWorkspaceOperations {
         require(value.versionId == current.versionId && value.sequenceIndex == current.sequenceIndex) {
             "شناسه نسخه و جایگاه نوبت از این عملیات قابل تغییر نیست."
         }
-        inTransaction {
+        transactionRunner.run {
             dao.updateTurn(value)
             dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
         }
@@ -68,7 +68,7 @@ object DirectorOfficeWorkspaceOperations {
         turnId: Long,
         text: String,
         allowPublishedPlan: Boolean = false,
-        inTransaction: suspend (suspend () -> Unit) -> Unit = { operation -> operation() }
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         require(text.isNotBlank()) { "متن دیالوگ خالی است." }
         val turn = dao.turn(turnId) ?: error("نوبت دفتر پیدا نشد.")
@@ -76,7 +76,7 @@ object DirectorOfficeWorkspaceOperations {
         val plan = dao.plan(version.planId) ?: error("دفتر پیدا نشد.")
         requireEditableDraft(plan, version, allowPublishedPlan)
         val nextIndex = dao.textSegments(turnId).maxOfOrNull { it.segmentIndex }?.plus(1) ?: 0
-        inTransaction {
+        transactionRunner.run {
             dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = nextIndex, text = text.trim()))
             dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
         }
@@ -86,7 +86,7 @@ object DirectorOfficeWorkspaceOperations {
         dao: DirectorOfficeWorkspaceDao,
         value: DirectorStageCueEntity,
         allowPublishedPlan: Boolean = false,
-        inTransaction: suspend (suspend () -> Unit) -> Unit = { operation -> operation() }
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         require(value.instruction.isNotBlank()) { "متن راهنمای صحنه خالی است." }
         val version = dao.version(value.versionId) ?: error("نسخه دفتر پیدا نشد.")
@@ -97,7 +97,7 @@ object DirectorOfficeWorkspaceOperations {
                 "راهنمای صحنه باید به نوبت همین نسخه متصل باشد."
             }
         }
-        inTransaction {
+        transactionRunner.run {
             dao.updateStageCue(value)
             dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
         }
@@ -107,7 +107,7 @@ object DirectorOfficeWorkspaceOperations {
         dao: DirectorOfficeWorkspaceDao,
         orderedTurns: List<DirectorTurnEntity>,
         allowPublishedPlan: Boolean = false,
-        inTransaction: suspend (suspend () -> Unit) -> Unit
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         require(orderedTurns.map { it.id }.distinct().size == orderedTurns.size) {
             "فهرست نوبت‌ها دارای شناسه تکراری است."
@@ -122,7 +122,7 @@ object DirectorOfficeWorkspaceOperations {
         require(orderedTurns.all { dao.turn(it.id)?.versionId == version.id }) {
             "یکی از نوبت‌ها متعلق به نسخه انتخاب‌شده نیست."
         }
-        inTransaction {
+        transactionRunner.run {
             val finalOrder = DirectorOfficeWorkspaceUseCases.normalizedOrder(orderedTurns)
             finalOrder.forEachIndexed { index, (turnId, _) -> dao.moveTurn(turnId, -100000 - index) }
             finalOrder.forEach { (turnId, index) -> dao.moveTurn(turnId, index) }
@@ -136,7 +136,7 @@ object DirectorOfficeWorkspaceOperations {
         turnNumber: Int,
         title: String,
         text: String,
-        inTransaction: suspend (suspend () -> Unit) -> Unit
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         require(turnNumber > 0) { "شماره نوبت باید بزرگ‌تر از صفر باشد." }
         require(title.isNotBlank() && text.isNotBlank()) { "عنوان نقش و متن نوبت را وارد کنید." }
@@ -144,7 +144,7 @@ object DirectorOfficeWorkspaceOperations {
         val version = dao.versions(planId).firstOrNull() ?: error("نسخه پیش‌نویس دفتر پیدا نشد.")
         DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
         val nextIndex = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(dao.turns(version.id))
-        inTransaction {
+        transactionRunner.run {
             val turnId = dao.insertTurn(DirectorTurnEntity(
                 versionId = version.id, turnNumber = turnNumber, sequenceIndex = nextIndex, title = title.trim()
             ))
@@ -165,7 +165,7 @@ object DirectorOfficeWorkspaceOperations {
         text: String,
         sectionUid: String? = null,
         allowPublishedPlan: Boolean = false,
-        inTransaction: suspend (suspend () -> Unit) -> Unit
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         require(turnNumber > 0) { "شماره نوبت باید بزرگ‌تر از صفر باشد." }
         require(roleUid.isNotBlank() && roleTitle.isNotBlank() && text.isNotBlank()) {
@@ -175,7 +175,7 @@ object DirectorOfficeWorkspaceOperations {
         val plan = dao.plan(version.planId) ?: error("دفتر پیدا نشد.")
         requireEditableDraft(plan, version, allowPublishedPlan)
         val nextIndex = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(dao.turns(version.id))
-        inTransaction {
+        transactionRunner.run {
             val turnId = dao.insertTurn(DirectorTurnEntity(
                 versionId = version.id, turnNumber = turnNumber, sequenceIndex = nextIndex, title = roleTitle.trim()
             ))
@@ -195,7 +195,7 @@ object DirectorOfficeWorkspaceOperations {
         entry: DirectorOfficeSelectorEntry,
         turnNumber: Int? = null,
         allowPublishedPlan: Boolean = false,
-        inTransaction: suspend (suspend () -> Unit) -> Unit
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         val version = dao.version(versionId) ?: error("نسخه پیش‌نویس دفتر پیدا نشد.")
         val plan = dao.plan(version.planId) ?: error("دفتر پیدا نشد.")
@@ -204,7 +204,7 @@ object DirectorOfficeWorkspaceOperations {
         val nextIndex = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(turns)
         val nextNumber = turnNumber ?: DirectorOfficeWorkspaceUseCases.nextTurnNumber(turns)
         require(nextNumber > 0) { "شماره نوبت باید بزرگ‌تر از صفر باشد." }
-        inTransaction {
+        transactionRunner.run {
             val turnId = dao.insertTurn(DirectorTurnEntity(
                 versionId = version.id, turnNumber = nextNumber, sequenceIndex = nextIndex,
                 title = entry.roleTitle, continuityGroupUid = entry.key
@@ -226,7 +226,7 @@ object DirectorOfficeWorkspaceOperations {
         instruction: String,
         turnId: Long? = null,
         allowPublishedPlan: Boolean = false,
-        inTransaction: suspend (suspend () -> Unit) -> Unit = { operation -> operation() }
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
     ) {
         require(title.isNotBlank() && instruction.isNotBlank()) { "عنوان و متن راهنمای صحنه الزامی است." }
         val version = dao.version(versionId) ?: error("نسخه پیش‌نویس دفتر پیدا نشد.")
@@ -236,7 +236,7 @@ object DirectorOfficeWorkspaceOperations {
             "راهنمای صحنه باید به نوبت همین نسخه متصل باشد."
         }
         val nextOrder = dao.stageCues(version.id).maxOfOrNull { it.orderIndex }?.plus(1) ?: 0
-        inTransaction {
+        transactionRunner.run {
             dao.insertStageCue(DirectorStageCueEntity(
                 versionId = version.id, turnId = turnId, title = title.trim(), instruction = instruction.trim(), orderIndex = nextOrder
             ))
