@@ -20,6 +20,18 @@ class DirectorOfficeAccessRulesTest {
         assertFalse(DirectorOfficeAccessRules.canCreatePersonal(permissions, "FULL_TEXT"))
     }
 
+    @Test fun sharedBuildMethodContractIsSingleSourceForBothFlavors() {
+        assertTrue(DirectorOfficeSharedContract.methodCodes.containsAll(setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR")))
+        assertTrue(DirectorOfficeSharedContract.method("MANUAL")?.requiresOfficialSource == false)
+        assertTrue(DirectorOfficeSharedContract.method("ROLE_NUMBERED")?.requiresOfficialSource == true)
+        assertTrue(DirectorOfficeSharedContract.method("FULL_TEXT")?.requiresOfficialSource == true)
+        assertTrue(DirectorOfficeSharedContract.method("SELECTOR")?.requiresOfficialSource == true)
+    }
+
+    @Test fun unknownBuildMethodIsNeverGranted() {
+        val permissions = mapOf("director.personal.create" to true)
+        assertFalse(DirectorOfficeSharedContract.canCreatePersonal(permissions, "UNKNOWN"))
+    }
 
     @Test fun manualPersonalOfficeCreationDoesNotRequireOfficialOfficeViewPermission() {
         val permissions = mapOf(

@@ -61,52 +61,6 @@ private data class DirectorLibraryImportResult(
     val turnCount: Int,
     val usedDialogueOrder: Boolean
 )
-private fun splitDirectorDialogues(content: String): List<String> {
-    if (content.isBlank()) return emptyList()
-
-    // Blank lines separate dialogue blocks. Preserve internal line breaks so
-    // verse lines and multi-line speeches remain one selectable dialogue.
-    return content.replace("\r\n", "\n")
-        .replace('\r', '\n')
-        .split(Regex("\\n[\\t ]*\\n+"))
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-}
-
-/**
- * Reads dialogue numbers embedded in each role's own text.
- * Accepted line starts include "1 - text", "۱) متن", "2: متن",
- * "دیالوگ ۳: متن", and a number on its own line followed by the speech.
- * Lines after a numbered heading remain part of that dialogue until the next heading.
- */
-private fun parseRoleNumberedDialogues(content: String): List<Pair<Int, String>> {
-    if (content.isBlank()) return emptyList()
-    val heading = Regex("^\\s*(?:(?:دیالوگ|نوبت|شماره)\\s*)?([0-9۰-۹٠-٩]{1,6})(?:\\s*[-–—ـ.)،:：]\\s*|\\s+|$)(.*)$")
-    val result = mutableListOf<Pair<Int, String>>()
-    var currentNumber: Int? = null
-    val body = StringBuilder()
-
-    fun flush() {
-        val number = currentNumber
-        val text = body.toString().trim()
-        if (number != null && text.isNotBlank()) result += number to text
-        body.setLength(0)
-    }
-
-    content.replace("\r\n", "\n").replace('\r', '\n').lines().forEach { line ->
-        val match = heading.matchEntire(line)
-        if (match != null) {
-            flush()
-            currentNumber = normalizeDirectorNumber(match.groupValues[1]).toIntOrNull()
-            val inlineText = match.groupValues[2].trim()
-            if (inlineText.isNotBlank()) body.append(inlineText).append('\n')
-        } else if (currentNumber != null) {
-            body.append(line).append('\n')
-        }
-    }
-    flush()
-    return result
-}
 /**
  * Copies the selected majlis' already-stored library text into an empty director version.
  * It never edits roles/sections or imports content from another majlis.
@@ -350,7 +304,7 @@ fun DirectorOfficeScreen(
     var cueTurnId by remember { mutableStateOf<Long?>(null) }
     var stageCues by remember { mutableStateOf(emptyList<DirectorStageCueEntity>()) }
     var showBuildModeDialog by remember { mutableStateOf(false) }
-    var selectedBuildMode by remember { mutableStateOf("ROLE_NUMBERED") }
+    var selectedBuildMode by remember { mutableStateOf(DirectorOfficeSharedContract.ROLE_NUMBERED) }
     var selectorItems by remember { mutableStateOf(emptyList<DirectorSelectorItem>()) }
     var selectorRole by remember { mutableStateOf<RoleEntity?>(null) }
     var selectorRoleMenu by remember { mutableStateOf(false) }
@@ -372,9 +326,9 @@ fun DirectorOfficeScreen(
         )
     }
     val visibleTurns = remember(turns, turnSearch, turnSearchCorpus) {
-        val query = ContentUid.normalize(normalizeDirectorNumber(turnSearch.trim()))
+        val query = ContentUid.normalize(DirectorOfficeWorkspaceUseCases.normalizeNumber(turnSearch.trim()))
         if (query.isBlank()) turns else turns.filter { turn ->
-            normalizeDirectorNumber(turn.turnNumber.toString()).contains(query, ignoreCase = true) ||
+            DirectorOfficeWorkspaceUseCases.normalizeNumber(turn.turnNumber.toString()).contains(query, ignoreCase = true) ||
                 ContentUid.normalize(turn.title).contains(query, ignoreCase = true) ||
                 ContentUid.normalize(turnSearchCorpus[turn.id].orEmpty()).contains(query, ignoreCase = true)
         }
@@ -431,7 +385,7 @@ val currentVersion = selectedVersion
 
 currentVersion?.changeNotes
     ?.substringAfter("روش تکمیل دفتر: ", "")
-    ?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }
+    ?.takeIf { it in DirectorOfficeSharedContract.methodCodes }
     ?.let { selectedBuildMode = it }
 
 if (currentVersion != null) {
@@ -497,7 +451,7 @@ if (currentVersion != null) {
                         }
                         planVersions = dao.versions(plan.id)
                         selectedVersion = planVersions.firstOrNull()
-                        selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
+                        selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in DirectorOfficeSharedContract.methodCodes }?.let { selectedBuildMode = it }
                         sources = dao.sourceFiles(plan.id)
                         val currentVersion = selectedVersion
                         if (currentVersion != null && !showBuildModeDialog && !directorVersionHasText(dao, currentVersion.id)) {
@@ -528,7 +482,7 @@ if (currentVersion != null) {
     LaunchedEffect(selectedVersion?.id, selectedBuildMode, roleOptions, selectedPlan?.id) {
         val version = selectedVersion
         val plan = selectedPlan
-        if (version != null && plan != null && selectedBuildMode == "SELECTOR" && roleOptions.isNotEmpty()) {
+        if (version != null && plan != null && selectedBuildMode == DirectorOfficeSharedContract.SELECTOR && roleOptions.isNotEmpty()) {
             try {
                 val tazieh = db.taziehDao().getByUid(plan.taziehUid)
                 if (tazieh != null) {
@@ -538,7 +492,7 @@ if (currentVersion != null) {
                         .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
                     selectorItems = sections.flatMap { section ->
                         val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
-                        splitDirectorDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
+                        DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
                     }
                     selectedDialogueKeys = usedDirectorDialogueKeys(dao, version.id, selectorItems)
                     selectorRole = selectorRole?.let { old -> roles.firstOrNull { it.uid == old.uid } } ?: roles.firstOrNull()
@@ -672,17 +626,12 @@ if (currentVersion != null) {
                     }
                 )
                 if (showTurnSearch) {
-                    OutlinedTextField(
+                    DirectorOfficeSearchField(
                         value = turnSearch,
                         onValueChange = { turnSearch = it },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                        singleLine = true,
-                        label = { Text("شماره نوبت یا بخشی از متن دیالوگ را جستجو کنید") },
-                        trailingIcon = {
-                            if (turnSearch.isNotBlank()) IconButton(onClick = { turnSearch = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "پاک کردن جستجو")
-                            }
-                        }
+                        label = "شماره نوبت یا بخشی از متن دیالوگ را جستجو کنید",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        showSearchIcon = false
                     )
                     if (turnSearch.isNotBlank()) {
                         Row(
@@ -766,7 +715,7 @@ if (currentVersion != null) {
                                         selectedRole = roleOptions.firstOrNull()
                                         planVersions = dao.versions(existingPlan.id)
                                         selectedVersion = planVersions.firstOrNull()
-                                        selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
+                                        selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in DirectorOfficeSharedContract.methodCodes }?.let { selectedBuildMode = it }
                                         sources = dao.sourceFiles(existingPlan.id)
                                         turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
                                         stageCues = selectedVersion?.let { dao.stageCues(it.id) }.orEmpty()
@@ -887,7 +836,7 @@ if (currentVersion != null) {
                                     TextButton(
                                         onClick = {
                                             selectedVersion = version
-                                            version.changeNotes.substringAfter("روش تکمیل دفتر: ", "").takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") }?.let { selectedBuildMode = it }
+                                            version.changeNotes.substringAfter("روش تکمیل دفتر: ", "").takeIf { it in DirectorOfficeSharedContract.methodCodes }?.let { selectedBuildMode = it }
                                             scope.launch {
                                                 turns = dao.turns(version.id)
                                                 stageCues = dao.stageCues(version.id)
@@ -906,7 +855,7 @@ if (currentVersion != null) {
                             enabled = selectedPlan != null && selectedVersion != null && selectedVersion!!.status != DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy,
                             onClick = {
                                 selectedBuildMode = selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")
-                                    ?.takeIf { it in setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR") } ?: "ROLE_NUMBERED"
+                                    ?.takeIf { it in DirectorOfficeSharedContract.methodCodes } ?: DirectorOfficeSharedContract.ROLE_NUMBERED
                                 showBuildModeDialog = true
                             }
                         ) { Text("انتخاب روش ساخت / بازسازی این نسخه") }
@@ -1100,7 +1049,7 @@ if (currentVersion != null) {
                         }
                     ) { Text("تشخیص نوبت‌های شماره‌دار از متن") }
                 }
-                if (selectedBuildMode == "SELECTOR" && selectedVersion != null) {
+                if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR && selectedVersion != null) {
                     item {
                         Divider()
                         Text("انتخاب دیالوگ با معین‌البکا", fontWeight = FontWeight.Bold)
@@ -1169,14 +1118,14 @@ if (currentVersion != null) {
                             }
                         }
                     }
-                    OutlinedTextField(turnNumber, { turnNumber = it.filter(Char::isDigit).take(6) }, label = { Text("شماره نوبت") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    OutlinedTextField(
-                        value = turnText,
-                        onValueChange = { turnText = it },
-                        label = { Text("متن این نوبت") },
-                        // Match the other bounded turn fields; long content scrolls internally.
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp),
-                        minLines = 3
+                    DirectorOfficeTurnInputFields(
+                        number = turnNumber,
+                        onNumberChange = { turnNumber = it },
+                        text = turnText,
+                        onTextChange = { turnText = it },
+                        textLabel = "متن این نوبت",
+                        textMinHeight = 120,
+                        textMaxHeight = 220
                     )
                     Button(enabled = selectedVersion != null && selectedRole != null && turnText.isNotBlank() && !busy, onClick = {
                         scope.launch {
@@ -1216,7 +1165,13 @@ if (currentVersion != null) {
                             }
                         }
                     }
-                    OutlinedTextField(cueInstruction, { cueInstruction = it }, label = { Text("شرح راهنمای صحنه") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                    DirectorOfficeStageCueInputFields(
+                        instruction = cueInstruction,
+                        onInstructionChange = { cueInstruction = it },
+                        instructionLabel = "شرح راهنمای صحنه",
+                        instructionMinHeight = 0,
+                        instructionMaxHeight = null
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(enabled = selectedVersion != null && selectedCueTurn != null && cueInstruction.isNotBlank() && !busy, onClick = {
                             scope.launch {
@@ -1543,14 +1498,11 @@ if (currentVersion != null) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("معین‌البکا تعیین کند دفتر چگونه ساخته شود. با تأیید، فقط نوبت‌های همین نسخه دفتر بازسازی می‌شوند؛ نسخه‌های دیگر و متن اصلی کتابخانه دست‌نخورده می‌مانند:")
-                    listOf(
-                        "ROLE_NUMBERED" to "۱) انتخاب بر اساس شماره دیالوگ داخل متن هر نقش؛ دیالوگ‌های هم‌شماره در یک نوبت قرار می‌گیرند.",
-                        "FULL_TEXT" to "۲) انتقال متن کامل به ترتیب نقش‌ها؛ متن هر نقش کامل و پشت سر هم ثبت می‌شود.",
-                        "MANUAL" to "۳) حالت دستی؛ نوبت و متن را خودتان وارد و ویرایش می‌کنید.",
-                        "SELECTOR" to "۴) انتخاب با معین‌البکا؛ نقش و سپس دیالوگ موردنظر را برای هر نوبت انتخاب می‌کنید."
-                    ).forEach { (value, label) ->
-                        Row(Modifier.fillMaxWidth().clickable { selectedBuildMode = value }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            RadioButton(selected = selectedBuildMode == value, onClick = { selectedBuildMode = value })
+                    DirectorOfficeSharedContract.buildMethods.forEachIndexed { index, method ->
+                        val orderLabel = listOf("۱)", "۲)", "۳)", "۴)").getOrElse(index) { "${index + 1})" }
+                        val label = "$orderLabel ${method.description}"
+                        Row(Modifier.fillMaxWidth().clickable { selectedBuildMode = method.code }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RadioButton(selected = selectedBuildMode == method.code, onClick = { selectedBuildMode = method.code })
                             Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                         }
                     }
@@ -1574,10 +1526,10 @@ if (currentVersion != null) {
                                 .filter { it.content.isNotBlank() }
                                 .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
                             db.withTransaction {
-                                if (selectedBuildMode != "MANUAL") {
+                                if (selectedBuildMode != DirectorOfficeSharedContract.MANUAL) {
                                     dao.turns(version.id).forEach { dao.deleteTurn(it.id) }
                                 }
-                                if (selectedBuildMode == "ROLE_NUMBERED") {
+                                if (selectedBuildMode == DirectorOfficeSharedContract.ROLE_NUMBERED) {
                                     // Match each role's own dialogue number instead of assigning
                                     // sequential numbers by role order. Equal numbers across roles
                                     // become one collective turn (e.g. Shمر/Imam for turn 1/2).
@@ -1589,7 +1541,7 @@ if (currentVersion != null) {
                                     val numberedEntries = sections.flatMap { section ->
                                         val role = roles.firstOrNull { it.id == section.roleId }
                                             ?: return@flatMap emptyList()
-                                        parseRoleNumberedDialogues(section.content).map { (number, text) ->
+                                        DirectorOfficeWorkspaceUseCases.parseNumberedDialogues(section.content).map { (number, text) ->
                                             Triple(number, role, NumberedEntry(role, section, text))
                                         }
                                     }
@@ -1631,7 +1583,7 @@ if (currentVersion != null) {
                                             )
                                         }
                                     }
-                                } else if (selectedBuildMode == "FULL_TEXT") {
+                                } else if (selectedBuildMode == DirectorOfficeSharedContract.FULL_TEXT) {
                                     var seq = 0
                                     for (role in roles) {
                                         val roleSections = sections.filter { it.roleId == role.id }
@@ -1655,15 +1607,15 @@ if (currentVersion != null) {
                             selectedDialogueKeys = emptySet()
                             selectorItems = sections.flatMap { section ->
                                 val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
-                                splitDirectorDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
+                                DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
                             }
-                            if (selectedBuildMode == "SELECTOR") {
+                            if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR) {
                                 selectedDialogueKeys = usedDirectorDialogueKeys(dao, version.id, selectorItems)
                             }
                             message = when (selectedBuildMode) {
-                                "ROLE_NUMBERED" -> "نوبت‌ها بر اساس شماره‌های داخل متن نقش‌ها ساخته شدند؛ ${turns.size} شماره دیالوگ شناسایی شد و متن همان دیالوگ‌ها ثبت شد."
-                                "FULL_TEXT" -> "متن کامل ${turns.size} نقش به‌ترتیب در دفتر قرار گرفت."
-                                "MANUAL" -> "حالت دستی فعال شد؛ متن اصلی مجلس تغییری نکرد."
+                                DirectorOfficeSharedContract.ROLE_NUMBERED -> "نوبت‌ها بر اساس شماره‌های داخل متن نقش‌ها ساخته شدند؛ ${turns.size} شماره دیالوگ شناسایی شد و متن همان دیالوگ‌ها ثبت شد."
+                                DirectorOfficeSharedContract.FULL_TEXT -> "متن کامل ${turns.size} نقش به‌ترتیب در دفتر قرار گرفت."
+                                DirectorOfficeSharedContract.MANUAL -> "حالت دستی فعال شد؛ متن اصلی مجلس تغییری نکرد."
                                 else -> "حالت انتخاب با معین‌البکا فعال شد؛ دیالوگ‌های انتخاب‌شده دیگر در فهرست باقی‌مانده نمایش داده نمی‌شوند."
                             }
                             showBuildModeDialog = false
@@ -1892,7 +1844,7 @@ private fun parseRoleLabeledCombinedText(
         if (matchedRole != null) {
             flush()
             currentRole = matchedRole.title
-            currentNumber = match?.groups?.get(1)?.value?.let(::normalizeDirectorNumber)?.toIntOrNull()
+            currentNumber = match?.groups?.get(1)?.value?.let { DirectorOfficeWorkspaceUseCases.normalizeNumber(it) }?.toIntOrNull()
             val inline = match?.groups?.get(3)?.value.orEmpty().trim()
             if (inline.isNotBlank()) body.append(inline).append('\n')
         } else if (currentRole != null) {
@@ -1905,14 +1857,6 @@ private fun parseRoleLabeledCombinedText(
 
 private fun toPersianDirectorDigits(value: String): String = value.map { ch ->
     if (ch in '0'..'9') ('۰'.code + (ch.code - '0'.code)).toChar() else ch
-}.joinToString("")
-
-private fun normalizeDirectorNumber(value: String): String = value.map { ch ->
-    when (ch) {
-        in '۰'..'۹' -> ('0'.code + (ch.code - '۰'.code)).toChar()
-        in '٠'..'٩' -> ('0'.code + (ch.code - '٠'.code)).toChar()
-        else -> ch
-    }
 }.joinToString("")
 
 private suspend fun resolveDirectorRole(db: AppDatabase, taziehUid: String, roleTitle: String): RoleEntity? {

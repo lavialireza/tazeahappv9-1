@@ -247,7 +247,7 @@ object ViewerDirectorOfficePublicationImporter {
                     data class NumberedEntry(val number: Int, val role: com.example.bookapp.data.RoleEntity, val section: com.example.bookapp.data.SectionEntity, val text: String)
                     val entries = sections.flatMap { section ->
                         val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
-                        parseNumberedDialogues(section.content).map { (number, text) -> NumberedEntry(number, role, section, text) }
+                        DirectorOfficeWorkspaceUseCases.parseNumberedDialogues(section.content).map { (number, text) -> NumberedEntry(number, role, section, text) }
                     }
                     require(entries.isNotEmpty()) { "در متن محلی نقش‌های این مجلس شماره دیالوگ پیدا نشد؛ روش شماره‌محور قابل اجرا نیست." }
                     var sequence = 0
@@ -320,40 +320,11 @@ object ViewerDirectorOfficePublicationImporter {
                 .thenBy { it.orderIndex }.thenBy { it.id })
         sections.flatMap { section ->
             val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
-            section.content.replace("\r\n", "\n").replace('\r', '\n')
-                .split(Regex("\\n[\\t ]*\\n+"))
-                .map { it.trim() }.filter { it.isNotBlank() }
+            DirectorOfficeWorkspaceUseCases.splitDialogues(section.content)
                 .mapIndexed { index, text -> SelectorEntry("${section.uid}:$index", role.uid, role.title, section.uid, section.title, text) }
         }
     }
 
-    private fun parseNumberedDialogues(content: String): List<Pair<Int, String>> {
-        val heading = Regex("^\\s*(?:(?:دیالوگ|نوبت|شماره)\\s*)?([0-9۰-۹٠-٩]{1,6})(?:\\s*[-–—ـ.)،:：]\\s*|\\s+|$)(.*)$")
-        val result = mutableListOf<Pair<Int, String>>()
-        var current: Int? = null
-        val body = StringBuilder()
-        fun flush() {
-            val number = current
-            val text = body.toString().trim()
-            if (number != null && text.isNotBlank()) result += number to text
-            body.setLength(0)
-        }
-        content.replace("\r\n", "\n").replace('\r', '\n').lines().forEach { line ->
-            val match = heading.matchEntire(line)
-            if (match != null) {
-                flush()
-                val digits = match.groupValues[1].map { ch -> when (ch) {
-                    in '۰'..'۹' -> ('0'.code + (ch.code - '۰'.code)).toChar()
-                    in '٠'..'٩' -> ('0'.code + (ch.code - '٠'.code)).toChar()
-                    else -> ch
-                } }.joinToString("")
-                current = digits.toIntOrNull()
-                val inline = match.groupValues[2].trim()
-                if (inline.isNotBlank()) body.append(inline).append('\n')
-            } else if (current != null) body.append(line).append('\n')
-        }
-        flush()
-        return result
-    }
+
 
 }
