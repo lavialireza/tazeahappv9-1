@@ -9,9 +9,13 @@ interface DirectorOfficeWorkspaceDao {
     suspend fun plan(id: Long): DirectorPlanEntity?
     suspend fun version(id: Long): DirectorPlanVersionEntity?
     suspend fun turn(id: Long): DirectorTurnEntity?
+    suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
+    suspend fun participantsForTurns(turnIds: List<Long>): List<DirectorParticipantEntity>
+    suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>
     suspend fun turns(versionId: Long): List<DirectorTurnEntity>
     suspend fun updatePlan(value: DirectorPlanEntity)
     suspend fun insertTurn(value: DirectorTurnEntity): Long
+    suspend fun updateTurn(value: DirectorTurnEntity)
     suspend fun moveTurn(turnId: Long, sequenceIndex: Int)
     suspend fun insertParticipant(value: DirectorParticipantEntity): Long
     suspend fun insertTextSegment(value: DirectorTextSegmentEntity): Long
