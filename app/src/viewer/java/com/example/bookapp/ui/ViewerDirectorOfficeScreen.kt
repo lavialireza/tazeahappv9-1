@@ -10,12 +10,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Search
@@ -99,6 +102,8 @@ fun ViewerDirectorOfficeScreen(
     var personalCues by remember { mutableStateOf(emptyList<DirectorStageCueEntity>()) }
     var officialSegments by remember { mutableStateOf<Map<Long, List<DirectorTextSegmentEntity>>>(emptyMap()) }
     var personalSegments by remember { mutableStateOf<Map<Long, List<DirectorTextSegmentEntity>>>(emptyMap()) }
+    var officialParticipants by remember { mutableStateOf<Map<Long, List<com.example.bookapp.data.DirectorParticipantEntity>>>(emptyMap()) }
+    var personalParticipants by remember { mutableStateOf<Map<Long, List<com.example.bookapp.data.DirectorParticipantEntity>>>(emptyMap()) }
     var selectedPersonalMethod by remember { mutableStateOf("") }
     var selectorEntries by remember { mutableStateOf(emptyList<ViewerDirectorOfficePublicationImporter.SelectorEntry>()) }
     var manualTitle by remember { mutableStateOf("") }
@@ -113,6 +118,11 @@ fun ViewerDirectorOfficeScreen(
     var editingCue by remember { mutableStateOf<DirectorStageCueEntity?>(null) }
     var editingCueTitle by remember { mutableStateOf("") }
     var editingCueText by remember { mutableStateOf("") }
+    var editingTurn by remember { mutableStateOf<DirectorTurnEntity?>(null) }
+    var editingTurnNumber by remember { mutableStateOf("") }
+    var editingTurnTitle by remember { mutableStateOf("") }
+    var addingDialogueToTurn by remember { mutableStateOf<DirectorTurnEntity?>(null) }
+    var newDialogueText by remember { mutableStateOf("") }
 
     var selectedTaziehUid by remember(taziehId) { mutableStateOf<String?>(null) }
     var selectedTaziehResolved by remember(taziehId) { mutableStateOf(taziehId == null) }
@@ -151,8 +161,9 @@ fun ViewerDirectorOfficeScreen(
             officialCues = version?.let { officialDao.stageCues(it.id) }.orEmpty()
             val officialTextRows = if (officialTurns.isEmpty()) emptyList() else officialDao.textSegmentsForTurns(officialTurns.map { it.id })
             officialSegments = officialTextRows.groupBy { it.turnId }
+            officialParticipants = if (officialTurns.isEmpty()) emptyMap() else officialDao.participantsForTurns(officialTurns.map { it.id }).groupBy { it.turnId }
         } else {
-            officialTurns = emptyList(); officialCues = emptyList(); officialSegments = emptyMap(); selectedOfficialSourceMode = null; selectedOfficialVersionLabel = ""
+            officialTurns = emptyList(); officialCues = emptyList(); officialSegments = emptyMap(); officialParticipants = emptyMap(); selectedOfficialSourceMode = null; selectedOfficialVersionLabel = ""
         }
         val personalPlan = selectedPersonal
         if (personalPlan != null) {
@@ -161,10 +172,11 @@ fun ViewerDirectorOfficeScreen(
             personalCues = version?.let { personalDao.stageCues(it.id) }.orEmpty()
             val personalTextRows = if (personalTurns.isEmpty()) emptyList() else personalDao.textSegmentsForTurns(personalTurns.map { it.id })
             personalSegments = personalTextRows.groupBy { it.turnId }
+            personalParticipants = if (personalTurns.isEmpty()) emptyMap() else personalDao.participantsForTurns(personalTurns.map { it.id }).groupBy { it.turnId }
             selectedPersonalMethod = version?.changeNotes?.substringAfter("روش ساخت: ", "")?.substringBefore("؛").orEmpty()
             selectorEntries = if (selectedPersonalMethod == DirectorOfficeSharedContract.SELECTOR) ViewerDirectorOfficePublicationImporter.selectorEntries(contentDb, personalPlan.taziehUid) else emptyList()
         } else {
-            personalTurns = emptyList(); personalCues = emptyList(); personalSegments = emptyMap(); selectedPersonalMethod = ""; selectorEntries = emptyList()
+            personalTurns = emptyList(); personalCues = emptyList(); personalSegments = emptyMap(); personalParticipants = emptyMap(); selectedPersonalMethod = ""; selectorEntries = emptyList()
         }
     }
 
@@ -260,6 +272,8 @@ fun ViewerDirectorOfficeScreen(
                                 Card(Modifier.fillMaxWidth()) {
                                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text("نوبت ${turn.turnNumber} — ${turn.title}", style = MaterialTheme.typography.titleSmall)
+                                        val officialRoleNames = officialParticipants[turn.id].orEmpty().sortedBy { it.orderIndex }.joinToString("، ") { it.roleTitle }
+                                        if (officialRoleNames.isNotBlank()) Text("نقش‌ها: $officialRoleNames", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                                         officialSegments[turn.id].orEmpty().forEach { segment -> Text(segment.text) }
                                         val cues = officialCuesByTurn[turn.id].orEmpty()
                                         cues.forEach { cue ->
@@ -319,6 +333,10 @@ fun ViewerDirectorOfficeScreen(
                         }
                     }
                     if (selectedPersonal != null) {
+                        item {
+                            Text(selectedPersonal!!.title, style = MaterialTheme.typography.titleMedium)
+                            Text("${personalTurns.size} نوبت • ${personalTurns.sumOf { personalSegments[it.id].orEmpty().size }} بخش دیالوگ • ${personalCues.size} راهنمای صحنه", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        }
                         if (selectedPersonalMethod == DirectorOfficeSharedContract.MANUAL && canEdit && ViewerPermissionEngine.can(policyPermissions, "director.personal.method.manual")) item {
                             Text("افزودن نوبت به روش دستی", style = MaterialTheme.typography.titleMedium)
                             DirectorOfficeTurnInputFields(
@@ -384,6 +402,8 @@ fun ViewerDirectorOfficeScreen(
                         }
                         item {
                             Text("نوبت‌های دفتر شخصی", style = MaterialTheme.typography.titleMedium)
+                            if (personalTurns.isEmpty()) Text("این دفتر هنوز نوبتی ندارد. از فرم افزودن نوبت دستی یا روش انتخاب‌گر استفاده کنید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        }
                             DirectorOfficeSearchField(value = search, onValueChange = { search = it }, label = "جستجو در نوبت‌ها", showSearchIcon = false)
                         }
                         val visible = personalTurns.filter { turn ->
@@ -395,6 +415,8 @@ fun ViewerDirectorOfficeScreen(
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("نوبت ${turn.turnNumber} — ${turn.title}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                                         if (canEdit) {
+                                            IconButton(onClick = { editingTurn = turn; editingTurnNumber = turn.turnNumber.toString(); editingTurnTitle = turn.title }) { Icon(Icons.Default.Edit, "ویرایش عنوان و شماره نوبت") }
+                                            IconButton(onClick = { addingDialogueToTurn = turn; newDialogueText = "" }) { Icon(Icons.Default.Add, "افزودن دیالوگ") }
                                             IconButton(onClick = {
                                                 scope.launch {
                                                     val current = personalTurns
@@ -423,6 +445,8 @@ fun ViewerDirectorOfficeScreen(
                                             }, enabled = personalTurns.indexOfFirst { it.id == turn.id } in 0 until personalTurns.lastIndex) { Icon(Icons.Default.ArrowDownward, "پایین") }
                                         }
                                     }
+                                    val roleNames = personalParticipants[turn.id].orEmpty().sortedBy { it.orderIndex }.joinToString("، ") { it.roleTitle }
+                                    if (roleNames.isNotBlank()) Text("نقش‌ها: $roleNames", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                                     personalSegments[turn.id].orEmpty().forEach { segment ->
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text(segment.text, modifier = Modifier.weight(1f))
@@ -513,11 +537,58 @@ fun ViewerDirectorOfficeScreen(
         )
     }
 
+    editingTurn?.let { turn ->
+        AlertDialog(
+            onDismissRequest = { editingTurn = null },
+            title = { Text("ویرایش مشخصات نوبت") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value = editingTurnNumber, onValueChange = { editingTurnNumber = it.filter(Char::isDigit).take(6) }, label = { Text("شماره نوبت") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    OutlinedTextField(value = editingTurnTitle, onValueChange = { editingTurnTitle = it }, label = { Text("عنوان نقش / نوبت") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        try {
+                            ViewerDirectorOfficeRepository.updateTurn(context, personalDb, turn.copy(turnNumber = editingTurnNumber.toIntOrNull() ?: 0, title = editingTurnTitle.trim()))
+                            editingTurn = null; refresh++; message = "مشخصات نوبت ذخیره شد."
+                        } catch (e: Exception) { message = "ویرایش نوبت انجام نشد: ${e.message}" }
+                    }
+                }, enabled = editingTurnNumber.toIntOrNull()?.let { it > 0 } == true && editingTurnTitle.isNotBlank()) { Text("ذخیره") }
+            },
+            dismissButton = { TextButton(onClick = { editingTurn = null }) { Text("انصراف") } }
+        )
+    }
+
+    addingDialogueToTurn?.let { turn ->
+        AlertDialog(
+            onDismissRequest = { addingDialogueToTurn = null },
+            title = { Text("افزودن دیالوگ به نوبت ${turn.turnNumber}") },
+            text = {
+                Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                    DirectorOfficeDialogueTextField(value = newDialogueText, onValueChange = { newDialogueText = it }, minHeight = 180, maxHeight = 360, minLines = 6)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        try {
+                            ViewerDirectorOfficeRepository.addDialogueSegment(context, personalDb, turn.id, newDialogueText)
+                            addingDialogueToTurn = null; newDialogueText = ""; refresh++; message = "دیالوگ جدید به نوبت افزوده شد."
+                        } catch (e: Exception) { message = "افزودن دیالوگ انجام نشد: ${e.message}" }
+                    }
+                }, enabled = newDialogueText.isNotBlank()) { Text("افزودن") }
+            },
+            dismissButton = { TextButton(onClick = { addingDialogueToTurn = null }) { Text("انصراف") } }
+        )
+    }
+
     editingSegment?.let { segment ->
         AlertDialog(
             onDismissRequest = { editingSegment = null },
             title = { Text("ویرایش دیالوگ شخصی") },
-            text = { DirectorOfficeDialogueTextField(value = editingSegmentText, onValueChange = { editingSegmentText = it }) },
+            text = { Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) { DirectorOfficeDialogueTextField(value = editingSegmentText, onValueChange = { editingSegmentText = it }, minHeight = 180, maxHeight = 360, minLines = 6) } },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {

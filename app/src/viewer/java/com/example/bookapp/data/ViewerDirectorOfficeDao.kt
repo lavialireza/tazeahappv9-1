@@ -40,6 +40,9 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertVersion(value: DirectorPlanVersionEntity): Long
 
+    @Update
+    override suspend fun updateTurn(value: DirectorTurnEntity)
+
     @Query("SELECT * FROM director_turns WHERE versionId=:versionId ORDER BY sequenceIndex, id")
     override suspend fun turns(versionId: Long): List<DirectorTurnEntity>
 
@@ -50,13 +53,16 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     override suspend fun moveTurn(turnId: Long, sequenceIndex: Int)
 
     @Query("SELECT * FROM director_turn_participants WHERE turnId=:turnId ORDER BY orderIndex, id")
-    suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
+    override suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
+
+    @Query("SELECT * FROM director_turn_participants WHERE turnId IN (:turnIds) ORDER BY turnId, orderIndex, id")
+    override suspend fun participantsForTurns(turnIds: List<Long>): List<DirectorParticipantEntity>
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     override suspend fun insertParticipant(value: DirectorParticipantEntity): Long
 
     @Query("SELECT * FROM director_text_segments WHERE turnId=:turnId ORDER BY segmentIndex, id")
-    suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>
+    override suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>
 
     @Query("SELECT * FROM director_text_segments WHERE turnId IN (:turnIds) ORDER BY turnId, segmentIndex, id")
     suspend fun textSegmentsForTurns(turnIds: List<Long>): List<DirectorTextSegmentEntity>

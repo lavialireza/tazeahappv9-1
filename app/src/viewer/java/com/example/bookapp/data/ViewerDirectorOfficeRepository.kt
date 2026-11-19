@@ -22,6 +22,33 @@ object ViewerDirectorOfficeRepository {
         dao.updateTextSegment(value)
     }
 
+    suspend fun updateTurn(context: Context, db: ViewerDirectorOfficeDatabase, value: DirectorTurnEntity) {
+        requireEdit(context)
+        require(value.turnNumber > 0) { "شماره نوبت باید بزرگ‌تر از صفر باشد." }
+        require(value.title.isNotBlank()) { "عنوان نقش یا نوبت خالی است." }
+        val dao = db.directorDao()
+        val current = dao.turn(value.id) ?: error("نوبت دفتر شخصی پیدا نشد.")
+        val version = dao.version(current.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
+        val plan = dao.plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
+        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
+        require(value.versionId == current.versionId && value.sequenceIndex == current.sequenceIndex) { "شناسه نسخه و جایگاه نوبت قابل تغییر از این فرم نیست." }
+        dao.updateTurn(value)
+        dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun addDialogueSegment(context: Context, db: ViewerDirectorOfficeDatabase, turnId: Long, text: String) {
+        requireEdit(context)
+        require(text.isNotBlank()) { "متن دیالوگ خالی است." }
+        val dao = db.directorDao()
+        val turn = dao.turn(turnId) ?: error("نوبت دفتر شخصی پیدا نشد.")
+        val version = dao.version(turn.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
+        val plan = dao.plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
+        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
+        val nextIndex = dao.textSegments(turnId).maxOfOrNull { it.segmentIndex }?.plus(1) ?: 0
+        dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = nextIndex, text = text.trim()))
+        dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+    }
+
     suspend fun updateCue(context: Context, db: ViewerDirectorOfficeDatabase, value: DirectorStageCueEntity) {
         requireEdit(context)
         val dao = db.directorDao()
