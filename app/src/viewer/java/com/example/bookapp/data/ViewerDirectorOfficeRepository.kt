@@ -2,9 +2,11 @@ package com.example.bookapp.data
 
 import android.content.Context
 import androidx.room.withTransaction
-import java.util.UUID
 
-/** تمام عملیات تغییردهنده دفتر شخصی از این لایه عبور می‌کنند و مجوز در لحظه اجرا بررسی می‌شود. */
+/**
+ * Adapter اختصاصی Viewer: فقط مجوزها و دیتابیس شخصی Viewer را مدیریت می‌کند.
+ * تمام قواعد و عملیات عمومی دفتر به هسته مشترک منتقل شده‌اند.
+ */
 object ViewerDirectorOfficeRepository {
     private fun requireEdit(context: Context) {
         require(DirectorOfficeAccessRules.canEditPersonal(ViewerAccessPolicy.getEffectivePermissions(context))) {
@@ -12,67 +14,34 @@ object ViewerDirectorOfficeRepository {
         }
     }
 
+    private suspend fun inTransaction(db: ViewerDirectorOfficeDatabase, operation: suspend () -> Unit) {
+        db.withTransaction { operation() }
+    }
+
     suspend fun updateText(context: Context, db: ViewerDirectorOfficeDatabase, value: DirectorTextSegmentEntity) {
         requireEdit(context)
-        val dao = db.directorDao()
-        val turn = dao.turn(value.turnId) ?: error("نوبت دفتر شخصی پیدا نشد.")
-        val version = dao.version(turn.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        dao.updateTextSegment(value)
+        DirectorOfficeWorkspaceOperations.updateText(db.directorDao(), value) { operation -> inTransaction(db, operation) }
     }
 
     suspend fun updateTurn(context: Context, db: ViewerDirectorOfficeDatabase, value: DirectorTurnEntity) {
         requireEdit(context)
-        require(value.turnNumber > 0) { "شماره نوبت باید بزرگ‌تر از صفر باشد." }
-        require(value.title.isNotBlank()) { "عنوان نقش یا نوبت خالی است." }
-        val dao = db.directorDao()
-        val current = dao.turn(value.id) ?: error("نوبت دفتر شخصی پیدا نشد.")
-        val version = dao.version(current.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        require(value.versionId == current.versionId && value.sequenceIndex == current.sequenceIndex) { "شناسه نسخه و جایگاه نوبت قابل تغییر از این فرم نیست." }
-        dao.updateTurn(value)
-        dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+        DirectorOfficeWorkspaceOperations.updateTurn(db.directorDao(), value) { operation -> inTransaction(db, operation) }
     }
 
     suspend fun addDialogueSegment(context: Context, db: ViewerDirectorOfficeDatabase, turnId: Long, text: String) {
         requireEdit(context)
-        require(text.isNotBlank()) { "متن دیالوگ خالی است." }
-        val dao = db.directorDao()
-        val turn = dao.turn(turnId) ?: error("نوبت دفتر شخصی پیدا نشد.")
-        val version = dao.version(turn.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        val nextIndex = dao.textSegments(turnId).maxOfOrNull { it.segmentIndex }?.plus(1) ?: 0
-        dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = nextIndex, text = text.trim()))
-        dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+        DirectorOfficeWorkspaceOperations.addDialogueSegment(db.directorDao(), turnId, text) { operation -> inTransaction(db, operation) }
     }
 
     suspend fun updateCue(context: Context, db: ViewerDirectorOfficeDatabase, value: DirectorStageCueEntity) {
         requireEdit(context)
-        val dao = db.directorDao()
-        val version = dao.version(value.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        dao.updateStageCue(value)
+        DirectorOfficeWorkspaceOperations.updateCue(db.directorDao(), value) { operation -> inTransaction(db, operation) }
     }
 
     suspend fun reorderTurns(context: Context, db: ViewerDirectorOfficeDatabase, orderedTurns: List<DirectorTurnEntity>) {
         requireEdit(context)
-        val dao = db.directorDao()
-        require(orderedTurns.map { it.id }.distinct().size == orderedTurns.size) { "فهرست نوبت‌ها تکراری است." }
-        val first = orderedTurns.firstOrNull() ?: return
-        val version = dao.version(first.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        require(orderedTurns.all { it.versionId == version.id }) { "ترتیب نوبت‌های چند نسخه قابل تغییر هم‌زمان نیست." }
-        require(orderedTurns.all { dao.turn(it.id)?.versionId == version.id }) { "نوبت متعلق به دفتر شخصی انتخاب‌شده نیست." }
-        db.withTransaction {
-            // شاخص موقت منفی از برخورد با unique(versionId, sequenceIndex) جلوگیری می‌کند.
-            val finalOrder = DirectorOfficeWorkspaceUseCases.normalizedOrder(orderedTurns)
-            finalOrder.forEachIndexed { index, (turnId, _) -> dao.moveTurn(turnId, -100000 - index) }
-            finalOrder.forEach { (turnId, index) -> dao.moveTurn(turnId, index) }
+        DirectorOfficeWorkspaceOperations.reorderTurns(db.directorDao(), orderedTurns) { operation ->
+            inTransaction(db, operation)
         }
     }
 
@@ -88,22 +57,8 @@ object ViewerDirectorOfficeRepository {
         require(ViewerAccessPolicy.hasPermission(context, "director.personal.method.manual")) {
             "روش دستی برای این Viewer مجاز نیست."
         }
-        require(title.isNotBlank() && text.isNotBlank()) { "عنوان نقش و متن نوبت را وارد کنید." }
-        val dao = db.directorDao()
-        val version = dao.versions(planId).firstOrNull() ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        val existingTurns = dao.turns(version.id)
-        val nextIndex = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(existingTurns)
-        db.withTransaction {
-            val turnId = dao.insertTurn(DirectorTurnEntity(
-                versionId = version.id, turnNumber = turnNumber, sequenceIndex = nextIndex, title = title.trim()
-            ))
-            dao.insertParticipant(DirectorParticipantEntity(
-                turnId = turnId, roleUid = "personal-manual-${UUID.randomUUID()}", roleTitle = title.trim(), isLead = true
-            ))
-            dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = text.trim()))
-            dao.updatePlan(dao.plan(planId)?.copy(updatedAt = System.currentTimeMillis()) ?: error("دفتر شخصی پیدا نشد."))
+        DirectorOfficeWorkspaceOperations.addManualTurn(db.directorDao(), planId, turnNumber, title, text) { operation ->
+            inTransaction(db, operation)
         }
     }
 
@@ -117,26 +72,19 @@ object ViewerDirectorOfficeRepository {
         require(ViewerAccessPolicy.hasPermission(context, "director.personal.method.selector")) {
             "روش انتخاب‌گر برای این Viewer مجاز نیست."
         }
-        val dao = db.directorDao()
-        val version = dao.versions(planId).firstOrNull() ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        val turns = dao.turns(version.id)
-        val nextIndex = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(turns)
-        val nextNumber = DirectorOfficeWorkspaceUseCases.nextTurnNumber(turns)
-        db.withTransaction {
-            val turnId = dao.insertTurn(DirectorTurnEntity(
-                versionId = version.id, turnNumber = nextNumber, sequenceIndex = nextIndex,
-                title = entry.roleTitle, continuityGroupUid = entry.key
-            ))
-            dao.insertParticipant(DirectorParticipantEntity(
-                turnId = turnId, roleUid = entry.roleUid, roleTitle = entry.roleTitle, isLead = true
-            ))
-            dao.insertTextSegment(DirectorTextSegmentEntity(
-                turnId = turnId, segmentIndex = 0, text = entry.text, sectionUid = entry.sectionUid
-            ))
-            dao.updatePlan(dao.plan(planId)?.copy(updatedAt = System.currentTimeMillis()) ?: error("دفتر شخصی پیدا نشد."))
-        }
+        val versionId = db.directorDao().versions(planId).firstOrNull()?.id
+            ?: error("نسخه دفتر شخصی پیدا نشد.")
+        DirectorOfficeWorkspaceOperations.addSelectorDialogue(
+            db.directorDao(),
+            versionId,
+            DirectorOfficeSelectorEntry(
+                key = entry.key,
+                roleUid = entry.roleUid,
+                roleTitle = entry.roleTitle,
+                sectionUid = entry.sectionUid,
+                text = entry.text
+            )
+        ) { operation -> inTransaction(db, operation) }
     }
 
     suspend fun addStageCue(
@@ -148,15 +96,10 @@ object ViewerDirectorOfficeRepository {
         turnId: Long? = null
     ) {
         requireEdit(context)
-        require(title.isNotBlank() && instruction.isNotBlank()) { "عنوان و متن راهنمای صحنه را وارد کنید." }
-        val dao = db.directorDao()
-        val version = dao.versions(planId).firstOrNull() ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        require(turnId == null || dao.turn(turnId)?.versionId == version.id) { "راهنمای صحنه باید به نوبت همین نسخه متصل باشد." }
-        val nextOrder = dao.stageCues(version.id).maxOfOrNull { it.orderIndex }?.plus(1) ?: 0
-        dao.insertStageCue(DirectorStageCueEntity(
-            versionId = version.id, turnId = turnId, title = title.trim(), instruction = instruction.trim(), orderIndex = nextOrder
-        ))
+        val versionId = db.directorDao().versions(planId).firstOrNull()?.id
+            ?: error("نسخه دفتر شخصی پیدا نشد.")
+        DirectorOfficeWorkspaceOperations.addStageCue(db.directorDao(), versionId, title, instruction, turnId) { operation ->
+            inTransaction(db, operation)
+        }
     }
 }

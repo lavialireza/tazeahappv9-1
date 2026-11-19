@@ -501,16 +501,21 @@ fun ViewerDirectorOfficeScreen(
                         Text("برای روش‌های مبتنی بر محتوای مجلس، ابتدا بسته رسمی را دریافت و یک دفتر را در زبانه دفتر رسمی انتخاب کنید. روش دستی بدون دفتر رسمی قابل ساخت است.", style = MaterialTheme.typography.bodySmall)
                     }
                     methods.forEach { method ->
-                        TextButton(onClick = {
+                        DirectorOfficeMethodOption(
+                            method = method,
+                            selected = false,
+                            leadingText = "ساخت با روش",
+                            enabled = !busy,
+                            onClick = {
                             showMethodDialog = false
                             if (method.requiresOfficialSource && !canOfficial) {
                                 message = "برای این روش، مدیر باید مجوز مشاهده دفتر رسمی را نیز فعال کند."
-                                return@TextButton
+                                return@DirectorOfficeMethodOption
                             }
                             if (method.requiresOfficialSource && selectedOfficial == null) {
                                 tab = 0
                                 message = "ابتدا یک دفتر رسمی را انتخاب کنید؛ سپس از دفتر شخصی روش ساخت را اجرا کنید."
-                                return@TextButton
+                                return@DirectorOfficeMethodOption
                             }
                             scope.launch {
                                 busy = true
@@ -530,12 +535,8 @@ fun ViewerDirectorOfficeScreen(
                                 } catch (e: Exception) { message = "ساخت دفتر شخصی ناموفق بود: ${e.message}" }
                                 finally { busy = false }
                             }
-                        }, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("ساخت با روش ${method.label}")
-                                Text(method.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
                         }
+                        )
                     }
                 }
             },

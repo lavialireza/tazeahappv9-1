@@ -29,7 +29,7 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     override suspend fun updatePlan(value: DirectorPlanEntity)
 
     @Query("SELECT * FROM director_plan_versions WHERE planId=:planId ORDER BY versionNumber DESC")
-    suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
+    override suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
 
     @Query("SELECT * FROM director_plan_versions WHERE id=:id LIMIT 1")
     override suspend fun version(id: Long): DirectorPlanVersionEntity?
@@ -74,7 +74,7 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     override suspend fun updateTextSegment(value: DirectorTextSegmentEntity)
 
     @Query("SELECT * FROM director_stage_cues WHERE versionId=:versionId ORDER BY orderIndex, id")
-    suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>
+    override suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     override suspend fun insertStageCue(value: DirectorStageCueEntity): Long
