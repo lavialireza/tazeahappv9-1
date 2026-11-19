@@ -28,8 +28,14 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     @Update
     override suspend fun updatePlan(value: DirectorPlanEntity)
 
+    @Query("UPDATE director_plans SET isDeleted=1, deletedAt=:deletedAt, updatedAt=:deletedAt WHERE id=:id AND isDeleted=0")
+    override suspend fun softDeletePlan(id: Long, deletedAt: Long)
+
     @Query("SELECT * FROM director_plan_versions WHERE planId=:planId ORDER BY versionNumber DESC")
-    override suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
+    suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
+
+    @Query("SELECT * FROM director_plan_versions WHERE planId=:planId ORDER BY versionNumber DESC")
+    override suspend fun versionsForPlan(planId: Long): List<DirectorPlanVersionEntity>
 
     @Query("SELECT * FROM director_plan_versions WHERE id=:id LIMIT 1")
     override suspend fun version(id: Long): DirectorPlanVersionEntity?
@@ -42,6 +48,9 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
 
     @Update
     override suspend fun updateTurn(value: DirectorTurnEntity)
+
+    @Query("DELETE FROM director_turns WHERE id=:id")
+    override suspend fun deleteTurn(id: Long)
 
     @Query("SELECT * FROM director_turns WHERE versionId=:versionId ORDER BY sequenceIndex, id")
     override suspend fun turns(versionId: Long): List<DirectorTurnEntity>
@@ -61,6 +70,12 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     override suspend fun insertParticipant(value: DirectorParticipantEntity): Long
 
+    @Update
+    override suspend fun updateParticipant(value: DirectorParticipantEntity)
+
+    @Query("DELETE FROM director_turn_participants WHERE id=:id")
+    override suspend fun deleteParticipant(id: Long)
+
     @Query("SELECT * FROM director_text_segments WHERE turnId=:turnId ORDER BY segmentIndex, id")
     override suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>
 
@@ -73,12 +88,21 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     @Update
     override suspend fun updateTextSegment(value: DirectorTextSegmentEntity)
 
+    @Query("DELETE FROM director_text_segments WHERE id=:id")
+    override suspend fun deleteTextSegment(id: Long)
+
     @Query("SELECT * FROM director_stage_cues WHERE versionId=:versionId ORDER BY orderIndex, id")
     override suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>
+
+    @Query("SELECT * FROM director_stage_cues WHERE id=:id LIMIT 1")
+    override suspend fun stageCue(id: Long): DirectorStageCueEntity?
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     override suspend fun insertStageCue(value: DirectorStageCueEntity): Long
 
     @Update
     override suspend fun updateStageCue(value: DirectorStageCueEntity)
+
+    @Query("DELETE FROM director_stage_cues WHERE id=:id")
+    override suspend fun deleteStageCue(id: Long)
 }

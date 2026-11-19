@@ -26,4 +26,31 @@ class DirectorOfficeWorkspaceUseCasesTest {
     @Test fun ignoresUnnumberedTextForNumberedMethod() {
         assertTrue(DirectorOfficeWorkspaceUseCases.parseNumberedDialogues("متن بدون شماره").isEmpty())
     }
+    @Test fun allowsEditingDraftVersionOfPublishedPlan() {
+        val plan = DirectorPlanEntity(
+            uid = "plan", taziehUid = "tazieh", title = "مجلس",
+            status = DirectorPlanEntity.STATUS_PUBLISHED,
+            createdAt = 1L, updatedAt = 1L
+        )
+        val draft = DirectorPlanVersionEntity(
+            planId = 1L, versionNumber = 2, title = "پیش‌نویس",
+            status = DirectorPlanVersionEntity.STATUS_DRAFT, createdAt = 2L
+        )
+        DirectorOfficeWorkspaceUseCases.requireDraft(plan, draft)
+    }
+
+    @Test fun rejectsEditingPublishedVersion() {
+        val plan = DirectorPlanEntity(
+            uid = "plan", taziehUid = "tazieh", title = "مجلس",
+            status = DirectorPlanEntity.STATUS_PUBLISHED,
+            createdAt = 1L, updatedAt = 1L
+        )
+        val published = DirectorPlanVersionEntity(
+            planId = 1L, versionNumber = 1, title = "رسمی",
+            status = DirectorPlanVersionEntity.STATUS_PUBLISHED, createdAt = 1L, publishedAt = 1L
+        )
+        val result = runCatching { DirectorOfficeWorkspaceUseCases.requireDraft(plan, published) }
+        assertTrue(result.isFailure)
+    }
+
 }

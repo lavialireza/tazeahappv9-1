@@ -22,10 +22,16 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -49,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import com.example.bookapp.data.AppDatabase
 import com.example.bookapp.data.DirectorPlanEntity
 import com.example.bookapp.data.DirectorOfficeSharedContract
@@ -60,6 +68,10 @@ import com.example.bookapp.data.ViewerPermissionEngine
 import com.example.bookapp.data.ViewerDirectorOfficeDatabase
 import com.example.bookapp.data.ViewerDirectorOfficePublicationImporter
 import com.example.bookapp.data.ViewerDirectorOfficeRepository
+import com.example.bookapp.data.Prefs
+import com.example.bookapp.data.DirectorParticipantEntity
+import com.example.bookapp.ui.theme.colorSchemeFor
+import com.example.bookapp.ui.theme.typographyFor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -73,7 +85,28 @@ fun ViewerDirectorOfficeScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val localView = LocalView.current
     val scope = rememberCoroutineScope()
+    var darkMode by remember { mutableStateOf(Prefs.isDarkMode(context)) }
+    var autoDarkMode by remember { mutableStateOf(Prefs.getAutoDarkMode(context)) }
+    var fontScale by remember { mutableStateOf(Prefs.getFontScale(context)) }
+    var lineSpacing by remember { mutableStateOf(Prefs.getLineSpacing(context)) }
+    var fontChoice by remember { mutableStateOf(Prefs.getFontChoice(context)) }
+    var themeChoice by remember { mutableStateOf(Prefs.getThemeChoice(context)) }
+    var keepScreenOn by remember { mutableStateOf(Prefs.getKeepScreenOn(context)) }
+    var showOfficeSettingsDialog by remember { mutableStateOf(false) }
+    val baseOfficeTypography = remember(fontChoice, fontScale, lineSpacing) {
+        val base = typographyFor(fontChoice, fontScale)
+        base.copy(
+            bodyLarge = base.bodyLarge.copy(lineHeight = base.bodyLarge.fontSize * lineSpacing),
+            bodyMedium = base.bodyMedium.copy(lineHeight = base.bodyMedium.fontSize * lineSpacing),
+            bodySmall = base.bodySmall.copy(lineHeight = base.bodySmall.fontSize * lineSpacing)
+        )
+    }
+    DisposableEffect(localView, keepScreenOn) {
+        localView.keepScreenOn = keepScreenOn
+        onDispose { localView.keepScreenOn = false }
+    }
     val officialDb = remember { ViewerDirectorOfficeDatabase.official(context) }
     val personalDb = remember { ViewerDirectorOfficeDatabase.personal(context) }
     val officialDao = remember { officialDb.directorDao() }
@@ -111,6 +144,10 @@ fun ViewerDirectorOfficeScreen(
     var manualNumber by remember { mutableStateOf("1") }
     var cueTitle by remember { mutableStateOf("") }
     var cueInstruction by remember { mutableStateOf("") }
+    var cueType by remember { mutableStateOf(DirectorStageCueEntity.CUE_OTHER) }
+    var cueTurnId by remember { mutableStateOf<Long?>(null) }
+    var cueTurnMenuExpanded by remember { mutableStateOf(false) }
+    var editingCueType by remember { mutableStateOf(DirectorStageCueEntity.CUE_OTHER) }
     var search by remember { mutableStateOf("") }
     var showMethodDialog by remember { mutableStateOf(false) }
     var editingSegment by remember { mutableStateOf<DirectorTextSegmentEntity?>(null) }
@@ -123,19 +160,27 @@ fun ViewerDirectorOfficeScreen(
     var editingTurnTitle by remember { mutableStateOf("") }
     var addingDialogueToTurn by remember { mutableStateOf<DirectorTurnEntity?>(null) }
     var newDialogueText by remember { mutableStateOf("") }
+    var managingParticipantsFor by remember { mutableStateOf<DirectorTurnEntity?>(null) }
+    var deleteTurnCandidate by remember { mutableStateOf<DirectorTurnEntity?>(null) }
+    var deleteSegmentCandidate by remember { mutableStateOf<DirectorTextSegmentEntity?>(null) }
+    var deleteCueCandidate by remember { mutableStateOf<DirectorStageCueEntity?>(null) }
+    var deletePlanCandidate by remember { mutableStateOf<DirectorPlanEntity?>(null) }
+    var customParticipantTitle by remember { mutableStateOf("") }
 
     var selectedTaziehUid by remember(taziehId) { mutableStateOf<String?>(null) }
     var selectedTaziehResolved by remember(taziehId) { mutableStateOf(taziehId == null) }
 
     // Build searchable text once when loaded rows change, not on every keystroke/recomposition.
-    val officialSearchIndex = remember(officialTurns, officialSegments) {
+    val officialSearchIndex = remember(officialTurns, officialSegments, officialParticipants) {
         officialTurns.associate { turn ->
-            turn.id to (officialSegments[turn.id].orEmpty().joinToString(" ") { it.text } + " " + turn.title + " " + turn.turnNumber)
+            val roles = officialParticipants[turn.id].orEmpty().joinToString(" ") { it.roleTitle }
+            turn.id to (officialSegments[turn.id].orEmpty().joinToString(" ") { it.text } + " " + turn.title + " " + turn.turnNumber + " " + roles)
         }
     }
-    val personalSearchIndex = remember(personalTurns, personalSegments) {
+    val personalSearchIndex = remember(personalTurns, personalSegments, personalParticipants) {
         personalTurns.associate { turn ->
-            turn.id to (personalSegments[turn.id].orEmpty().joinToString(" ") { it.text } + " " + turn.title + " " + turn.turnNumber)
+            val roles = personalParticipants[turn.id].orEmpty().joinToString(" ") { it.roleTitle }
+            turn.id to (personalSegments[turn.id].orEmpty().joinToString(" ") { it.text } + " " + turn.title + " " + turn.turnNumber + " " + roles)
         }
     }
     val officialCuesByTurn = remember(officialCues) { officialCues.filter { it.turnId != null }.groupBy { it.turnId } }
@@ -174,7 +219,7 @@ fun ViewerDirectorOfficeScreen(
             personalSegments = personalTextRows.groupBy { it.turnId }
             personalParticipants = if (personalTurns.isEmpty()) emptyMap() else personalDao.participantsForTurns(personalTurns.map { it.id }).groupBy { it.turnId }
             selectedPersonalMethod = version?.changeNotes?.substringAfter("روش ساخت: ", "")?.substringBefore("؛").orEmpty()
-            selectorEntries = if (selectedPersonalMethod == DirectorOfficeSharedContract.SELECTOR) ViewerDirectorOfficePublicationImporter.selectorEntries(contentDb, personalPlan.taziehUid) else emptyList()
+            selectorEntries = ViewerDirectorOfficePublicationImporter.selectorEntries(contentDb, personalPlan.taziehUid)
         } else {
             personalTurns = emptyList(); personalCues = emptyList(); personalSegments = emptyMap(); personalParticipants = emptyMap(); selectedPersonalMethod = ""; selectorEntries = emptyList()
         }
@@ -209,11 +254,20 @@ fun ViewerDirectorOfficeScreen(
         try { reload() } catch (e: Exception) { message = "بارگذاری دفتر ناموفق بود: ${e.message}" }
     }
 
+    MaterialTheme(
+        colorScheme = colorSchemeFor(themeChoice, darkMode),
+        typography = baseOfficeTypography
+    ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("دفتر معین‌البکا") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") } }
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") } },
+                actions = {
+                    IconButton(onClick = { showOfficeSettingsDialog = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر")
+                    }
+                }
             )
         }
     ) { padding ->
@@ -235,10 +289,10 @@ fun ViewerDirectorOfficeScreen(
                 } else {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) }, modifier = Modifier.weight(1f), enabled = !busy) {
-                            Icon(Icons.Default.FileOpen, null); Text("دریافت بسته رسمی")
+                            Icon(Icons.Default.FileOpen, null); Text("دریافت / به‌روزرسانی دفتر رسمی")
                         }
                     }
-                    Text("فقط نسخه منتشرشده و امضاشده Admin نمایش داده می‌شود. این بخش امکان ویرایش، کپی، خروجی یا انتشار ندارد.", Modifier.padding(horizontal = 14.dp), style = MaterialTheme.typography.bodySmall)
+                    Text("فقط نسخه منتشرشده و امضاشده Admin نمایش داده می‌شود. با واردکردن بسته جدیدتر، نسخه رسمی قبلی همین مجلس به‌صورت کامل جایگزین می‌شود؛ دفتر شخصی کاربر تغییر نمی‌کند. این بخش امکان ویرایش، کپی، خروجی یا انتشار ندارد.", Modifier.padding(horizontal = 14.dp), style = MaterialTheme.typography.bodySmall)
                     LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (officialPlans.isEmpty()) item {
                             Text(
@@ -326,9 +380,14 @@ fun ViewerDirectorOfficeScreen(
                             selectedPersonal = plan
                             scope.launch { reload() }
                         }, colors = CardDefaults.cardColors(containerColor = if (selectedPersonal?.uid == plan.uid) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(plan.title, style = MaterialTheme.typography.titleMedium)
-                                Text("دفتر شخصی مستقل • روش: ${plan.description.substringAfter("روش ساخت: ", "نامشخص").substringBefore("؛")} • غیرقابل انتشار رسمی", style = MaterialTheme.typography.bodySmall)
+                            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(plan.title, style = MaterialTheme.typography.titleMedium)
+                                    Text("دفتر شخصی مستقل • روش: ${plan.description.substringAfter("روش ساخت: ", "نامشخص").substringBefore("؛")} • غیرقابل انتشار رسمی", style = MaterialTheme.typography.bodySmall)
+                                }
+                                if (canEdit) IconButton(onClick = { deletePlanCandidate = plan }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "حذف دفتر شخصی")
+                                }
                             }
                         }
                     }
@@ -337,8 +396,8 @@ fun ViewerDirectorOfficeScreen(
                             Text(selectedPersonal!!.title, style = MaterialTheme.typography.titleMedium)
                             Text("${personalTurns.size} نوبت • ${personalTurns.sumOf { personalSegments[it.id].orEmpty().size }} بخش دیالوگ • ${personalCues.size} راهنمای صحنه", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                         }
-                        if (selectedPersonalMethod == DirectorOfficeSharedContract.MANUAL && canEdit && ViewerPermissionEngine.can(policyPermissions, "director.personal.method.manual")) item {
-                            Text("افزودن نوبت به روش دستی", style = MaterialTheme.typography.titleMedium)
+                        if (canEdit) item {
+                            Text("افزودن نوبت جدید به دفتر شخصی", style = MaterialTheme.typography.titleMedium)
                             DirectorOfficeTurnInputFields(
                                 number = manualNumber,
                                 onNumberChange = { manualNumber = it },
@@ -350,10 +409,10 @@ fun ViewerDirectorOfficeScreen(
                             Button(onClick = {
                                 scope.launch {
                                     try {
-                                        ViewerDirectorOfficeRepository.addManualTurn(context, personalDb, selectedPersonal!!.id, manualNumber.toIntOrNull() ?: (personalTurns.size + 1), manualTitle, manualText)
+                                        ViewerDirectorOfficeRepository.addTurn(context, personalDb, selectedPersonal!!.id, manualNumber.toIntOrNull() ?: (personalTurns.size + 1), manualTitle, manualText)
                                         manualNumber = ((manualNumber.toIntOrNull() ?: personalTurns.size + 1) + 1).toString()
                                         manualTitle = ""; manualText = ""; refresh++
-                                        message = "نوبت دستی به دفتر شخصی اضافه شد."
+                                        message = "نوبت جدید به دفتر شخصی اضافه شد."
                                     } catch (e: Exception) { message = "افزودن نوبت دستی ناموفق بود: ${e.message}" }
                                 }
                             }, enabled = manualTitle.isNotBlank() && manualText.isNotBlank()) { Text("افزودن نوبت") }
@@ -390,11 +449,34 @@ fun ViewerDirectorOfficeScreen(
                                 instruction = cueInstruction,
                                 onInstructionChange = { cueInstruction = it }
                             )
+                            androidx.compose.foundation.layout.Box {
+                                OutlinedButton(onClick = { cueTurnMenuExpanded = true }) {
+                                    Text(cueTurnId?.let { id -> personalTurns.firstOrNull { it.id == id }?.let { "نوبت ${it.turnNumber} — ${it.title}" } } ?: "راهنمای عمومی دفتر")
+                                }
+                                DropdownMenu(expanded = cueTurnMenuExpanded, onDismissRequest = { cueTurnMenuExpanded = false }) {
+                                    DropdownMenuItem(text = { Text("راهنمای عمومی دفتر") }, onClick = { cueTurnId = null; cueTurnMenuExpanded = false })
+                                    personalTurns.forEach { targetTurn ->
+                                        DropdownMenuItem(text = { Text("نوبت ${targetTurn.turnNumber} — ${targetTurn.title}") }, onClick = { cueTurnId = targetTurn.id; cueTurnMenuExpanded = false })
+                                    }
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf(
+                                    DirectorStageCueEntity.CUE_OTHER to "سایر",
+                                    DirectorStageCueEntity.CUE_MOVE to "حرکت",
+                                    DirectorStageCueEntity.CUE_MUSIC to "موسیقی",
+                                    DirectorStageCueEntity.CUE_LIGHT to "نور",
+                                    DirectorStageCueEntity.CUE_PAUSE to "مکث",
+                                    DirectorStageCueEntity.CUE_IMMEDIATE to "بلافاصله"
+                                ).forEach { (key, label) ->
+                                    FilterChip(selected = cueType == key, onClick = { cueType = key }, label = { Text(label) })
+                                }
+                            }
                             OutlinedButton(onClick = {
                                 scope.launch {
                                     try {
-                                        ViewerDirectorOfficeRepository.addStageCue(context, personalDb, selectedPersonal!!.id, cueTitle, cueInstruction)
-                                        cueTitle = ""; cueInstruction = ""; refresh++
+                                        ViewerDirectorOfficeRepository.addStageCue(context, personalDb, selectedPersonal!!.id, cueTitle, cueInstruction, turnId = cueTurnId, cueType = cueType)
+                                        cueTitle = ""; cueInstruction = ""; cueType = DirectorStageCueEntity.CUE_OTHER; cueTurnId = null; refresh++
                                         message = "راهنمای صحنه شخصی ذخیره شد."
                                     } catch (e: Exception) { message = "افزودن راهنمای صحنه ناموفق بود: ${e.message}" }
                                 }
@@ -402,7 +484,7 @@ fun ViewerDirectorOfficeScreen(
                         }
                         item {
                             Text("نوبت‌های دفتر شخصی", style = MaterialTheme.typography.titleMedium)
-                            if (personalTurns.isEmpty()) Text("این دفتر هنوز نوبتی ندارد. از فرم افزودن نوبت دستی یا روش انتخاب‌گر استفاده کنید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                            if (personalTurns.isEmpty()) Text("این دفتر هنوز نوبتی ندارد. از فرم افزودن نوبت جدید استفاده کنید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                         }
                         item {
                             DirectorOfficeSearchField(
@@ -423,6 +505,8 @@ fun ViewerDirectorOfficeScreen(
                                         if (canEdit) {
                                             IconButton(onClick = { editingTurn = turn; editingTurnNumber = turn.turnNumber.toString(); editingTurnTitle = turn.title }) { Icon(Icons.Default.Edit, "ویرایش عنوان و شماره نوبت") }
                                             IconButton(onClick = { addingDialogueToTurn = turn; newDialogueText = "" }) { Icon(Icons.Default.Add, "افزودن دیالوگ") }
+                                            IconButton(onClick = { managingParticipantsFor = turn; customParticipantTitle = "" }) { Icon(Icons.Default.PersonAdd, "مدیریت نقش‌های نوبت") }
+                                            IconButton(onClick = { deleteTurnCandidate = turn }) { Icon(Icons.Default.Delete, "حذف نوبت") }
                                             IconButton(onClick = {
                                                 scope.launch {
                                                     val current = personalTurns
@@ -457,12 +541,14 @@ fun ViewerDirectorOfficeScreen(
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text(segment.text, modifier = Modifier.weight(1f))
                                             if (canEdit) IconButton(onClick = { editingSegment = segment; editingSegmentText = segment.text }) { Icon(Icons.Default.Edit, "ویرایش دیالوگ") }
+                                            if (canEdit) IconButton(onClick = { deleteSegmentCandidate = segment }) { Icon(Icons.Default.Delete, "حذف دیالوگ") }
                                         }
                                     }
                                     personalCuesByTurn[turn.id].orEmpty().forEach { cue ->
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text("${cue.title}: ${cue.instruction}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                            if (canEdit) IconButton(onClick = { editingCue = cue; editingCueTitle = cue.title; editingCueText = cue.instruction }) { Icon(Icons.Default.Edit, "ویرایش راهنمای صحنه") }
+                                            if (canEdit) IconButton(onClick = { editingCue = cue; editingCueTitle = cue.title; editingCueText = cue.instruction; editingCueType = cue.cueType }) { Icon(Icons.Default.Edit, "ویرایش راهنمای صحنه") }
+                                            if (canEdit) IconButton(onClick = { deleteCueCandidate = cue }) { Icon(Icons.Default.Delete, "حذف راهنمای صحنه") }
                                         }
                                     }
                                 }
@@ -474,7 +560,8 @@ fun ViewerDirectorOfficeScreen(
                             globalPersonalCues.forEach { cue ->
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("${cue.title}: ${cue.instruction}", modifier = Modifier.weight(1f))
-                                    if (canEdit) IconButton(onClick = { editingCue = cue; editingCueTitle = cue.title; editingCueText = cue.instruction }) { Icon(Icons.Default.Edit, "ویرایش") }
+                                    if (canEdit) IconButton(onClick = { editingCue = cue; editingCueTitle = cue.title; editingCueText = cue.instruction; editingCueType = cue.cueType }) { Icon(Icons.Default.Edit, "ویرایش") }
+                                    if (canEdit) IconButton(onClick = { deleteCueCandidate = cue }) { Icon(Icons.Default.Delete, "حذف") }
                                 }
                             }
                         }
@@ -485,6 +572,28 @@ fun ViewerDirectorOfficeScreen(
             message?.let { Text(it, Modifier.fillMaxWidth().padding(12.dp), color = MaterialTheme.colorScheme.primary) }
             if (busy) Text("در حال پردازش…", Modifier.padding(12.dp))
         }
+    }
+
+
+
+    if (showOfficeSettingsDialog) {
+        DirectorOfficeAppearanceSettingsDialog(
+            darkMode = darkMode,
+            onDarkModeChange = { darkMode = it; Prefs.setDarkMode(context, it) },
+            autoDarkMode = autoDarkMode,
+            onAutoDarkModeChange = { autoDarkMode = it; Prefs.setAutoDarkMode(context, it) },
+            fontScale = fontScale,
+            onFontScaleChange = { fontScale = it; Prefs.setFontScale(context, it) },
+            lineSpacing = lineSpacing,
+            onLineSpacingChange = { lineSpacing = it; Prefs.setLineSpacing(context, it) },
+            fontChoice = fontChoice,
+            onFontChoiceChange = { fontChoice = it; Prefs.setFontChoice(context, it) },
+            themeChoice = themeChoice,
+            onThemeChoiceChange = { themeChoice = it; Prefs.setThemeChoice(context, it) },
+            keepScreenOn = keepScreenOn,
+            onKeepScreenOnChange = { keepScreenOn = it; Prefs.setKeepScreenOn(context, it) },
+            onDismiss = { showOfficeSettingsDialog = false }
+        )
     }
 
     if (showMethodDialog) {
@@ -501,21 +610,16 @@ fun ViewerDirectorOfficeScreen(
                         Text("برای روش‌های مبتنی بر محتوای مجلس، ابتدا بسته رسمی را دریافت و یک دفتر را در زبانه دفتر رسمی انتخاب کنید. روش دستی بدون دفتر رسمی قابل ساخت است.", style = MaterialTheme.typography.bodySmall)
                     }
                     methods.forEach { method ->
-                        DirectorOfficeMethodOption(
-                            method = method,
-                            selected = false,
-                            leadingText = "ساخت با روش",
-                            enabled = !busy,
-                            onClick = {
+                        TextButton(onClick = {
                             showMethodDialog = false
                             if (method.requiresOfficialSource && !canOfficial) {
                                 message = "برای این روش، مدیر باید مجوز مشاهده دفتر رسمی را نیز فعال کند."
-                                return@DirectorOfficeMethodOption
+                                return@TextButton
                             }
                             if (method.requiresOfficialSource && selectedOfficial == null) {
                                 tab = 0
                                 message = "ابتدا یک دفتر رسمی را انتخاب کنید؛ سپس از دفتر شخصی روش ساخت را اجرا کنید."
-                                return@DirectorOfficeMethodOption
+                                return@TextButton
                             }
                             scope.launch {
                                 busy = true
@@ -535,12 +639,140 @@ fun ViewerDirectorOfficeScreen(
                                 } catch (e: Exception) { message = "ساخت دفتر شخصی ناموفق بود: ${e.message}" }
                                 finally { busy = false }
                             }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("ساخت با روش ${method.label}")
+                                Text(method.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
-                        )
                     }
                 }
             },
             confirmButton = { TextButton(onClick = { showMethodDialog = false }) { Text("بستن") } }
+        )
+    }
+
+    deletePlanCandidate?.let { plan ->
+        AlertDialog(
+            onDismissRequest = { deletePlanCandidate = null },
+            title = { Text("حذف دفتر شخصی") },
+            text = { Text("دفتر «${plan.title}» از فهرست فعال این دستگاه خارج شود؟ دفتر رسمی و اطلاعات کتابخانه تغییر نمی‌کنند.") },
+            confirmButton = { TextButton(onClick = {
+                scope.launch {
+                    try {
+                        ViewerDirectorOfficeRepository.deletePlan(context, personalDb, plan.id)
+                        if (selectedPersonal?.id == plan.id) selectedPersonal = null
+                        deletePlanCandidate = null; refresh++; message = "دفتر شخصی از فهرست فعال خارج شد."
+                    } catch (e: Exception) { message = "حذف دفتر انجام نشد: ${e.message}" }
+                }
+            }) { Text("حذف") } },
+            dismissButton = { TextButton(onClick = { deletePlanCandidate = null }) { Text("انصراف") } }
+        )
+    }
+
+    managingParticipantsFor?.let { turn ->
+        val existing = personalParticipants[turn.id].orEmpty().sortedBy { it.orderIndex }
+        val availableRoles = selectorEntries.distinctBy { it.roleUid }.sortedBy { it.roleTitle }
+        AlertDialog(
+            onDismissRequest = { managingParticipantsFor = null },
+            title = { Text("مدیریت نقش‌های نوبت ${turn.turnNumber}") },
+            text = {
+                Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("نقش‌های ثبت‌شده در این نوبت")
+                    existing.forEach { participant ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(participant.roleTitle, modifier = Modifier.weight(1f))
+                            TextButton(onClick = {
+                                scope.launch {
+                                    try {
+                                        ViewerDirectorOfficeRepository.removeParticipant(context, personalDb, participant.id, turn.id)
+                                        refresh++
+                                    } catch (e: Exception) { message = "حذف نقش انجام نشد: ${e.message}" }
+                                }
+                            }) { Text("حذف") }
+                        }
+                    }
+                    Text("افزودن نقش از کتابخانه مجلس")
+                    availableRoles.filterNot { role -> existing.any { it.roleUid == role.roleUid } }.forEach { role ->
+                        TextButton(onClick = {
+                            scope.launch {
+                                try {
+                                    ViewerDirectorOfficeRepository.addParticipant(context, personalDb, turn.id, role.roleUid, role.roleTitle)
+                                    refresh++
+                                } catch (e: Exception) { message = "افزودن نقش انجام نشد: ${e.message}" }
+                            }
+                        }, modifier = Modifier.fillMaxWidth()) { Text(role.roleTitle) }
+                    }
+                    OutlinedTextField(
+                        value = customParticipantTitle,
+                        onValueChange = { customParticipantTitle = it },
+                        label = { Text("نقش دیگر / عنوان دلخواه") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true
+                    )
+                    TextButton(enabled = customParticipantTitle.isNotBlank(), onClick = {
+                        val title = customParticipantTitle.trim()
+                        scope.launch {
+                            try {
+                                ViewerDirectorOfficeRepository.addParticipant(context, personalDb, turn.id, "personal-role-${java.util.UUID.randomUUID()}", title)
+                                customParticipantTitle = ""
+                                refresh++
+                            } catch (e: Exception) { message = "افزودن نقش انجام نشد: ${e.message}" }
+                        }
+                    }) { Text("افزودن نقش دلخواه") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { managingParticipantsFor = null }) { Text("پایان") } }
+        )
+    }
+
+    deleteTurnCandidate?.let { turn ->
+        AlertDialog(
+            onDismissRequest = { deleteTurnCandidate = null },
+            title = { Text("حذف نوبت") },
+            text = { Text("نوبت ${turn.turnNumber} — ${turn.title} و دیالوگ‌ها و نقش‌های وابسته به آن حذف شوند؟") },
+            confirmButton = { TextButton(onClick = {
+                scope.launch {
+                    try {
+                        ViewerDirectorOfficeRepository.deleteTurn(context, personalDb, turn.id)
+                        deleteTurnCandidate = null; refresh++; message = "نوبت حذف شد."
+                    } catch (e: Exception) { message = "حذف نوبت انجام نشد: ${e.message}" }
+                }
+            }) { Text("حذف") } },
+            dismissButton = { TextButton(onClick = { deleteTurnCandidate = null }) { Text("انصراف") } }
+        )
+    }
+
+    deleteSegmentCandidate?.let { segment ->
+        AlertDialog(
+            onDismissRequest = { deleteSegmentCandidate = null },
+            title = { Text("حذف دیالوگ") },
+            text = { Text("این بخش از متن نوبت حذف شود؟") },
+            confirmButton = { TextButton(onClick = {
+                scope.launch {
+                    try {
+                        ViewerDirectorOfficeRepository.deleteTextSegment(context, personalDb, segment)
+                        deleteSegmentCandidate = null; refresh++; message = "دیالوگ حذف شد."
+                    } catch (e: Exception) { message = "حذف دیالوگ انجام نشد: ${e.message}" }
+                }
+            }) { Text("حذف") } },
+            dismissButton = { TextButton(onClick = { deleteSegmentCandidate = null }) { Text("انصراف") } }
+        )
+    }
+
+    deleteCueCandidate?.let { cue ->
+        AlertDialog(
+            onDismissRequest = { deleteCueCandidate = null },
+            title = { Text("حذف راهنمای صحنه") },
+            text = { Text("راهنمای «${cue.title}» حذف شود؟") },
+            confirmButton = { TextButton(onClick = {
+                scope.launch {
+                    try {
+                        ViewerDirectorOfficeRepository.deleteStageCue(context, personalDb, cue.id)
+                        deleteCueCandidate = null; refresh++; message = "راهنمای صحنه حذف شد."
+                    } catch (e: Exception) { message = "حذف راهنما انجام نشد: ${e.message}" }
+                }
+            }) { Text("حذف") } },
+            dismissButton = { TextButton(onClick = { deleteCueCandidate = null }) { Text("انصراف") } }
         )
     }
 
@@ -622,13 +854,25 @@ fun ViewerDirectorOfficeScreen(
                     onInstructionChange = { editingCueText = it },
                     instructionMinHeight = 120
                 )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(
+                        DirectorStageCueEntity.CUE_OTHER to "سایر",
+                        DirectorStageCueEntity.CUE_MOVE to "حرکت",
+                        DirectorStageCueEntity.CUE_MUSIC to "موسیقی",
+                        DirectorStageCueEntity.CUE_LIGHT to "نور",
+                        DirectorStageCueEntity.CUE_PAUSE to "مکث",
+                        DirectorStageCueEntity.CUE_IMMEDIATE to "بلافاصله"
+                    ).forEach { (key, label) ->
+                        FilterChip(selected = editingCueType == key, onClick = { editingCueType = key }, label = { Text(label) })
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
                         try {
                             require(canEdit && ViewerPermissionEngine.can(policyPermissions, "director.personal.edit")) { "مجوز ویرایش فعال نیست." }
-                            ViewerDirectorOfficeRepository.updateCue(context, personalDb, cue.copy(title = editingCueTitle, instruction = editingCueText))
+                            ViewerDirectorOfficeRepository.updateCue(context, personalDb, cue.copy(title = editingCueTitle, instruction = editingCueText, cueType = editingCueType, blocksNextTurn = editingCueType == DirectorStageCueEntity.CUE_IMMEDIATE))
                             editingCue = null; refresh++
                         } catch (e: Exception) { message = "ذخیره راهنمای صحنه انجام نشد: ${e.message}" }
                     }
@@ -637,5 +881,5 @@ fun ViewerDirectorOfficeScreen(
             dismissButton = { TextButton(onClick = { editingCue = null }) { Text("انصراف") } }
         )
     }
+    }
 }
-
