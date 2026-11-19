@@ -1,11 +1,6 @@
 package com.example.bookapp.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
-import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,38 +11,11 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
-import com.example.bookapp.data.DirectorOfficeBuildMethod
 
 /** اجزای رابط کاربری مشترک دفتر؛ هر دو Flavor باید از همین اجزا استفاده کنند. */
-
-/** انتخاب‌گر یکپارچه چهار روش ساخت دفتر؛ Admin و Viewer از یک نمایش استفاده می‌کنند. */
-@Composable
-fun DirectorOfficeMethodOption(
-    method: DirectorOfficeBuildMethod,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    leadingText: String? = null
-) {
-    Row(
-        modifier = modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(selected = selected, onClick = onClick, enabled = enabled)
-        Spacer(Modifier.width(8.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(listOfNotNull(leadingText, method.label).joinToString(" "), style = MaterialTheme.typography.bodyMedium)
-            Text(method.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
 @Composable
 fun DirectorOfficeSearchField(
     value: String,
