@@ -404,7 +404,13 @@ fun ViewerDirectorOfficeScreen(
                             Text("نوبت‌های دفتر شخصی", style = MaterialTheme.typography.titleMedium)
                             if (personalTurns.isEmpty()) Text("این دفتر هنوز نوبتی ندارد. از فرم افزودن نوبت دستی یا روش انتخاب‌گر استفاده کنید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                         }
-                            DirectorOfficeSearchField(value = search, onValueChange = { search = it }, label = "جستجو در نوبت‌ها", showSearchIcon = false)
+                        item {
+                            DirectorOfficeSearchField(
+                                value = search,
+                                onValueChange = { search = it },
+                                label = "جستجو در نوبت‌ها",
+                                showSearchIcon = false
+                            )
                         }
                         val visible = personalTurns.filter { turn ->
                             search.isBlank() || personalSearchIndex[turn.id].orEmpty().contains(search, ignoreCase = true)
