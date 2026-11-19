@@ -16,7 +16,7 @@ interface DirectorDao : DirectorOfficeWorkspaceDao {
     @Update override suspend fun updatePlan(value: DirectorPlanEntity)
     @Query("UPDATE director_plans SET isDeleted=1, deletedAt=:deletedAt, updatedAt=:deletedAt WHERE id=:id AND isDeleted=0") suspend fun softDeletePlan(id: Long, deletedAt: Long)
 
-    @Query("SELECT * FROM director_plan_versions WHERE planId=:planId ORDER BY versionNumber DESC") suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
+    @Query("SELECT * FROM director_plan_versions WHERE planId=:planId ORDER BY versionNumber DESC") override suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
     @Query("SELECT * FROM director_plan_versions WHERE id=:id LIMIT 1") override suspend fun version(id: Long): DirectorPlanVersionEntity?
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertVersion(value: DirectorPlanVersionEntity): Long
     @Update suspend fun updateVersion(value: DirectorPlanVersionEntity)
@@ -48,7 +48,7 @@ interface DirectorDao : DirectorOfficeWorkspaceDao {
     @Update override suspend fun updateTextSegment(value: DirectorTextSegmentEntity)
     @Query("DELETE FROM director_text_segments WHERE id=:id") suspend fun deleteTextSegment(id: Long)
 
-    @Query("SELECT * FROM director_stage_cues WHERE versionId=:versionId ORDER BY orderIndex, id") suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>
+    @Query("SELECT * FROM director_stage_cues WHERE versionId=:versionId ORDER BY orderIndex, id") override suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>
     @Query("SELECT * FROM director_stage_cues WHERE turnId=:turnId ORDER BY orderIndex, id") suspend fun cuesForTurn(turnId: Long): List<DirectorStageCueEntity>
     @Insert override suspend fun insertStageCue(value: DirectorStageCueEntity): Long
     @Update override suspend fun updateStageCue(value: DirectorStageCueEntity)

@@ -7,6 +7,8 @@ package com.example.bookapp.data
  */
 interface DirectorOfficeWorkspaceDao {
     suspend fun plan(id: Long): DirectorPlanEntity?
+    suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
+    suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>
     suspend fun version(id: Long): DirectorPlanVersionEntity?
     suspend fun turn(id: Long): DirectorTurnEntity?
     suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
