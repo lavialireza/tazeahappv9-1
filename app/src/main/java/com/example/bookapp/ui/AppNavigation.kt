@@ -145,7 +145,7 @@ fun AppNavigation(
     val navController: NavHostController = rememberNavController()
     fun featureEnabled(key: String): Boolean {
         if (!publicViewer) return true
-        return ViewerPermissionEngine.can(context, key)
+        return ViewerPermissionEngine.can(viewerPermissions, key)
     }
     fun navigateIfAllowed(key: String, route: String) {
         if (featureEnabled(key)) navController.navigate(route)
@@ -153,7 +153,7 @@ fun AppNavigation(
     }
     // کنترل مجوز خروجی در لحظه اجرا؛ مخفی‌کردن دکمه به‌تنهایی کنترل امنیتی کافی نیست.
     fun exportAllowed(vararg keys: String): Boolean =
-        !publicViewer || ViewerPermissionEngine.canAll(context, *keys)
+        !publicViewer || ViewerPermissionEngine.canAll(viewerPermissions, *keys)
     fun notifyExportDenied() {
         android.widget.Toast.makeText(context, "مدیر دسترسی خروجی را برای این کاربر فعال نکرده است.", android.widget.Toast.LENGTH_LONG).show()
     }
@@ -1066,7 +1066,7 @@ fun AppNavigation(
             onKeepScreenOnChange = onKeepScreenOnChange
         )
 
-        viewerOnlyRoutes(navController = navController, context = context, db = db)
+        viewerOnlyRoutes(navController = navController, context = context, db = db, permissions = viewerPermissions)
 
         dialogueFeatureRoutes(
             navController = navController,
