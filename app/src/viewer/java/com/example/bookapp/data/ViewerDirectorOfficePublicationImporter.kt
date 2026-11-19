@@ -154,6 +154,41 @@ object ViewerDirectorOfficePublicationImporter {
         val text: String
     )
 
+    /** ساخت دفتر شخصی دستی بدون وابستگی به دریافت/مشاهده دفتر رسمی. */
+    suspend fun createBlankPersonal(
+        context: Context,
+        personalDb: ViewerDirectorOfficeDatabase,
+        taziehUid: String? = null,
+        title: String = "دفتر شخصی جدید"
+    ): Long {
+        val permissions = ViewerAccessPolicy.getEffectivePermissions(context)
+        require(DirectorOfficeAccessRules.canCreatePersonal(permissions, "MANUAL")) {
+            "مدیر ساخت دفتر شخصی با روش دستی را برای این Viewer مجاز نکرده است."
+        }
+        val now = System.currentTimeMillis()
+        val dao = personalDb.directorDao()
+        return personalDb.withTransaction {
+            val planId = dao.insertPlan(DirectorPlanEntity(
+                uid = "personal-${UUID.randomUUID()}",
+                taziehUid = taziehUid.orEmpty(),
+                title = title.trim().ifBlank { "دفتر شخصی جدید" },
+                status = DirectorPlanEntity.STATUS_DRAFT,
+                description = "دفتر مستقل این Viewer؛ روش ساخت: MANUAL؛ انتشار رسمی و خروجی‌گیری ندارد.",
+                createdAt = now,
+                updatedAt = now
+            ))
+            dao.insertVersion(DirectorPlanVersionEntity(
+                planId = planId,
+                versionNumber = 1,
+                title = "نسخه شخصی اول",
+                status = DirectorPlanVersionEntity.STATUS_DRAFT,
+                changeNotes = "دفتر شخصی؛ روش ساخت: MANUAL؛ ایجاد مستقل توسط کاربر",
+                createdAt = now
+            ))
+            planId
+        }
+    }
+
     /** ساخت دفتر شخصی با روش واقعی انتخاب‌شده از محتوای محلی همان مجلس. */
     suspend fun createPersonalFromOfficial(
         context: Context,

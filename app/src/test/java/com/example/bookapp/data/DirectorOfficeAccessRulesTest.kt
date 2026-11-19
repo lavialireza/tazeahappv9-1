@@ -20,6 +20,16 @@ class DirectorOfficeAccessRulesTest {
         assertFalse(DirectorOfficeAccessRules.canCreatePersonal(permissions, "FULL_TEXT"))
     }
 
+
+    @Test fun manualPersonalOfficeCreationDoesNotRequireOfficialOfficeViewPermission() {
+        val permissions = mapOf(
+            "director.personal.create" to true,
+            "director.personal.method.manual" to true,
+            "director.official.view" to false
+        )
+        assertTrue(DirectorOfficeAccessRules.canCreatePersonal(permissions, "MANUAL"))
+    }
+
     @Test fun viewerCannotPublishCopyOrExportEvenIfPolicyContainsTrueValues() {
         val permissions = mapOf(
             "director.official.publish" to true,

@@ -52,7 +52,7 @@ import com.example.bookapp.data.DirectorPlanVersionEntity
 import com.example.bookapp.data.DirectorStageCueEntity
 import com.example.bookapp.data.DirectorTextSegmentEntity
 import com.example.bookapp.data.DirectorTurnEntity
-import com.example.bookapp.data.ViewerAccessPolicy
+import com.example.bookapp.data.ViewerPermissionEngine
 import com.example.bookapp.data.ViewerDirectorOfficeDatabase
 import com.example.bookapp.data.ViewerDirectorOfficePublicationImporter
 import com.example.bookapp.data.ViewerDirectorOfficeRepository
@@ -64,7 +64,12 @@ private data class ViewerBuildMethod(val code: String, val label: String, val pe
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, onBack: () -> Unit) {
+fun ViewerDirectorOfficeScreen(
+    contentDb: AppDatabase,
+    taziehId: Long? = null,
+    policyPermissions: Map<String, Boolean>,
+    onBack: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val officialDb = remember { ViewerDirectorOfficeDatabase.official(context) }
@@ -72,17 +77,15 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
     val officialDao = remember { officialDb.directorDao() }
     val personalDao = remember { personalDb.directorDao() }
 
-    val canOfficial = remember { ViewerAccessPolicy.hasPermission(context, "director.official.view") }
-    val canCreate = remember { ViewerAccessPolicy.hasPermission(context, "director.personal.create") && canOfficial }
-    val canEdit = remember { ViewerAccessPolicy.hasPermission(context, "director.personal.edit") }
-    val methods = remember {
-        listOf(
-            ViewerBuildMethod("ROLE_NUMBERED", "شماره‌محور", "director.personal.method.number"),
-            ViewerBuildMethod("FULL_TEXT", "متن کامل", "director.personal.method.fulltext"),
-            ViewerBuildMethod("MANUAL", "دستی", "director.personal.method.manual"),
-            ViewerBuildMethod("SELECTOR", "انتخاب‌گر", "director.personal.method.selector")
-        ).filter { ViewerAccessPolicy.hasPermission(context, it.permission) }
-    }
+    val canOfficial = ViewerPermissionEngine.can(policyPermissions, "director.official.view")
+    val canCreate = ViewerPermissionEngine.can(policyPermissions, "director.personal.create")
+    val canEdit = ViewerPermissionEngine.can(policyPermissions, "director.personal.edit")
+    val methods = listOf(
+        ViewerBuildMethod("ROLE_NUMBERED", "شماره‌محور", "director.personal.method.number"),
+        ViewerBuildMethod("FULL_TEXT", "متن کامل", "director.personal.method.fulltext"),
+        ViewerBuildMethod("MANUAL", "دستی", "director.personal.method.manual"),
+        ViewerBuildMethod("SELECTOR", "انتخاب‌گر", "director.personal.method.selector")
+    ).filter { ViewerPermissionEngine.can(policyPermissions, it.permission) }
 
     var tab by remember { mutableIntStateOf(0) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -117,6 +120,20 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
 
     var selectedTaziehUid by remember(taziehId) { mutableStateOf<String?>(null) }
     var selectedTaziehResolved by remember(taziehId) { mutableStateOf(taziehId == null) }
+
+    // Build searchable text once when loaded rows change, not on every keystroke/recomposition.
+    val officialSearchIndex = remember(officialTurns, officialSegments) {
+        officialTurns.associate { turn ->
+            turn.id to (officialSegments[turn.id].orEmpty().joinToString(" ") { it.text } + " " + turn.title + " " + turn.turnNumber)
+        }
+    }
+    val personalSearchIndex = remember(personalTurns, personalSegments) {
+        personalTurns.associate { turn ->
+            turn.id to (personalSegments[turn.id].orEmpty().joinToString(" ") { it.text } + " " + turn.title + " " + turn.turnNumber)
+        }
+    }
+    val officialCuesByTurn = remember(officialCues) { officialCues.filter { it.turnId != null }.groupBy { it.turnId } }
+    val personalCuesByTurn = remember(personalCues) { personalCues.filter { it.turnId != null }.groupBy { it.turnId } }
 
     suspend fun reload() {
         officialPlans = if (canOfficial) {
@@ -241,15 +258,14 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
                                 OutlinedTextField(value = search, onValueChange = { search = it }, modifier = Modifier.fillMaxWidth(), label = { Text("جستجو در شماره، نقش و متن نوبت") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true)
                             }
                             val filtered = officialTurns.filter { turn ->
-                                val corpus = (officialSegments[turn.id].orEmpty().joinToString(" ") { it.text } + " " + turn.title + " " + turn.turnNumber)
-                                search.isBlank() || corpus.contains(search, ignoreCase = true)
+                                search.isBlank() || officialSearchIndex[turn.id].orEmpty().contains(search, ignoreCase = true)
                             }
                             items(filtered, key = { it.id }) { turn ->
                                 Card(Modifier.fillMaxWidth()) {
                                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text("نوبت ${turn.turnNumber} — ${turn.title}", style = MaterialTheme.typography.titleSmall)
                                         officialSegments[turn.id].orEmpty().forEach { segment -> Text(segment.text) }
-                                        val cues = officialCues.filter { it.turnId == turn.id }
+                                        val cues = officialCuesByTurn[turn.id].orEmpty()
                                         cues.forEach { cue ->
                                             Text("راهنمای صحنه: ${cue.title.ifBlank { cue.cueType }} — ${cue.instruction}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                                         }
@@ -276,10 +292,25 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Text("دفتر شخصی فقط در همین دستگاه و در پایگاه داده مستقل ذخیره می‌شود. ویرایش آن هیچ اثری بر دفتر رسمی ندارد.", style = MaterialTheme.typography.bodySmall)
                     if (!canEdit) Text("مجوز ویرایش دفتر شخصی فعال نیست؛ دفترهای موجود فقط قابل مشاهده‌اند.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                    if (!canOfficial && ViewerAccessPolicy.hasPermission(context, "director.personal.create")) Text("برای ساخت دفتر شخصی از محتوای مجلس، مدیر باید مشاهده دفتر رسمی را نیز فعال کند.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    if (!canCreate) {
+                        Text("مدیر مجوز ساخت دفتر شخصی را برای این Viewer فعال نکرده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    } else if (methods.isEmpty()) {
+                        Text("مجوز اصلی ساخت فعال است، اما مدیر هنوز هیچ روش ساختی را برای این Viewer فعال نکرده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text("روش‌های مجاز مدیر: ${methods.joinToString("، ") { it.label }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                        OutlinedButton(
+                            onClick = { showMethodDialog = true },
+                            enabled = !busy && selectedTaziehResolved && (taziehId == null || selectedTaziehUid != null),
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("ساخت دفتر شخصی جدید") }
+                    }
+                    if (!canOfficial && methods.any { it.code != "MANUAL" }) {
+                        Text("روش‌های شماره‌محور، متن کامل و انتخاب‌گر به دفتر رسمی دریافت‌شده و مجوز مشاهده آن نیاز دارند؛ روش دستی مستقل است.", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (canCreate && methods.isEmpty()) Text("مدیر هنوز هیچ روش ساخت دفتری را فعال نکرده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
                 LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (personalPlans.isEmpty()) item { Text("هنوز دفتر شخصی ساخته نشده است. برای ساخت، ابتدا یک دفتر رسمی را دریافت و انتخاب کنید.") }
+                    if (personalPlans.isEmpty()) item { Text("هنوز دفتر شخصی ساخته نشده است. از دکمه «ساخت دفتر شخصی جدید» استفاده کنید.") }
                     items(personalPlans, key = { it.uid }) { plan ->
                         Card(Modifier.fillMaxWidth().clickable {
                             selectedPersonal = plan
@@ -292,7 +323,7 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
                         }
                     }
                     if (selectedPersonal != null) {
-                        if (selectedPersonalMethod == "MANUAL" && canEdit && ViewerAccessPolicy.hasPermission(context, "director.personal.method.manual")) item {
+                        if (selectedPersonalMethod == "MANUAL" && canEdit && ViewerPermissionEngine.can(policyPermissions, "director.personal.method.manual")) item {
                             Text("افزودن نوبت به روش دستی", style = MaterialTheme.typography.titleMedium)
                             OutlinedTextField(manualNumber, { manualNumber = it.filter(Char::isDigit).take(6) }, label = { Text("شماره نوبت") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                             OutlinedTextField(manualTitle, { manualTitle = it }, label = { Text("عنوان نقش / نوبت") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -308,7 +339,7 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
                                 }
                             }, enabled = manualTitle.isNotBlank() && manualText.isNotBlank()) { Text("افزودن نوبت") }
                         }
-                        if (selectedPersonalMethod == "SELECTOR" && canEdit && ViewerAccessPolicy.hasPermission(context, "director.personal.method.selector")) item {
+                        if (selectedPersonalMethod == "SELECTOR" && canEdit && ViewerPermissionEngine.can(policyPermissions, "director.personal.method.selector")) item {
                             Text("انتخاب دیالوگ از متن مجلس", style = MaterialTheme.typography.titleMedium)
                             val alreadyUsed = personalTurns.map { it.continuityGroupUid }.filter { it.isNotBlank() }.toSet()
                             val availableEntries = selectorEntries.filterNot { it.key in alreadyUsed }
@@ -351,8 +382,7 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
                             OutlinedTextField(value = search, onValueChange = { search = it }, modifier = Modifier.fillMaxWidth(), label = { Text("جستجو در نوبت‌ها") }, singleLine = true)
                         }
                         val visible = personalTurns.filter { turn ->
-                            val corpus = personalSegments[turn.id].orEmpty().joinToString(" ") { it.text } + " " + turn.title + " " + turn.turnNumber
-                            search.isBlank() || corpus.contains(search, ignoreCase = true)
+                            search.isBlank() || personalSearchIndex[turn.id].orEmpty().contains(search, ignoreCase = true)
                         }
                         items(visible, key = { it.id }) { turn ->
                             Card(Modifier.fillMaxWidth()) {
@@ -394,7 +424,7 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
                                             if (canEdit) IconButton(onClick = { editingSegment = segment; editingSegmentText = segment.text }) { Icon(Icons.Default.Edit, "ویرایش دیالوگ") }
                                         }
                                     }
-                                    personalCues.filter { it.turnId == turn.id }.forEach { cue ->
+                                    personalCuesByTurn[turn.id].orEmpty().forEach { cue ->
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text("${cue.title}: ${cue.instruction}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                                             if (canEdit) IconButton(onClick = { editingCue = cue; editingCueTitle = cue.title; editingCueText = cue.instruction }) { Icon(Icons.Default.Edit, "ویرایش راهنمای صحنه") }
@@ -422,28 +452,40 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
         }
     }
 
-    if (showMethodDialog && selectedOfficial != null) {
+    if (showMethodDialog) {
         AlertDialog(
             onDismissRequest = { showMethodDialog = false },
             title = { Text("روش ساخت دفتر شخصی") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val sourceMode = selectedOfficialSourceMode
-                    if (sourceMode != null) {
+                    if (selectedOfficial != null && sourceMode != null) {
                         Text("روش محتوای منتشرشده: $sourceMode", style = MaterialTheme.typography.bodySmall)
-                        if (methods.any { it.code != sourceMode }) {
-                            Text("روش‌های متفاوت فقط به دلیل فعال‌سازی صریح همان روش توسط Admin در این فهرست آمده‌اند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                        }
+                    }
+                    if (selectedOfficial == null && methods.any { it.code != "MANUAL" }) {
+                        Text("برای روش‌های مبتنی بر محتوای مجلس، ابتدا بسته رسمی را دریافت و یک دفتر را در زبانه دفتر رسمی انتخاب کنید. روش دستی بدون دفتر رسمی قابل ساخت است.", style = MaterialTheme.typography.bodySmall)
                     }
                     methods.forEach { method ->
                         TextButton(onClick = {
-                            val source = selectedOfficial!!
                             showMethodDialog = false
+                            if (method.code != "MANUAL" && !canOfficial) {
+                                message = "برای این روش، مدیر باید مجوز مشاهده دفتر رسمی را نیز فعال کند."
+                                return@TextButton
+                            }
+                            if (method.code != "MANUAL" && selectedOfficial == null) {
+                                tab = 0
+                                message = "ابتدا یک دفتر رسمی را انتخاب کنید؛ سپس از دفتر شخصی روش ساخت را اجرا کنید."
+                                return@TextButton
+                            }
                             scope.launch {
                                 busy = true
                                 try {
                                     val id = withContext(Dispatchers.IO) {
-                                        ViewerDirectorOfficePublicationImporter.createPersonalFromOfficial(context, contentDb, officialDb, personalDb, source, method.code)
+                                        if (method.code == "MANUAL") {
+                                            ViewerDirectorOfficePublicationImporter.createBlankPersonal(context, personalDb, selectedTaziehUid)
+                                        } else {
+                                            ViewerDirectorOfficePublicationImporter.createPersonalFromOfficial(context, contentDb, officialDb, personalDb, selectedOfficial!!, method.code)
+                                        }
                                     }
                                     selectedPersonal = personalDao.plan(id)
                                     tab = 1
@@ -470,7 +512,7 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
                 TextButton(onClick = {
                     scope.launch {
                         try {
-                            require(canEdit && ViewerAccessPolicy.hasPermission(context, "director.personal.edit")) { "مجوز ویرایش فعال نیست." }
+                            require(canEdit && ViewerPermissionEngine.can(policyPermissions, "director.personal.edit")) { "مجوز ویرایش فعال نیست." }
                             ViewerDirectorOfficeRepository.updateText(context, personalDb, segment.copy(text = editingSegmentText))
                             editingSegment = null; refresh++
                         } catch (e: Exception) { message = "ذخیره دیالوگ انجام نشد: ${e.message}" }
@@ -494,7 +536,7 @@ fun ViewerDirectorOfficeScreen(contentDb: AppDatabase, taziehId: Long? = null, o
                 TextButton(onClick = {
                     scope.launch {
                         try {
-                            require(canEdit && ViewerAccessPolicy.hasPermission(context, "director.personal.edit")) { "مجوز ویرایش فعال نیست." }
+                            require(canEdit && ViewerPermissionEngine.can(policyPermissions, "director.personal.edit")) { "مجوز ویرایش فعال نیست." }
                             ViewerDirectorOfficeRepository.updateCue(context, personalDb, cue.copy(title = editingCueTitle, instruction = editingCueText))
                             editingCue = null; refresh++
                         } catch (e: Exception) { message = "ذخیره راهنمای صحنه انجام نشد: ${e.message}" }
