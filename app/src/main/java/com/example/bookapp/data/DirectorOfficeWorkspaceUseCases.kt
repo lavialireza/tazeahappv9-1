@@ -70,9 +70,9 @@ object DirectorOfficeWorkspaceUseCases {
 
     /** قاعده پایه پیش‌نویس: هیچ عملیات شخصی نباید روی دفتر/نسخه منتشرشده انجام شود. */
     fun requireDraft(plan: DirectorPlanEntity, version: DirectorPlanVersionEntity) {
-        require(plan.status == DirectorPlanEntity.STATUS_DRAFT &&
+        require(plan.status != DirectorPlanEntity.STATUS_ARCHIVED &&
             version.status == DirectorPlanVersionEntity.STATUS_DRAFT) {
-            "ویرایش فقط برای دفتر شخصی پیش‌نویس مجاز است."
+            "ویرایش فقط روی نسخه پیش‌نویس و دفتر فعال مجاز است. نسخه منتشرشده قابل تغییر نیست."
         }
     }
 }

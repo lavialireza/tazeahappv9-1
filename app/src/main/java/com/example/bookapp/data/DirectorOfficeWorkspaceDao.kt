@@ -7,21 +7,28 @@ package com.example.bookapp.data
  */
 interface DirectorOfficeWorkspaceDao {
     suspend fun plan(id: Long): DirectorPlanEntity?
-    suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
-    suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>
     suspend fun version(id: Long): DirectorPlanVersionEntity?
+    suspend fun versionsForPlan(planId: Long): List<DirectorPlanVersionEntity>
     suspend fun turn(id: Long): DirectorTurnEntity?
     suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
     suspend fun participantsForTurns(turnIds: List<Long>): List<DirectorParticipantEntity>
+    suspend fun insertParticipant(value: DirectorParticipantEntity): Long
+    suspend fun updateParticipant(value: DirectorParticipantEntity)
+    suspend fun deleteParticipant(id: Long)
     suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>
     suspend fun turns(versionId: Long): List<DirectorTurnEntity>
     suspend fun updatePlan(value: DirectorPlanEntity)
+    suspend fun softDeletePlan(id: Long, deletedAt: Long)
     suspend fun insertTurn(value: DirectorTurnEntity): Long
     suspend fun updateTurn(value: DirectorTurnEntity)
+    suspend fun deleteTurn(id: Long)
     suspend fun moveTurn(turnId: Long, sequenceIndex: Int)
-    suspend fun insertParticipant(value: DirectorParticipantEntity): Long
     suspend fun insertTextSegment(value: DirectorTextSegmentEntity): Long
     suspend fun updateTextSegment(value: DirectorTextSegmentEntity)
+    suspend fun deleteTextSegment(id: Long)
+    suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>
+    suspend fun stageCue(id: Long): DirectorStageCueEntity?
+    suspend fun deleteStageCue(id: Long)
     suspend fun insertStageCue(value: DirectorStageCueEntity): Long
     suspend fun updateStageCue(value: DirectorStageCueEntity)
 }
