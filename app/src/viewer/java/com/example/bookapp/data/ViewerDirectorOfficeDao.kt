@@ -8,9 +8,9 @@ import androidx.room.Update
 
 /** سطح داده محدودشده Viewer؛ فاقد API انتشار و مدیریت نسخه رسمی. */
 @Dao
-interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
+interface ViewerDirectorOfficeDao : DirectorOfficeMainPageDao {
     @Query("SELECT * FROM director_plans WHERE isDeleted = 0 AND (:query = '' OR title LIKE '%' || :query || '%') ORDER BY updatedAt DESC, id DESC LIMIT :limit OFFSET :offset")
-    suspend fun plansPage(query: String, limit: Int, offset: Int): List<DirectorPlanEntity>
+    override suspend fun plansPage(query: String, limit: Int, offset: Int): List<DirectorPlanEntity>
 
     @Query("SELECT * FROM director_plans WHERE id=:id LIMIT 1")
     override suspend fun plan(id: Long): DirectorPlanEntity?
@@ -18,8 +18,11 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     @Query("SELECT * FROM director_plans WHERE uid=:uid LIMIT 1")
     suspend fun planByUid(uid: String): DirectorPlanEntity?
 
+    @Query("SELECT * FROM director_plans WHERE taziehUid=:taziehUid AND isDeleted = 0 ORDER BY updatedAt DESC")
+    override suspend fun plansForTazieh(taziehUid: String): List<DirectorPlanEntity>
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
-    suspend fun insertPlan(value: DirectorPlanEntity): Long
+    override suspend fun insertPlan(value: DirectorPlanEntity): Long
 
     @Update
     override suspend fun updatePlan(value: DirectorPlanEntity)
@@ -28,7 +31,7 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     override suspend fun softDeletePlan(id: Long, deletedAt: Long)
 
     @Query("SELECT * FROM director_plan_versions WHERE planId=:planId ORDER BY versionNumber DESC")
-    suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
+    override suspend fun versions(planId: Long): List<DirectorPlanVersionEntity>
 
     @Query("SELECT * FROM director_plan_versions WHERE planId=:planId ORDER BY versionNumber DESC")
     override suspend fun versionsForPlan(planId: Long): List<DirectorPlanVersionEntity>
@@ -36,11 +39,21 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     @Query("SELECT * FROM director_plan_versions WHERE id=:id LIMIT 1")
     override suspend fun version(id: Long): DirectorPlanVersionEntity?
 
+    @Query("SELECT * FROM director_source_files WHERE planId=:planId ORDER BY createdAt DESC")
+    override suspend fun sourceFiles(planId: Long): List<DirectorSourceFileEntity>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    override suspend fun insertSourceFile(value: DirectorSourceFileEntity): Long
+
     @Query("SELECT * FROM director_turns WHERE id=:id LIMIT 1")
     override suspend fun turn(id: Long): DirectorTurnEntity?
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
-    suspend fun insertVersion(value: DirectorPlanVersionEntity): Long
+    override suspend fun insertVersion(value: DirectorPlanVersionEntity): Long
+
+    @Update
+    override suspend fun updateVersion(value: DirectorPlanVersionEntity)
+
 
     @Update
     override suspend fun updateTurn(value: DirectorTurnEntity)

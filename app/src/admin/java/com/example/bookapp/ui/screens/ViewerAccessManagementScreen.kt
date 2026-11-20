@@ -232,7 +232,8 @@ private fun DirectorOfficePermissionEditor(
         "director.personal.method.fulltext" to "ساخت با متن کامل",
         "director.personal.method.manual" to "ساخت به روش دستی",
         "director.personal.method.selector" to "استفاده از انتخاب‌گر",
-        "director.personal.edit" to "ویرایش دفتر شخصی"
+        "director.personal.edit" to "ویرایش دفتر شخصی",
+        "director.source.import" to "ورود فایل‌های منبع به دفتر"
     )
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {

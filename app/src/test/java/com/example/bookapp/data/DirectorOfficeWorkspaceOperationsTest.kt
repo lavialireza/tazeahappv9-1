@@ -100,6 +100,46 @@ class DirectorOfficeWorkspaceOperationsTest {
     }
 
     @Test
+    fun `workspace repository loads one flavor independent snapshot with grouped relations`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 4, sequenceIndex = 0, title = "نوبت نخست")
+            participantRows += DirectorParticipantEntity(id = 1, turnId = 1, roleUid = "role-1", roleTitle = "امام حسین", isLead = true)
+            segmentRows += DirectorTextSegmentEntity(id = 1, turnId = 1, segmentIndex = 0, text = "آغاز دیالوگ", sectionUid = "section-1")
+            cueRows += DirectorStageCueEntity(id = 1, versionId = 20, turnId = 1, title = "حرکت", instruction = "ورود به صحنه")
+        }
+
+        val state = DaoDirectorOfficeWorkspaceRepository(dao).loadWorkspace(planId = 10, versionId = 20)
+
+        assertEquals(10L, state.plan.id)
+        assertEquals(20L, state.selectedVersion?.id)
+        assertEquals(1, state.turns.size)
+        assertEquals("امام حسین", state.participantsByTurn.getValue(1).single().roleTitle)
+        assertEquals("آغاز دیالوگ", state.textSegmentsByTurn.getValue(1).single().text)
+        assertEquals("حرکت", state.stageCues.single().title)
+        assertTrue(state.searchableTextByTurn.getValue(1).contains("امام حسین"))
+        assertTrue(state.searchableTextByTurn.getValue(1).contains("آغاز دیالوگ"))
+    }
+
+    @Test
+    fun `selector dialogue is created by shared operation and links source section`() = runTest {
+        val dao = FakeWorkspaceDao()
+        DaoDirectorOfficeWorkspaceRepository(dao).addSelectorDialogue(
+            planId = 10,
+            entry = DirectorOfficeSelectorEntry(
+                key = "section-8:0", roleUid = "role-8", roleTitle = "حضرت زینب",
+                sectionUid = "section-8", sectionTitle = "خطاب", text = "متن انتخاب‌شده"
+            )
+        )
+
+        val turn = dao.turnRows.values.single()
+        assertEquals(1, turn.turnNumber)
+        assertEquals("section-8:0", turn.continuityGroupUid)
+        assertEquals("role-8", dao.participantRows.single().roleUid)
+        assertEquals("section-8", dao.segmentRows.single().sectionUid)
+        assertEquals("متن انتخاب‌شده", dao.segmentRows.single().text)
+    }
+
+    @Test
     fun `manual builder does not delete already recorded turns`() = runTest {
         val dao = FakeWorkspaceDao().apply {
             turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 5, sequenceIndex = 0, title = "حفظ شود")
