@@ -6,6 +6,145 @@ package com.example.bookapp.data
  * انتشار، امضا، مدیریت کاربر و واردکردن بسته رسمی عمداً در این هسته وجود ندارند.
  */
 object DirectorOfficeWorkspaceOperations {
+    /**
+     * ساخت مشترک دفتر بر پایه کتابخانه نقش‌ها و بخش‌ها. الگوریتم شماره‌محور و متن کامل
+     * در Admin و Viewer دقیقاً یکی است؛ DAO تعیین می‌کند داده در کدام دیتابیس مستقل ذخیره شود.
+     * MANUAL اطلاعات موجود را پاک نمی‌کند؛ SELECTOR فقط نوبت‌های فعلی را خالی می‌کند تا
+     * کاربر آن‌ها را انتخاب کند.
+     */
+    suspend fun buildDraftFromLibrary(
+        dao: DirectorOfficeWorkspaceDao,
+        versionId: Long,
+        method: String,
+        roles: List<DirectorOfficeBuildRole>,
+        sections: List<DirectorOfficeBuildSection>,
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
+    ): DirectorOfficeBuildResult {
+        require(method in DirectorOfficeSharedContract.methodCodes) { "روش ساخت دفتر معتبر نیست." }
+        val version = dao.version(versionId) ?: error("نسخه دفتر پیدا نشد.")
+        val plan = dao.plan(version.planId) ?: error("دفتر پیدا نشد.")
+        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
+        require(roles.map { it.uid }.distinct().size == roles.size) { "شناسه نقش‌ها تکراری است." }
+        require(sections.all { section -> roles.any { it.uid == section.roleUid } }) { "بخشی به نقشی خارج از مجلس انتخاب‌شده متصل است." }
+
+        // ترتیب ورودی از DAO کتابخانه می‌آید؛ همان ترتیب مرتب‌شده در هر دو Flavor حفظ می‌شود.
+        val orderedRoles = roles
+        val roleByUid = orderedRoles.associateBy { it.uid }
+        val orderedSections = sections.filter { it.content.isNotBlank() }
+        val byNumber = linkedMapOf<Int, Long>()
+        val byRole = linkedMapOf<String, Long>()
+        var insertedCount = 0
+
+        transactionRunner.run {
+            if (method != DirectorOfficeSharedContract.MANUAL) {
+                dao.turns(versionId).forEach { dao.deleteTurn(it.id) }
+            }
+
+            when (method) {
+                DirectorOfficeSharedContract.ROLE_NUMBERED -> {
+                    data class NumberedEntry(
+                        val number: Int,
+                        val role: DirectorOfficeBuildRole,
+                        val section: DirectorOfficeBuildSection,
+                        val text: String
+                    )
+                    val entries = orderedSections.flatMap { section ->
+                        val role = roleByUid[section.roleUid] ?: return@flatMap emptyList()
+                        DirectorOfficeWorkspaceUseCases.parseNumberedDialogues(section.content).map { (number, text) ->
+                            NumberedEntry(number, role, section, text)
+                        }
+                    }
+                    require(entries.isNotEmpty()) {
+                        "در متن نقش‌ها شماره دیالوگ پیدا نشد. شماره هر دیالوگ را در ابتدای خط، مانند «۱- متن دیالوگ»، وارد کنید."
+                    }
+                    entries.groupBy { it.number }.toSortedMap().forEach { (number, numberEntries) ->
+                        val distinctRoles = numberEntries.map { it.role }.distinctBy { it.uid }
+                        val title = if (distinctRoles.size > 1) distinctRoles.joinToString("، ") { it.title }
+                            else distinctRoles.first().title
+                        val turnId = dao.insertTurn(DirectorTurnEntity(
+                            versionId = versionId, turnNumber = number, sequenceIndex = insertedCount,
+                            turnType = if (distinctRoles.size > 1) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
+                            title = title
+                        ))
+                        byNumber[number] = turnId
+                        distinctRoles.forEachIndexed { index, role ->
+                            dao.insertParticipant(DirectorParticipantEntity(
+                                turnId = turnId, roleUid = role.uid, roleTitle = role.title,
+                                orderIndex = index, isLead = index == 0
+                            ))
+                        }
+                        numberEntries.forEachIndexed { index, entry ->
+                            dao.insertTextSegment(DirectorTextSegmentEntity(
+                                turnId = turnId, segmentIndex = index, text = entry.text, sectionUid = entry.section.uid
+                            ))
+                        }
+                        insertedCount++
+                    }
+                }
+                DirectorOfficeSharedContract.FULL_TEXT -> {
+                    orderedRoles.forEach { role ->
+                        val roleSections = orderedSections.filter { it.roleUid == role.uid }
+                        if (roleSections.isNotEmpty()) {
+                            val turnId = dao.insertTurn(DirectorTurnEntity(
+                                versionId = versionId, turnNumber = insertedCount + 1,
+                                sequenceIndex = insertedCount, title = role.title
+                            ))
+                            byRole[role.uid] = turnId
+                            dao.insertParticipant(DirectorParticipantEntity(
+                                turnId = turnId, roleUid = role.uid, roleTitle = role.title, isLead = true
+                            ))
+                            roleSections.forEachIndexed { index, section ->
+                                dao.insertTextSegment(DirectorTextSegmentEntity(
+                                    turnId = turnId, segmentIndex = index, text = section.content, sectionUid = section.uid
+                                ))
+                            }
+                            insertedCount++
+                        }
+                    }
+                    require(byRole.isNotEmpty()) { "متن کاملی برای نقش‌های این مجلس پیدا نشد." }
+                }
+                DirectorOfficeSharedContract.MANUAL, DirectorOfficeSharedContract.SELECTOR -> Unit
+            }
+            dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+        }
+        return DirectorOfficeBuildResult(byNumber.toMap(), byRole.toMap(), insertedCount)
+    }
+    /** ساخت یک نوبت متصل به نقش و بخش کتابخانه؛ داده منبع فقط خوانده می‌شود. */
+    suspend fun addRoleLinkedTurn(
+        dao: DirectorOfficeWorkspaceDao,
+        versionId: Long,
+        turnNumber: Int,
+        roleUid: String,
+        roleTitle: String,
+        text: String,
+        sectionUid: String? = null,
+        allowPublishedPlan: Boolean = false,
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
+    ) {
+        require(turnNumber > 0 && roleUid.isNotBlank() && roleTitle.isNotBlank() && text.isNotBlank()) {
+            "اطلاعات نقش یا نوبت معتبر نیست."
+        }
+        val version = dao.version(versionId) ?: error("نسخه دفتر پیدا نشد.")
+        val plan = dao.plan(version.planId) ?: error("دفتر پیدا نشد.")
+        require(version.status == DirectorPlanVersionEntity.STATUS_DRAFT) { "نسخه منتشرشده قابل ویرایش نیست." }
+        require(plan.status != DirectorPlanEntity.STATUS_ARCHIVED) { "دفتر بایگانی‌شده قابل ویرایش نیست." }
+        if (!allowPublishedPlan) {
+            require(plan.status != DirectorPlanEntity.STATUS_PUBLISHED) { "برای تغییر دفتر منتشرشده ابتدا نسخه پیش‌نویس جدید ایجاد کنید." }
+        }
+        val nextIndex = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(dao.turns(versionId))
+        transactionRunner.run {
+            val turnId = dao.insertTurn(DirectorTurnEntity(
+                versionId = versionId, turnNumber = turnNumber, sequenceIndex = nextIndex, title = roleTitle.trim()
+            ))
+            dao.insertParticipant(DirectorParticipantEntity(
+                turnId = turnId, roleUid = roleUid.trim(), roleTitle = roleTitle.trim(), isLead = true
+            ))
+            dao.insertTextSegment(DirectorTextSegmentEntity(
+                turnId = turnId, segmentIndex = 0, text = text.trim(), sectionUid = sectionUid
+            ))
+            dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+        }
+    }
     private suspend fun requireEditableTurn(dao: DirectorOfficeWorkspaceDao, turnId: Long): Pair<DirectorPlanEntity, DirectorPlanVersionEntity> {
         val turn = dao.turn(turnId) ?: error("نوبت دفتر پیدا نشد.")
         val version = dao.version(turn.versionId) ?: error("نسخه دفتر پیدا نشد.")
@@ -108,6 +247,41 @@ object DirectorOfficeWorkspaceOperations {
         dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = "personal-role-" + java.util.UUID.randomUUID(), roleTitle = title.trim(), isLead = true))
         dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = text.trim()))
         dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+
+    /** متن یکپارچه ویرایشگر Admin را با حفظ شناسه اولین قطعه ذخیره می‌کند. */
+    suspend fun replaceTurnText(dao: DirectorOfficeWorkspaceDao, turnId: Long, text: String) {
+        val (plan, _) = requireEditableTurn(dao, turnId)
+        val current = dao.textSegments(turnId).sortedBy { it.segmentIndex }
+        if (current.isEmpty()) {
+            dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = text.trim()))
+        } else {
+            dao.updateTextSegment(current.first().copy(segmentIndex = 0, text = text.trim()))
+            current.drop(1).forEach { dao.deleteTextSegment(it.id) }
+        }
+        dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    /** ترتیب نوبت‌ها را به شکل اتمیک از سوی فراخواننده جابه‌جا می‌کند؛ شاخص موقت منفی از برخورد unique جلوگیری می‌کند. */
+    suspend fun reorderTurns(
+        dao: DirectorOfficeWorkspaceDao,
+        orderedTurns: List<DirectorTurnEntity>,
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
+    ) {
+        require(orderedTurns.map { it.id }.distinct().size == orderedTurns.size) { "فهرست نوبت‌ها تکراری است." }
+        val first = orderedTurns.firstOrNull() ?: return
+        val version = dao.version(first.versionId) ?: error("نسخه دفتر پیدا نشد.")
+        val plan = dao.plan(version.planId) ?: error("دفتر پیدا نشد.")
+        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
+        require(orderedTurns.all { it.versionId == version.id }) { "ترتیب نوبت‌های چند نسخه قابل تغییر هم‌زمان نیست." }
+        val current = dao.turns(version.id)
+        require(orderedTurns.map { it.id }.toSet() == current.map { it.id }.toSet()) { "ترتیب باید شامل تمام نوبت‌های همان نسخه باشد." }
+        transactionRunner.run {
+            orderedTurns.forEachIndexed { index, turn -> dao.moveTurn(turn.id, -100000 - index) }
+            orderedTurns.forEachIndexed { index, turn -> dao.moveTurn(turn.id, index) }
+            dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+        }
     }
 
     suspend fun addParticipant(dao: DirectorOfficeWorkspaceDao, turnId: Long, roleUid: String, roleTitle: String, isLead: Boolean = false) {

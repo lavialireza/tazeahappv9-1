@@ -8,7 +8,7 @@ data class DirectorOfficeBuildMethod(
     val code: String,
     val label: String,
     val permission: String,
-    val requiresOfficialSource: Boolean,
+    val requiresLibrarySource: Boolean,
     val description: String
 )
 
@@ -45,3 +45,34 @@ object DirectorOfficeSharedContract {
         permissions["director.personal.create"] == true &&
             method(code)?.let { permissions[it.permission] == true } == true
 }
+/** ورودی استاندارد و مستقل از نوع دیتابیس برای ساخت نوبت‌ها از کتابخانه مجلس. */
+data class DirectorOfficeBuildRole(
+    val uid: String,
+    val title: String,
+    val orderIndex: Int = 0
+)
+
+data class DirectorOfficeBuildSection(
+    val uid: String,
+    val roleUid: String,
+    val content: String,
+    val orderIndex: Int = 0
+)
+
+/** نتیجه ساخت مشترک؛ برای اتصال راهنماهای صحنه به شناسه‌های تازه استفاده می‌شود. */
+data class DirectorOfficeBuildResult(
+    val turnIdsByNumber: Map<Int, Long>,
+    val turnIdsByRole: Map<String, Long>,
+    val insertedTurnCount: Int
+)
+
+
+/** یک گزینه دیالوگ برای روش انتخاب‌گر؛ مستقل از DAO و Flavor. */
+data class DirectorOfficeSelectorEntry(
+    val key: String,
+    val roleUid: String,
+    val roleTitle: String,
+    val sectionUid: String,
+    val sectionTitle: String,
+    val text: String
+)
