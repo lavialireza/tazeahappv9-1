@@ -167,16 +167,18 @@ private data class DirectorOfficeDialogueVisualLine(
 @Composable
 private fun DirectorOfficeDialogueParagraph(
     text: String,
-    lineSpacing: Float,
+    lineHeightDp: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
     onLineCount: (Int) -> Unit
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(modifier = modifier) {
         val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
         val bodyStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium
-        // فاصله خطوط از مقدار انتخاب‌شده در تنظیمات دفتر به‌صورت مستقیم بر هر سطر اعمال می‌شود.
+        // ارتفاع هر سطر به‌صورت قطعی در ظرف نمایشی اعمال می‌شود؛ lineHeight در Text تک‌سطره
+        // در بعضی نسخه‌های Compose ممکن است به‌تنهایی فضای عمودی قابل مشاهده ایجاد نکند.
+        // بنابراین فاصله واقعی بین سطرها با lineHeightDp کنترل می‌شود.
         val rtlStyle = bodyStyle.copy(
-            lineHeight = bodyStyle.fontSize * lineSpacing.coerceIn(1.1f, 2.6f),
+            lineHeight = bodyStyle.fontSize,
             textDirection = androidx.compose.ui.text.style.TextDirection.Rtl
         )
         val availableWidthPx = constraints.maxWidth.coerceAtLeast(1)
@@ -198,19 +200,30 @@ private fun DirectorOfficeDialogueParagraph(
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             visualLines.forEach { line ->
-                Text(
-                    text = line.text,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = rtlStyle,
-                    textAlign = if (line.centerAsOrphan) {
-                        androidx.compose.ui.text.style.TextAlign.Center
+                // هر سطر یک جایگاه با ارتفاع محاسبه‌شده دارد؛ با تغییر تنظیم فاصله خطوط،
+                // فاصله عمودی قابل مشاهده بین سطرها واقعاً تغییر می‌کند.
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier.fillMaxWidth().height(lineHeightDp),
+                    contentAlignment = if (line.centerAsOrphan) {
+                        androidx.compose.ui.Alignment.Center
                     } else {
-                        androidx.compose.ui.text.style.TextAlign.Right
-                    },
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Clip
-                )
+                        androidx.compose.ui.Alignment.CenterEnd
+                    }
+                ) {
+                    Text(
+                        text = line.text,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = rtlStyle,
+                        textAlign = if (line.centerAsOrphan) {
+                            androidx.compose.ui.text.style.TextAlign.Center
+                        } else {
+                            androidx.compose.ui.text.style.TextAlign.Right
+                        },
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Clip
+                    )
+                }
             }
         }
     }
@@ -316,8 +329,8 @@ fun DirectorOfficeTurnCard(
     var dialogueLineCounts by androidx.compose.runtime.remember(turn.id, segments) {
         androidx.compose.runtime.mutableStateOf(emptyMap<Long, Int>())
     }
-    // ارتفاع هر سطر با اندازه قلم و فاصله خطوط انتخاب‌شده در تنظیمات دفتر هماهنگ می‌شود.
-    // ارتفاع جداگانه برای هر قطعه متن محاسبه می‌شود تا یک متن کوتاه فضای متن دیگری را اشغال نکند.
+    // فاصله خطوط از تنظیمات دفتر به ارتفاع واقعی هر سطر و فضای اسکرول منتقل می‌شود.
+    // ارتفاع مستقل هر قطعه حفظ می‌شود تا متن کوتاه فضای متن دیگری را اشغال نکند.
     val bodyStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium
     val dialogueLineHeightSp = bodyStyle.fontSize.value * lineSpacing.coerceIn(1.1f, 2.6f)
     val dialogueLineHeightDp = (dialogueLineHeightSp * androidx.compose.ui.platform.LocalDensity.current.fontScale).dp
@@ -450,8 +463,8 @@ fun DirectorOfficeTurnCard(
                 Text(displayNotes, color = androidx.compose.material3.MaterialTheme.colorScheme.error, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
             }
 
-            // پوسته متن ثابت است؛ فقط محتوای هر قطعه دیالوگ اسکرول می‌شود.
-            // عنوان «متن دیالوگ» و دکمه‌های ویرایش/حذف هیچ‌وقت همراه متن از دید خارج نمی‌شوند.
+            // پوسته متن ثابت است؛ هر قطعه دیالوگ با ارتفاع مستقل نمایش داده می‌شود.
+            // دکمه‌های ویرایش/حذف بیرون از محدوده اسکرول متن می‌مانند.
             androidx.compose.material3.Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp),
@@ -462,11 +475,6 @@ fun DirectorOfficeTurnCard(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Text(
-                        "متن دیالوگ",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
-                    )
                     if (segments.isEmpty()) {
                         Text(
                             "برای این نوبت متنی ثبت نشده است.",
@@ -489,7 +497,7 @@ fun DirectorOfficeTurnCard(
                             ) {
                                 DirectorOfficeDialogueParagraph(
                                     text = segment.text,
-                                    lineSpacing = lineSpacing,
+                                    lineHeightDp = dialogueLineHeightDp,
                                     modifier = Modifier.fillMaxWidth(),
                                     onLineCount = { measuredLines ->
                                         if (dialogueLineCounts[segment.id] != measuredLines) {

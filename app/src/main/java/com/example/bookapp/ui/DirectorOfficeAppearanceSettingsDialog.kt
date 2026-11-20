@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -19,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.bookapp.ui.theme.FontChoiceLabels
 
 /** تنظیمات ظاهری مشترک دفتر؛ ذخیره‌سازی و مالکیت ترجیحات را هر Flavor تأمین می‌کند. */
@@ -84,9 +86,31 @@ fun DirectorOfficeAppearanceSettingsDialog(
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onResetSettings) { Text("بازگشت به تنظیمات قبلی") }
-                TextButton(onClick = onDismiss) { Text("بستن") }
+            // دکمه بازگشت به‌صورت فشرده در فضای موجود قرار می‌گیرد تا دکمه بستن
+            // در صفحه‌های باریک از محدوده پنجره تنظیمات بیرون نزند.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = onResetSettings,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        "بازگشت به تنظیمات قبلی",
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                ) {
+                    Text("بستن", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                }
             }
         }
     )
