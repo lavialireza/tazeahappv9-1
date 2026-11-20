@@ -40,9 +40,9 @@ class DirectorOfficeWorkspaceOperationsTest {
             dao,
             listOf(dao.turnRows.getValue(2), dao.turnRows.getValue(1)),
             transactionRunner = object : DirectorOfficeTransactionRunner {
-                override suspend fun run(block: suspend () -> Unit) {
+                override suspend fun <T> run(block: suspend () -> T): T {
                     transactionCalled = true
-                    block()
+                    return block()
                 }
             }
         )
