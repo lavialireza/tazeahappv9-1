@@ -188,6 +188,52 @@ object DirectorOfficeWorkspaceOperations {
         dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
     }
 
+    /**
+     * افزودن یک دیالوگ انتخاب‌شده از کتابخانه به نوبت؛ الگوریتم واحد برای Admin و Viewer.
+     * شناسه گروه پیوستگی از کلید گزینه انتخاب‌گر می‌آید تا دیالوگ‌های متعلق به همان منبع
+     * در صورت انتخاب مجدد قابل شناسایی باشند.
+     */
+    suspend fun addSelectorDialogue(
+        dao: DirectorOfficeWorkspaceDao,
+        planId: Long,
+        entry: DirectorOfficeSelectorEntry,
+        requestedTurnNumber: Int? = null,
+        requestedVersionId: Long? = null
+    ) {
+        require(entry.key.isNotBlank() && entry.roleUid.isNotBlank() && entry.roleTitle.isNotBlank() &&
+            entry.sectionUid.isNotBlank() && entry.text.isNotBlank()) {
+            "گزینه انتخاب‌شده برای ساخت نوبت معتبر نیست."
+        }
+        val plan = dao.plan(planId) ?: error("دفتر پیدا نشد.")
+        val version = if (requestedVersionId != null) {
+            dao.version(requestedVersionId) ?: error("نسخه انتخاب‌شده پیدا نشد.")
+        } else {
+            dao.versionsForPlan(planId).firstOrNull { it.status == DirectorPlanVersionEntity.STATUS_DRAFT }
+                ?: error("نسخه پیش‌نویس دفتر پیدا نشد.")
+        }
+        require(version.planId == planId) { "نسخه انتخابی متعلق به این دفتر نیست." }
+        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
+        val currentTurns = dao.turns(version.id)
+        val nextSequence = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(currentTurns)
+        val nextNumber = requestedTurnNumber ?: DirectorOfficeWorkspaceUseCases.nextTurnNumber(currentTurns)
+        require(nextNumber > 0) { "شماره نوبت باید بزرگ‌تر از صفر باشد." }
+        val title = entry.roleTitle.trim()
+        val turnId = dao.insertTurn(DirectorTurnEntity(
+            versionId = version.id,
+            turnNumber = nextNumber,
+            sequenceIndex = nextSequence,
+            title = title,
+            continuityGroupUid = entry.key
+        ))
+        dao.insertParticipant(DirectorParticipantEntity(
+            turnId = turnId, roleUid = entry.roleUid.trim(), roleTitle = title, isLead = true
+        ))
+        dao.insertTextSegment(DirectorTextSegmentEntity(
+            turnId = turnId, segmentIndex = 0, text = entry.text.trim(), sectionUid = entry.sectionUid
+        ))
+        dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+    }
+
     suspend fun updateStageCue(dao: DirectorOfficeWorkspaceDao, value: DirectorStageCueEntity) {
         val (plan, version) = requireEditableCue(dao, value.id)
         require(value.versionId == version.id && value.title.isNotBlank() && value.instruction.isNotBlank()) {
@@ -207,7 +253,8 @@ object DirectorOfficeWorkspaceOperations {
         instruction: String,
         turnId: Long? = null,
         cueType: String = DirectorStageCueEntity.CUE_OTHER,
-        blocksNextTurn: Boolean = cueType == DirectorStageCueEntity.CUE_IMMEDIATE
+        blocksNextTurn: Boolean = cueType == DirectorStageCueEntity.CUE_IMMEDIATE,
+        continuationRoleUid: String = ""
     ) {
         require(title.isNotBlank() && instruction.isNotBlank()) { "عنوان و متن راهنمای صحنه الزامی است." }
         val plan = dao.plan(planId) ?: error("دفتر پیدا نشد.")
@@ -225,7 +272,8 @@ object DirectorOfficeWorkspaceOperations {
         val order = (dao.stageCues(version.id).maxOfOrNull { it.orderIndex } ?: -1) + 1
         dao.insertStageCue(DirectorStageCueEntity(
             versionId = version.id, turnId = turnId, cueType = cueType, title = title.trim(),
-            instruction = instruction.trim(), orderIndex = order, blocksNextTurn = blocksNextTurn
+            instruction = instruction.trim(), orderIndex = order, blocksNextTurn = blocksNextTurn,
+            continuationRoleUid = continuationRoleUid
         ))
         dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
     }

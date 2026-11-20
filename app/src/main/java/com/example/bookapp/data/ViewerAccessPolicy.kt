@@ -109,6 +109,7 @@ object ViewerAccessPolicy {
         "director.personal.method.manual" to "دفتر شخصی: ساخت دستی",
         "director.personal.method.selector" to "دفتر شخصی: ساخت با انتخاب‌گر",
         "director.personal.edit" to "دفتر شخصی: ویرایش دیالوگ و راهنمای صحنه",
+        "director.source.import" to "دفتر معین‌البکاء: ورود فایل‌های منبع",
         "director.official.publish" to "دفتر معین‌البکا: انتشار رسمی (همیشه ممنوع در Viewer)",
         "director.copy" to "دفتر معین‌البکا: کپی (همیشه ممنوع در Viewer)",
         "director.export" to "دفتر معین‌البکا: خروجی گرفتن (همیشه ممنوع در Viewer)"
@@ -132,6 +133,11 @@ object ViewerAccessPolicy {
         "myRole.view" to "myRole", "myRole.select" to "myRole", "myRole.remove" to "myRole",
         "myRole.rehearse" to "myRole", "myRole.pdf" to "myRole",
         "dictionary.view" to "dictionary", "dictionary.add" to "dictionary", "dictionary.edit" to "dictionary", "dictionary.delete" to "dictionary",
+        "director.personal.method.number" to "director.personal.create",
+        "director.personal.method.fulltext" to "director.personal.create",
+        "director.personal.method.manual" to "director.personal.create",
+        "director.personal.method.selector" to "director.personal.create",
+        "director.source.import" to "director.personal.create",
         "taziehCorrections.view" to "taziehCorrections", "taziehCorrections.add" to "taziehCorrections",
         "taziehCorrections.edit" to "taziehCorrections", "taziehCorrections.delete" to "taziehCorrections", "taziehCorrections.apply" to "taziehCorrections",
         "calendar.view" to "calendar", "calendar.suggestions" to "calendar",
@@ -178,8 +184,6 @@ object ViewerAccessPolicy {
 
     fun defaultPermissions(): Map<String, Boolean> = permissionLabels.keys.associateWith { key ->
         key !in setOf("copy", "share", "pdf", "appIntro", "ai", "ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription",
-            "director.official.view", "director.personal.create", "director.personal.method.number", "director.personal.method.fulltext",
-            "director.personal.method.manual", "director.personal.method.selector", "director.personal.edit",
             "director.official.publish", "director.copy", "director.export")
     }
 
@@ -272,7 +276,8 @@ object ViewerAccessPolicy {
     }
 
     internal fun setImportedPublicPermissions(context: Context, permissions: Map<String, Boolean>, version: Int) {
-        val obj = JSONObject(); permissionLabels.keys.forEach { obj.put(it, permissions[it] == true) }
+        val effective = normalizedPermissions(permissions)
+        val obj = JSONObject(); permissionLabels.keys.forEach { obj.put(it, effective[it] == true) }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_IMPORTED_PUBLIC, obj.toString())
             .putInt(KEY_IMPORTED_PUBLIC_VERSION, version)
@@ -300,7 +305,7 @@ object ViewerAccessPolicy {
             installationId = id,
             profile = normalizedProfile,
             expiresAt = expiresAt,
-            permissions = permissions,
+            permissions = normalizedPermissions(permissions),
             displayName = existing?.displayName ?: "",
             details = existing?.details ?: "",
             phone = existing?.phone ?: "",
@@ -382,7 +387,10 @@ object ViewerAccessPolicy {
                 val id = o.optString("installationId").trim().uppercase(java.util.Locale.US)
                 if (id.isBlank()) return@mapNotNull null
                 val p = o.optJSONObject("permissions")
-                val perms = normalizedPermissions(permissionLabels.keys.associateWith { p?.optBoolean(it, false) ?: false })
+                val defaults = defaultPermissions()
+                val perms = normalizedPermissions(permissionLabels.keys.associateWith { key ->
+                    if (p?.has(key) == true) p.optBoolean(key, defaults[key] == true) else defaults[key] == true
+                })
                 SpecialUser(
                     installationId = id,
                     profile = o.optString("profile", PROFILE_CUSTOM),
@@ -430,7 +438,8 @@ object ViewerAccessPolicy {
             .put("lastPolicyAppliedAt", user.lastPolicyAppliedAt)
             .put("lastPolicyAppliedVersion", user.lastPolicyAppliedVersion)
             if (user.expiresAt == null) o.put("expiresAt", JSONObject.NULL) else o.put("expiresAt", user.expiresAt)
-            val p = JSONObject(); permissionLabels.keys.forEach { p.put(it, user.permissions[it] == true) }
+            val normalized = normalizedPermissions(user.permissions)
+            val p = JSONObject(); permissionLabels.keys.forEach { p.put(it, normalized[it] == true) }
             o.put("permissions", p); arr.put(o)
         }
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -483,17 +492,22 @@ object ViewerAccessPolicy {
             .put("lastPolicySentFingerprint", user.lastPolicySentFingerprint)
             .put("lastPolicySentVersion", user.lastPolicySentVersion)
         if (user.expiresAt == null) o.put("expiresAt", JSONObject.NULL) else o.put("expiresAt", user.expiresAt)
-        val p = JSONObject(); permissionLabels.keys.forEach { p.put(it, user.permissions[it] == true) }; o.put("permissions", p)
+        val normalized = normalizedPermissions(user.permissions)
+        val p = JSONObject(); permissionLabels.keys.forEach { p.put(it, normalized[it] == true) }; o.put("permissions", p)
         return o
     }
 
     private fun jsonToSpecialUser(o: JSONObject): SpecialUser {
         val pp = o.optJSONObject("permissions")
+        val defaults = defaultPermissions()
+        val storedPermissions = normalizedPermissions(permissionLabels.keys.associateWith { key ->
+            if (pp?.has(key) == true) pp.optBoolean(key, defaults[key] == true) else defaults[key] == true
+        })
         return SpecialUser(
             installationId = o.optString("installationId").trim().uppercase(Locale.US),
             profile = o.optString("profile", PROFILE_CUSTOM),
             expiresAt = if (o.isNull("expiresAt")) null else o.optLong("expiresAt"),
-            permissions = permissionLabels.keys.associateWith { k -> pp?.optBoolean(k, false) ?: false },
+            permissions = storedPermissions,
             displayName = o.optString("displayName"), details = o.optString("details"), phone = o.optString("phone"),
             address = o.optString("address"), position = o.optString("position"), userType = o.optString("userType"),
             otherDetails = o.optString("otherDetails"), enabled = o.optBoolean("enabled", true),

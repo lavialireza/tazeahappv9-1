@@ -67,7 +67,12 @@ object ViewerAccessTransfer {
         val expiresAt = if (payload.isNull("expiresAt")) null else payload.optLong("expiresAt")
         require(expiresAt == null || expiresAt <= 0L || System.currentTimeMillis() <= expiresAt) { "تاریخ اعتبار این سیاست گذشته است." }
         val p = payload.getJSONObject("permissions")
-        val rawPermissions = ViewerAccessPolicy.permissionLabels.keys.associateWith { p.optBoolean(it, false) }.toMutableMap()
+        val defaults = ViewerAccessPolicy.defaultPermissions()
+        // Missing keys in older signed policy files inherit today's defaults. Only an
+        // explicit false in the signed file disables a newly available Director Office action.
+        val rawPermissions = ViewerAccessPolicy.permissionLabels.keys.associateWith { key ->
+            if (p.has(key)) p.optBoolean(key, false) else defaults[key] == true
+        }.toMutableMap()
         // سازگاری با سیاست‌های Stage53 که از کلید قدیمی footnoteSync استفاده می‌کردند.
         if (!p.has("footnoteSync.dictionary") && p.has("footnoteSync")) {
             rawPermissions["footnoteSync"] = p.optBoolean("footnoteSync", false)
