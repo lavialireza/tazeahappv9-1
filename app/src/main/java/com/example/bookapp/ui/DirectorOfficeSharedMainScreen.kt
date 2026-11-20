@@ -202,7 +202,7 @@ internal suspend fun importExistingTaziehText(
                     sequenceIndex = sequence++,
                     turnType = if (distinctRoles.size > 1) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
                     title = if (distinctRoles.size > 1) distinctRoles.joinToString("، ") { it.title } else distinctRoles.first().title,
-                    notes = if (group.any { !it.verified }) "ترتیب این نوبت از ترتیب داخلی بخش‌ها/گفت‌وگو گرفته شده و ترتیب تاریخی آن تأیید نشده است." else ""
+                    notes = "" // پیام فنی ترتیب داخلی نباید به‌عنوان یادداشت نوبت به کاربر نمایش داده شود.
                 )
             )
             distinctRoles.forEachIndexed { index, role ->
@@ -362,6 +362,7 @@ fun DirectorOfficeSharedMainScreen(
     var selectorTurnNumber by remember { mutableStateOf("1") }
     var selectedDialogueKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var turnSearch by remember { mutableStateOf("") }
+    var showTurnSearchField by remember { mutableStateOf(false) }
     var selectedSearchResultIndex by remember { mutableIntStateOf(0) }
     var turnSearchCorpus by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var showOfficeSettingsDialog by remember { mutableStateOf(false) }
@@ -389,7 +390,7 @@ fun DirectorOfficeSharedMainScreen(
             withFrameNanos { }
             val trailingItems = (if (busy) 1 else 0) + (if (message != null) 1 else 0)
             val sharedGlobalCueItem = if (workspaceState?.stageCues?.any { it.turnId == null } == true) 1 else 0
-            // The shared workspace contributes a title, a search row, and optionally one global-cue row.
+            // Search is hosted in the shared top bar; the workspace contributes its title and optional global-cue row.
             val firstTurnItemIndex = (
                 turnListState.layoutInfo.totalItemsCount - visibleTurns.size - trailingItems - sharedGlobalCueItem
             ).coerceAtLeast(0)
@@ -669,8 +670,73 @@ fun DirectorOfficeSharedMainScreen(
             IconButton(onClick = { showOfficeSettingsDialog = true }) {
                 Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر")
             }
+            IconButton(onClick = {
+                if (showTurnSearchField) {
+                    showTurnSearchField = false
+                    turnSearch = ""
+                    selectedSearchResultIndex = 0
+                } else {
+                    showTurnSearchField = true
+                }
+            }) {
+                Icon(
+                    if (showTurnSearchField) Icons.Default.Close else Icons.Default.Search,
+                    contentDescription = if (showTurnSearchField) "بستن جستجو" else "جستجو در دفتر"
+                )
+            }
             IconButton(onClick = { refresh++ }) {
                 Icon(Icons.Default.Refresh, contentDescription = "بروزرسانی")
+            }
+        },
+        topBarContent = {
+            if (showTurnSearchField) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        DirectorOfficeSearchField(
+                            value = turnSearch,
+                            onValueChange = { turnSearch = it },
+                            label = "جستجو در شماره، نقش و متن دیالوگ",
+                            modifier = Modifier.weight(1f),
+                            showSearchIcon = true
+                        )
+                        IconButton(onClick = {
+                            showTurnSearchField = false
+                            turnSearch = ""
+                            selectedSearchResultIndex = 0
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "بستن جستجو")
+                        }
+                    }
+                    if (turnSearch.isNotBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                if (visibleTurns.isEmpty()) "۰ نتیجه" else "${toPersianOfficeDigits((selectedSearchResultIndex + 1).coerceAtMost(visibleTurns.size).toString())} از ${toPersianOfficeDigits(visibleTurns.size.toString())}",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            TextButton(
+                                enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex > 0,
+                                onClick = { selectedSearchResultIndex = (selectedSearchResultIndex - 1).coerceAtLeast(0) }
+                            ) { Text("نتیجه قبلی") }
+                            TextButton(
+                                enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex < visibleTurns.lastIndex,
+                                onClick = { selectedSearchResultIndex = (selectedSearchResultIndex + 1).coerceAtMost(visibleTurns.lastIndex) }
+                            ) { Text("نتیجه بعدی") }
+                        }
+                    }
+                }
             }
         },
         listState = turnListState
@@ -1214,7 +1280,8 @@ fun DirectorOfficeSharedMainScreen(
                     workspace = workspaceState,
                     query = turnSearch,
                     onQueryChange = { turnSearch = it },
-                    showSearchField = true,
+                    // فیلد جستجوی نوبت‌ها در نوار بالای صفحه و کنار تنظیمات باز می‌شود.
+                    showSearchField = false,
                     searchLabel = "جستجو در شماره، نقش و متن دیالوگ",
                     listTitle = "نوبت‌های ثبت‌شده",
                     emptyMessage = "برای این نسخه هنوز نوبتی ثبت نشده است.",

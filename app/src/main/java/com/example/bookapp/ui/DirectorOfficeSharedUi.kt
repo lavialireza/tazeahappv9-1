@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -196,6 +197,22 @@ fun DirectorOfficeTurnCard(
     var showStageCues by androidx.compose.runtime.remember(turn.id, collapseStageCues) {
         androidx.compose.runtime.mutableStateOf(!collapseStageCues)
     }
+    var dialogueLineCounts by androidx.compose.runtime.remember(turn.id, segments) {
+        androidx.compose.runtime.mutableStateOf(emptyMap<Long, Int>())
+    }
+    val measuredDialogueLines = if (segments.isEmpty()) 1 else {
+        segments.sumOf { segment -> dialogueLineCounts[segment.id] ?: 1 }
+    }.coerceAtLeast(1)
+    val visibleDialogueLines = measuredDialogueLines.coerceIn(1, 4)
+    // ارتفاع هر سطر با اندازه قلم و فاصله خطوط انتخاب‌شده در تنظیمات دفتر هماهنگ می‌شود.
+    val configuredLineHeightSp = androidx.compose.material3.MaterialTheme.typography.bodyMedium.lineHeight.value
+    val fallbackLineHeightSp = androidx.compose.material3.MaterialTheme.typography.bodyMedium.fontSize.value * 1.35f
+    val dialogueLineHeightDp = (
+        (if (configuredLineHeightSp.isFinite()) configuredLineHeightSp else fallbackLineHeightSp) *
+            androidx.compose.ui.platform.LocalDensity.current.fontScale
+        ).dp
+    // فضای ثابت عنوان/دکمه‌ها به‌علاوه ۱ تا ۴ سطر؛ محتوای بیشتر داخل کادر پیمایش می‌شود.
+    val dialogueViewportHeight = 80.dp + dialogueLineHeightDp * visibleDialogueLines.toFloat()
     val roleLabel = participants.sortedBy { it.orderIndex }.joinToString("، ") { participant ->
         if (participant.isLead) "★ ${participant.roleTitle}" else participant.roleTitle
     }
@@ -222,12 +239,30 @@ fun DirectorOfficeTurnCard(
                         style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                     )
-                    if (roleLabel.isNotBlank()) {
-                        Text(
-                            "نقش‌ها: $roleLabel",
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                            color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        if (roleLabel.isNotBlank()) {
+                            Text(
+                                "نقش‌ها: $roleLabel",
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
+                            )
+                        } else {
+                            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                        }
+                        if (totalTurns > 0) {
+                            Text(
+                                "جایگاه اجرا ${toPersianOfficeDigits((position + 1).coerceAtLeast(1).toString())} از ${toPersianOfficeDigits(totalTurns.toString())}",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
+                            )
+                        }
                     }
                 }
                 if (editable && onSaveNumber != null) {
@@ -259,13 +294,6 @@ fun DirectorOfficeTurnCard(
                 }
             }
 
-            if (totalTurns > 0) {
-                Text(
-                    "جایگاه اجرا ${toPersianOfficeDigits((position + 1).coerceAtLeast(1).toString())} از ${toPersianOfficeDigits(totalTurns.toString())}",
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
-                )
-            }
 
             if (editable && (onEditTurn != null || onAddDialogue != null || onManageParticipants != null || onDeleteTurn != null)) {
                 Row(
@@ -307,13 +335,16 @@ fun DirectorOfficeTurnCard(
                 }
             }
 
-            if (turn.notes.isNotBlank()) {
-                Text(turn.notes, color = androidx.compose.material3.MaterialTheme.colorScheme.error, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+            val displayNotes = turn.notes.takeUnless {
+                it.startsWith("ترتیب این نوبت از ترتیب داخلی")
+            }.orEmpty()
+            if (displayNotes.isNotBlank()) {
+                Text(displayNotes, color = androidx.compose.material3.MaterialTheme.colorScheme.error, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
             }
 
-            // متن دیالوگ در یک کادر با ارتفاع ثابت نمایش داده می‌شود؛ پیمایش فقط داخل همین کادر است.
+            // ارتفاع کادر متناسب با ۱ تا ۴ سطر متن تنظیم می‌شود؛ متن بلندتر با پیمایش داخلی نمایش داده می‌شود.
             androidx.compose.material3.Surface(
-                modifier = Modifier.fillMaxWidth().height(176.dp).verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().height(dialogueViewportHeight).verticalScroll(rememberScrollState()),
                 shape = RoundedCornerShape(10.dp),
                 color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
                 tonalElevation = 1.dp
@@ -343,7 +374,13 @@ fun DirectorOfficeTurnCard(
                             Text(
                                 segment.text,
                                 modifier = Modifier.weight(1f),
-                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                onTextLayout = { layoutResult: TextLayoutResult ->
+                                    val measuredLines = layoutResult.lineCount.coerceAtLeast(1)
+                                    if (dialogueLineCounts[segment.id] != measuredLines) {
+                                        dialogueLineCounts = dialogueLineCounts + (segment.id to measuredLines)
+                                    }
+                                }
                             )
                             if (editable) {
                                 onEditSegment?.let { action ->
