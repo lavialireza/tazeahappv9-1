@@ -371,9 +371,9 @@ fun DirectorOfficeSharedMainScreen(
     val officeTypography = remember(fontChoice, fontScale, officeLineSpacing) {
         val base = typographyFor(fontChoice, fontScale)
         base.copy(
-            bodyLarge = base.bodyLarge.copy(lineHeight = base.bodyLarge.fontSize * officeLineSpacing),
-            bodyMedium = base.bodyMedium.copy(lineHeight = base.bodyMedium.fontSize * officeLineSpacing),
-            bodySmall = base.bodySmall.copy(lineHeight = base.bodySmall.fontSize * officeLineSpacing)
+            bodyLarge = base.bodyLarge.copy(lineHeight = base.bodyLarge.fontSize * officeLineSpacing.coerceIn(1.1f, 2.6f)),
+            bodyMedium = base.bodyMedium.copy(lineHeight = base.bodyMedium.fontSize * officeLineSpacing.coerceIn(1.1f, 2.6f)),
+            bodySmall = base.bodySmall.copy(lineHeight = base.bodySmall.fontSize * officeLineSpacing.coerceIn(1.1f, 2.6f))
         )
     }
     val visibleTurns = remember(turns, turnSearch, turnSearchCorpus) {
@@ -1285,6 +1285,7 @@ fun DirectorOfficeSharedMainScreen(
                     searchLabel = "جستجو در شماره، نقش و متن دیالوگ",
                     listTitle = "نوبت‌های ثبت‌شده",
                     emptyMessage = "برای این نسخه هنوز نوبتی ثبت نشده است.",
+                    lineSpacing = officeLineSpacing,
                     searchResultIndex = selectedSearchResultIndex,
                     onPreviousSearchResult = { selectedSearchResultIndex = (selectedSearchResultIndex - 1).coerceAtLeast(0) },
                     onNextSearchResult = { selectedSearchResultIndex = (selectedSearchResultIndex + 1).coerceAtMost((visibleTurns.size - 1).coerceAtLeast(0)) },
@@ -1642,8 +1643,6 @@ fun DirectorOfficeSharedMainScreen(
         DirectorOfficeAppearanceSettingsDialog(
             darkMode = darkMode,
             onDarkModeChange = onDarkModeChange,
-            autoDarkMode = autoDarkMode,
-            onAutoDarkModeChange = onAutoDarkModeChange,
             fontScale = fontScale,
             onFontScaleChange = onFontScaleChange,
             lineSpacing = officeLineSpacing,
@@ -1654,6 +1653,16 @@ fun DirectorOfficeSharedMainScreen(
             onThemeChoiceChange = onThemeChoiceChange,
             keepScreenOn = keepScreenOn,
             onKeepScreenOnChange = onKeepScreenOnChange,
+            onResetSettings = {
+                onDarkModeChange(false)
+                onAutoDarkModeChange(false)
+                onFontScaleChange(1.0f)
+                officeLineSpacing = 1.4f
+                Prefs.setLineSpacing(context, 1.4f)
+                onFontChoiceChange("titr")
+                onThemeChoiceChange("default")
+                onKeepScreenOnChange(true)
+            },
             onDismiss = { showOfficeSettingsDialog = false }
         )
     }
@@ -2015,6 +2024,7 @@ fun LazyListScope.directorOfficeSharedWorkspaceItems(
     searchLabel: String = "جستجو در شماره، نقش و متن دیالوگ",
     listTitle: String = "نوبت‌های دفتر",
     emptyMessage: String = "برای این دفتر هنوز نوبتی ثبت نشده است.",
+    lineSpacing: Float = 1.4f,
     searchResultIndex: Int? = null,
     onPreviousSearchResult: (() -> Unit)? = null,
     onNextSearchResult: (() -> Unit)? = null,
@@ -2072,6 +2082,7 @@ fun LazyListScope.directorOfficeSharedWorkspaceItems(
             turn = turn,
             position = position,
             totalTurns = turns.size,
+            lineSpacing = lineSpacing,
             participants = actions.participants ?: workspace.participantsByTurn[turn.id].orEmpty(),
             segments = actions.segments ?: workspace.textSegmentsByTurn[turn.id].orEmpty(),
             stageCues = actions.stageCues ?: cuesByTurn[turn.id].orEmpty(),

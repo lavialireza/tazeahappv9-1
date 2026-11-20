@@ -167,12 +167,16 @@ private data class DirectorOfficeDialogueVisualLine(
 @Composable
 private fun DirectorOfficeDialogueParagraph(
     text: String,
+    lineSpacing: Float,
     modifier: Modifier = Modifier,
     onLineCount: (Int) -> Unit
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(modifier = modifier) {
         val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
-        val rtlStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
+        val bodyStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+        // فاصله خطوط از مقدار انتخاب‌شده در تنظیمات دفتر به‌صورت مستقیم بر هر سطر اعمال می‌شود.
+        val rtlStyle = bodyStyle.copy(
+            lineHeight = bodyStyle.fontSize * lineSpacing.coerceIn(1.1f, 2.6f),
             textDirection = androidx.compose.ui.text.style.TextDirection.Rtl
         )
         val availableWidthPx = constraints.maxWidth.coerceAtLeast(1)
@@ -274,6 +278,7 @@ fun DirectorOfficeTurnCard(
     turn: com.example.bookapp.data.DirectorTurnEntity,
     position: Int,
     totalTurns: Int,
+    lineSpacing: Float = 1.4f,
     participants: List<com.example.bookapp.data.DirectorParticipantEntity>,
     segments: List<com.example.bookapp.data.DirectorTextSegmentEntity>,
     stageCues: List<com.example.bookapp.data.DirectorStageCueEntity>,
@@ -313,12 +318,9 @@ fun DirectorOfficeTurnCard(
     }
     // ارتفاع هر سطر با اندازه قلم و فاصله خطوط انتخاب‌شده در تنظیمات دفتر هماهنگ می‌شود.
     // ارتفاع جداگانه برای هر قطعه متن محاسبه می‌شود تا یک متن کوتاه فضای متن دیگری را اشغال نکند.
-    val configuredLineHeightSp = androidx.compose.material3.MaterialTheme.typography.bodyMedium.lineHeight.value
-    val fallbackLineHeightSp = androidx.compose.material3.MaterialTheme.typography.bodyMedium.fontSize.value * 1.35f
-    val dialogueLineHeightDp = (
-        (if (configuredLineHeightSp.isFinite() && configuredLineHeightSp > 0f) configuredLineHeightSp else fallbackLineHeightSp) *
-            androidx.compose.ui.platform.LocalDensity.current.fontScale
-        ).dp
+    val bodyStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+    val dialogueLineHeightSp = bodyStyle.fontSize.value * lineSpacing.coerceIn(1.1f, 2.6f)
+    val dialogueLineHeightDp = (dialogueLineHeightSp * androidx.compose.ui.platform.LocalDensity.current.fontScale).dp
     val roleLabel = participants.sortedBy { it.orderIndex }.joinToString("، ") { participant ->
         if (participant.isLead) "★ ${participant.roleTitle}" else participant.roleTitle
     }
@@ -487,6 +489,7 @@ fun DirectorOfficeTurnCard(
                             ) {
                                 DirectorOfficeDialogueParagraph(
                                     text = segment.text,
+                                    lineSpacing = lineSpacing,
                                     modifier = Modifier.fillMaxWidth(),
                                     onLineCount = { measuredLines ->
                                         if (dialogueLineCounts[segment.id] != measuredLines) {

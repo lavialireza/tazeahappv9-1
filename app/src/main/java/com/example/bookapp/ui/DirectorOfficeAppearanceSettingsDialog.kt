@@ -20,15 +20,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.bookapp.ui.theme.FontChoiceLabels
-import com.example.bookapp.data.Prefs
 
 /** تنظیمات ظاهری مشترک دفتر؛ ذخیره‌سازی و مالکیت ترجیحات را هر Flavor تأمین می‌کند. */
 @Composable
 fun DirectorOfficeAppearanceSettingsDialog(
     darkMode: Boolean,
     onDarkModeChange: (Boolean) -> Unit,
-    autoDarkMode: Boolean,
-    onAutoDarkModeChange: (Boolean) -> Unit,
     fontScale: Float,
     onFontScaleChange: (Float) -> Unit,
     lineSpacing: Float,
@@ -39,6 +36,7 @@ fun DirectorOfficeAppearanceSettingsDialog(
     onThemeChoiceChange: (String) -> Unit,
     keepScreenOn: Boolean,
     onKeepScreenOnChange: (Boolean) -> Unit,
+    onResetSettings: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -49,27 +47,27 @@ fun DirectorOfficeAppearanceSettingsDialog(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("حالت شب")
-                    Switch(checked = darkMode, onCheckedChange = {
-                        onDarkModeChange(it)
-                        if (autoDarkMode) onAutoDarkModeChange(false)
-                    })
-                }
+                // گزینه روشن ماندن صفحه در ابتدای تنظیمات قرار دارد تا هنگام مطالعه سریع در دسترس باشد.
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("تغییر خودکار روز و شب")
-                        Text("بر اساس ساعت دستگاه")
+                        Text("روشن ماندن صفحه")
+                        Text("هنگام کار با دفتر، صفحه خاموش نشود")
                     }
-                    Switch(checked = autoDarkMode, onCheckedChange = { enabled ->
-                        onAutoDarkModeChange(enabled)
-                        if (enabled) onDarkModeChange(Prefs.isNightTimeNow())
-                    })
+                    Switch(checked = keepScreenOn, onCheckedChange = onKeepScreenOnChange)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("حالت شب")
+                    Switch(checked = darkMode, onCheckedChange = onDarkModeChange)
                 }
                 Text("اندازه نوشته: ${(fontScale * 100).toInt()}٪")
                 Slider(value = fontScale.coerceIn(0.8f, 2f), onValueChange = onFontScaleChange, valueRange = 0.8f..2f, steps = 11)
                 Text("فاصله خطوط: ${"%.1f".format(lineSpacing)}")
-                Slider(value = lineSpacing.coerceIn(1.1f, 1.8f), onValueChange = onLineSpacingChange, valueRange = 1.1f..1.8f, steps = 2)
+                Slider(
+                    value = lineSpacing.coerceIn(1.1f, 2.6f),
+                    onValueChange = onLineSpacingChange,
+                    valueRange = 1.1f..2.6f,
+                    steps = 14
+                )
                 Text("نوع قلم")
                 FontChoiceLabels.forEach { (key, label) ->
                     Row(Modifier.fillMaxWidth().clickable { onFontChoiceChange(key) }, verticalAlignment = Alignment.CenterVertically) {
@@ -83,15 +81,13 @@ fun DirectorOfficeAppearanceSettingsDialog(
                         FilterChip(selected = themeChoice == key, onClick = { onThemeChoiceChange(key) }, label = { Text(label) })
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("روشن ماندن صفحه")
-                        Text("هنگام کار با دفتر، صفحه خاموش نشود")
-                    }
-                    Switch(checked = keepScreenOn, onCheckedChange = onKeepScreenOnChange)
-                }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("بستن") } }
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onResetSettings) { Text("بازگشت به تنظیمات قبلی") }
+                TextButton(onClick = onDismiss) { Text("بستن") }
+            }
+        }
     )
 }
