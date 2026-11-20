@@ -75,7 +75,7 @@ fun interface DirectorOfficeSourceImporter {
     suspend fun import(context: Context, uri: Uri, planId: Long): DirectorSourceFileEntity
 }
 
-private data class DirectorSelectorItem(
+internal data class DirectorSelectorItem(
     val key: String,
     val section: SectionEntity,
     val role: RoleEntity,
@@ -83,7 +83,7 @@ private data class DirectorSelectorItem(
 )
 
 
-private data class DirectorLibraryImportResult(
+internal data class DirectorLibraryImportResult(
     val roleCount: Int,
     val sectionCount: Int,
     val turnCount: Int,
@@ -1245,7 +1245,7 @@ fun DirectorOfficeSharedMainScreen(
                         }
 
                         DirectorOfficeSharedTurnActions(
-                            editable = !workspaceState.isReadOnly && (isAdmin || canEditPersonal),
+                            editable = workspaceState?.isReadOnly != true && (isAdmin || canEditPersonal),
                             participants = participantsState.value,
                             segments = segmentsState.value,
                             stageCues = turnStageCues,
