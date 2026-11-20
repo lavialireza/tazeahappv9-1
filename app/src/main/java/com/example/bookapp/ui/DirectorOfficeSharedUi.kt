@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.padding
@@ -366,15 +367,19 @@ fun DirectorOfficeTurnCard(
                         )
                     }
                     segments.sortedBy { it.segmentIndex }.forEach { segment ->
-                        Row(
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = androidx.compose.ui.Alignment.Top
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
+                            // متن دیالوگ تمام عرض کادر را می‌گیرد؛ دکمه‌ها دیگر عرض متن را محدود نمی‌کنند.
+                            // این کار از شکستن زودهنگام سطرها به‌دلیل فضای اشغال‌شده آیکون‌ها جلوگیری می‌کند.
                             Text(
-                                segment.text,
-                                modifier = Modifier.weight(1f),
-                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                text = segment.text,
+                                modifier = Modifier.fillMaxWidth(),
+                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
+                                    textDirection = androidx.compose.ui.text.style.TextDirection.ContentOrRtl
+                                ),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.End,
                                 onTextLayout = { layoutResult: TextLayoutResult ->
                                     val measuredLines = layoutResult.lineCount.coerceAtLeast(1)
                                     if (dialogueLineCounts[segment.id] != measuredLines) {
@@ -382,15 +387,36 @@ fun DirectorOfficeTurnCard(
                                     }
                                 }
                             )
-                            if (editable) {
-                                onEditSegment?.let { action ->
-                                    androidx.compose.material3.IconButton(onClick = { action(segment) }) {
-                                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "ویرایش دیالوگ")
+                            if (editable && (onEditSegment != null || onDeleteSegment != null)) {
+                                // کنترل‌های ویرایش در ردیفی مستقل و زیر متن قرار می‌گیرند تا عرض متن کامل بماند.
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                                ) {
+                                    onEditSegment?.let { action ->
+                                        androidx.compose.material3.IconButton(
+                                            onClick = { action(segment) },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            androidx.compose.material3.Icon(
+                                                androidx.compose.material.icons.Icons.Default.Edit,
+                                                contentDescription = "ویرایش دیالوگ",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
-                                }
-                                onDeleteSegment?.let { action ->
-                                    androidx.compose.material3.IconButton(onClick = { action(segment) }) {
-                                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, contentDescription = "حذف دیالوگ")
+                                    onDeleteSegment?.let { action ->
+                                        androidx.compose.material3.IconButton(
+                                            onClick = { action(segment) },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            androidx.compose.material3.Icon(
+                                                androidx.compose.material.icons.Icons.Default.Delete,
+                                                contentDescription = "حذف دیالوگ",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
