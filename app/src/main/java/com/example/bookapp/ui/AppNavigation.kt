@@ -346,12 +346,6 @@ fun AppNavigation(
                 showGlossary = featureEnabled("dictionary.view"),
                 showGallery = featureEnabled("gallery.view"),
                 showCompare = featureEnabled("compare.view"),
-                onOpenDirectorOffice = when {
-                    !publicViewer -> ({ navController.navigate("director_office") })
-                    featureEnabled("director.official.view") || featureEnabled("director.personal.create") || featureEnabled("director.personal.edit") -> ({ navController.navigate("viewer_director_office") })
-                    else -> null
-                },
-                directorOfficeDescription = if (publicViewer) "مشاهده دفتر رسمی و مدیریت دفتر شخصی با اجازه مدیر" else "تنظیم نوبت‌ها، ترتیب اجرا و علائم صحنه",
                 onBack = { navController.popBackStack() }
             )
         }
