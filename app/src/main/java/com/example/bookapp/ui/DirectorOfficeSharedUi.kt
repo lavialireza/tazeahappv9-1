@@ -277,41 +277,40 @@ fun DirectorOfficeTurnCard(
                 Text("نقش‌ها: $roleLabel", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.secondary)
             }
 
+            if (segments.isEmpty()) {
+                Text("برای این نوبت متنی ثبت نشده است.", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            segments.sortedBy { it.segmentIndex }.forEach { segment ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.Top
+                ) {
+                    Text(segment.text, modifier = Modifier.weight(1f), style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
+                    if (editable) {
+                        onEditSegment?.let { action ->
+                            androidx.compose.material3.IconButton(onClick = { action(segment) }) {
+                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "ویرایش دیالوگ")
+                            }
+                        }
+                        onDeleteSegment?.let { action ->
+                            androidx.compose.material3.IconButton(onClick = { action(segment) }) {
+                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, contentDescription = "حذف دیالوگ")
+                            }
+                        }
+                    }
+                }
+            }
             if (inlineEditorText != null && editable && onInlineEditorTextChange != null) {
                 OutlinedTextField(
                     value = inlineEditorText,
                     onValueChange = onInlineEditorTextChange,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp),
                     minLines = 3,
-                    label = { Text("متن دیالوگ این نوبت") }
+                    label = { Text("ویرایش یکجای متن دیالوگ") }
                 )
                 onSaveInlineEditor?.let { action ->
                     androidx.compose.material3.TextButton(onClick = action) { Text("ذخیره متن دیالوگ") }
-                }
-            } else {
-                if (segments.isEmpty()) {
-                    Text("برای این نوبت متنی ثبت نشده است.", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                segments.sortedBy { it.segmentIndex }.forEach { segment ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.Top
-                    ) {
-                        Text(segment.text, modifier = Modifier.weight(1f), style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
-                        if (editable) {
-                            onEditSegment?.let { action ->
-                                androidx.compose.material3.IconButton(onClick = { action(segment) }) {
-                                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "ویرایش دیالوگ")
-                                }
-                            }
-                            onDeleteSegment?.let { action ->
-                                androidx.compose.material3.IconButton(onClick = { action(segment) }) {
-                                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, contentDescription = "حذف دیالوگ")
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
@@ -359,14 +358,15 @@ fun DirectorOfficeBuildMethodOption(
     selected: Boolean,
     onClick: () -> Unit,
     orderLabel: String? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Row(
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
     ) {
-        androidx.compose.material3.RadioButton(selected = selected, onClick = onClick)
+        androidx.compose.material3.RadioButton(selected = selected, onClick = onClick, enabled = enabled)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("${orderLabel.orEmpty()}${if (orderLabel.isNullOrBlank()) "" else " "}${method.label}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
             Text(method.description, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
