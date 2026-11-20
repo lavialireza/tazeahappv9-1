@@ -1964,14 +1964,7 @@ fun LazyListScope.directorOfficeSharedWorkspaceItems(
     )
     val cuesByTurn = workspace.stageCues.filter { it.turnId != null }.groupBy { it.turnId }
 
-    item(key = "director-shared-workspace-title") {
-        Text(
-            text = "$listTitle (${turns.size})" + if (query.isNotBlank()) " • نتایج: ${visibleTurns.size}" else "",
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
-            style = MaterialTheme.typography.titleMedium
-        )
-    }
-
+    // کادر جستجو در بالای فهرست قرار می‌گیرد تا مانند نسخه قبلی همیشه در دسترس باشد.
     if (showSearchField) {
         item(key = "director-shared-workspace-search") {
             ColumnSearchContent(
@@ -1984,6 +1977,14 @@ fun LazyListScope.directorOfficeSharedWorkspaceItems(
                 onNext = onNextSearchResult
             )
         }
+    }
+
+    item(key = "director-shared-workspace-title") {
+        Text(
+            text = "$listTitle (${turns.size})" + if (query.isNotBlank()) " • نتایج: ${visibleTurns.size}" else "",
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+            style = MaterialTheme.typography.titleMedium
+        )
     }
 
     if (visibleTurns.isEmpty()) {
@@ -2054,7 +2055,7 @@ private fun ColumnSearchContent(
             value = query,
             onValueChange = onQueryChange,
             label = searchLabel,
-            showSearchIcon = false
+            showSearchIcon = true
         )
         if (query.isNotBlank() && resultIndex != null && onPrevious != null && onNext != null) {
             Row(

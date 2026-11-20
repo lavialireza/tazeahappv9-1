@@ -7,6 +7,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -184,6 +189,9 @@ fun DirectorOfficeTurnCard(
     var numberDraft by androidx.compose.runtime.remember(turn.id, turn.turnNumber) {
         androidx.compose.runtime.mutableStateOf(turn.turnNumber.toString())
     }
+    var showInlineEditor by androidx.compose.runtime.remember(turn.id) {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
     var showStageCues by androidx.compose.runtime.remember(turn.id, collapseStageCues) {
         androidx.compose.runtime.mutableStateOf(!collapseStageCues)
     }
@@ -201,18 +209,69 @@ fun DirectorOfficeTurnCard(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
+            // شماره نوبت در سربرگ و کنار عنوان نقش قرار می‌گیرد؛ دیگر یک کادر بزرگ جداگانه نیست.
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = turn.title + if (turn.turnType == com.example.bookapp.data.DirectorTurnEntity.TYPE_COLLECTIVE) " • جمعی" else "",
+                        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                    )
+                    if (roleLabel.isNotBlank()) {
+                        Text(
+                            "نقش‌ها: $roleLabel",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                }
+                if (editable && onSaveNumber != null) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = numberDraft,
+                        onValueChange = { numberDraft = it.filter(Char::isDigit).take(6) },
+                        modifier = Modifier.width(82.dp).height(56.dp),
+                        label = { Text("شماره", style = androidx.compose.material3.MaterialTheme.typography.labelSmall) },
+                        textStyle = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        )
+                    )
+                    if (numberDraft != turn.turnNumber.toString()) {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                numberDraft.toIntOrNull()?.takeIf { it > 0 }?.let(onSaveNumber)
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 5.dp, vertical = 0.dp)
+                        ) { Text("ثبت") }
+                    }
+                } else {
+                    Text(
+                        "نوبت ${toPersianOfficeDigits(turn.turnNumber.toString())}",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
+                    )
+                }
+            }
+
+            if (totalTurns > 0) {
                 Text(
-                    text = "نوبت ${turn.turnNumber} — ${turn.title}" +
-                        if (turn.turnType == com.example.bookapp.data.DirectorTurnEntity.TYPE_COLLECTIVE) " • جمعی" else "",
-                    modifier = Modifier.weight(1f),
-                    style = androidx.compose.material3.MaterialTheme.typography.titleSmall
+                    "جایگاه اجرا ${toPersianOfficeDigits((position + 1).coerceAtLeast(1).toString())} از ${toPersianOfficeDigits(totalTurns.toString())}",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
                 )
-                if (editable) {
+            }
+
+            if (editable && (onEditTurn != null || onAddDialogue != null || onManageParticipants != null || onDeleteTurn != null)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
                     onEditTurn?.let { action ->
                         androidx.compose.material3.IconButton(onClick = action) {
                             androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "ویرایش نوبت")
@@ -236,14 +295,6 @@ fun DirectorOfficeTurnCard(
                 }
             }
 
-            if (totalTurns > 0) {
-                Text(
-                    "نوبت ${toPersianOfficeDigits(turn.turnNumber.toString())} از ${toPersianOfficeDigits(totalTurns.toString())} • جایگاه اجرا ${toPersianOfficeDigits((position + 1).coerceAtLeast(1).toString())}",
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
-                )
-            }
-
             if (editable && (onMoveUp != null || onMoveDown != null)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     onMoveUp?.let { action ->
@@ -255,90 +306,159 @@ fun DirectorOfficeTurnCard(
                 }
             }
 
-            if (editable && onSaveNumber != null) {
-                OutlinedTextField(
-                    value = numberDraft,
-                    onValueChange = { numberDraft = it.filter(Char::isDigit).take(6) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("شماره نوبت") },
-                    singleLine = true
-                )
-                if (numberDraft != turn.turnNumber.toString()) {
-                    androidx.compose.material3.TextButton(onClick = {
-                        numberDraft.toIntOrNull()?.takeIf { it > 0 }?.let(onSaveNumber)
-                    }) { Text("ذخیره شماره نوبت") }
-                }
-            }
-
             if (turn.notes.isNotBlank()) {
                 Text(turn.notes, color = androidx.compose.material3.MaterialTheme.colorScheme.error, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
             }
-            if (roleLabel.isNotBlank()) {
-                Text("نقش‌ها: $roleLabel", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = androidx.compose.material3.MaterialTheme.colorScheme.secondary)
-            }
 
-            if (segments.isEmpty()) {
-                Text("برای این نوبت متنی ثبت نشده است.", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            segments.sortedBy { it.segmentIndex }.forEach { segment ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
-                    verticalAlignment = androidx.compose.ui.Alignment.Top
+            // متن دیالوگ در یک کادر با ارتفاع ثابت نمایش داده می‌شود؛ پیمایش فقط داخل همین کادر است.
+            androidx.compose.material3.Surface(
+                modifier = Modifier.fillMaxWidth().height(176.dp).verticalScroll(rememberScrollState()),
+                shape = RoundedCornerShape(10.dp),
+                color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
-                    Text(segment.text, modifier = Modifier.weight(1f), style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
-                    if (editable) {
-                        onEditSegment?.let { action ->
-                            androidx.compose.material3.IconButton(onClick = { action(segment) }) {
-                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "ویرایش دیالوگ")
-                            }
-                        }
-                        onDeleteSegment?.let { action ->
-                            androidx.compose.material3.IconButton(onClick = { action(segment) }) {
-                                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, contentDescription = "حذف دیالوگ")
+                    Text(
+                        "متن دیالوگ",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
+                    )
+                    if (segments.isEmpty()) {
+                        Text(
+                            "برای این نوبت متنی ثبت نشده است.",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    segments.sortedBy { it.segmentIndex }.forEach { segment ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.Top
+                        ) {
+                            Text(
+                                segment.text,
+                                modifier = Modifier.weight(1f),
+                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium
+                            )
+                            if (editable) {
+                                onEditSegment?.let { action ->
+                                    androidx.compose.material3.IconButton(onClick = { action(segment) }) {
+                                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "ویرایش دیالوگ")
+                                    }
+                                }
+                                onDeleteSegment?.let { action ->
+                                    androidx.compose.material3.IconButton(onClick = { action(segment) }) {
+                                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, contentDescription = "حذف دیالوگ")
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            if (inlineEditorText != null && editable && onInlineEditorTextChange != null) {
-                OutlinedTextField(
-                    value = inlineEditorText,
-                    onValueChange = onInlineEditorTextChange,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp),
-                    minLines = 3,
-                    label = { Text("ویرایش یکجای متن دیالوگ") }
-                )
-                onSaveInlineEditor?.let { action ->
-                    androidx.compose.material3.TextButton(onClick = action) { Text("ذخیره متن دیالوگ") }
+
+            // دکمه ویرایش فقط ویرایشگر را باز می‌کند؛ کادر ویرایش به‌صورت پیش‌فرض مخفی است.
+            // دکمه راهنمای صحنه و دکمه ویرایش/ذخیره کوچک و در یک ردیف قرار دارند.
+            if ((editable && inlineEditorText != null && onInlineEditorTextChange != null && onSaveInlineEditor != null) ||
+                stageCues.isNotEmpty() || (editable && onAddCue != null)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    if (editable && inlineEditorText != null && onInlineEditorTextChange != null && onSaveInlineEditor != null) {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                if (showInlineEditor) {
+                                    onSaveInlineEditor.invoke()
+                                    showInlineEditor = false
+                                } else {
+                                    showInlineEditor = true
+                                }
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text(if (showInlineEditor) "ذخیره متن" else "ویرایش")
+                        }
+                        if (showInlineEditor) {
+                            androidx.compose.material3.TextButton(
+                                onClick = { showInlineEditor = false },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) { Text("انصراف") }
+                        }
+                    }
+                    if (stageCues.isNotEmpty() || (editable && onAddCue != null)) {
+                        androidx.compose.material3.TextButton(
+                            onClick = { showStageCues = !showStageCues },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("راهنمای صحنه (${toPersianOfficeDigits(stageCues.size.toString())}) ${if (showStageCues) "▲" else "▼"}")
+                        }
+                    }
                 }
             }
 
-            if (stageCues.isNotEmpty() || (editable && onAddCue != null)) {
-                androidx.compose.material3.OutlinedButton(onClick = { showStageCues = !showStageCues }) {
-                    Text("راهنمای صحنه (${toPersianOfficeDigits(stageCues.size.toString())}) ${if (showStageCues) "▲" else "▼"}")
-                }
+            if (showInlineEditor && editable && inlineEditorText != null && onInlineEditorTextChange != null) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = inlineEditorText,
+                    onValueChange = onInlineEditorTextChange,
+                    modifier = Modifier.fillMaxWidth().height(156.dp),
+                    minLines = 4,
+                    maxLines = 6,
+                    label = { Text("متن دیالوگ") }
+                )
             }
+
             if (showStageCues) {
+                if (stageCues.isEmpty()) {
+                    Text(
+                        "برای این نوبت هنوز راهنمای صحنه‌ای ثبت نشده است.",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 stageCues.sortedBy { it.orderIndex }.forEach { cue ->
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(
-                            "${cue.title.ifBlank { cue.cueType }}${if (cue.blocksNextTurn) " • بلافاصله / توقف انتقال" else ""}",
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                            color = androidx.compose.material3.MaterialTheme.colorScheme.primary
-                        )
-                        Text(cue.instruction, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
-                        if (editable) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                onEditCue?.let { action -> androidx.compose.material3.TextButton(onClick = { action(cue) }) { Text("ویرایش راهنما") } }
-                                onDeleteCue?.let { action -> androidx.compose.material3.TextButton(onClick = { action(cue) }) { Text("حذف راهنما") } }
+                    // راهنماها عمداً رنگ متفاوتی از متن دیالوگ دارند تا سریع تشخیص داده شوند.
+                    androidx.compose.material3.Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.tertiaryContainer
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "${cue.title.ifBlank { cue.cueType }}${if (cue.blocksNextTurn) " • بلافاصله / توقف انتقال" else ""}",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Text(
+                                cue.instruction,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            if (editable) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    onEditCue?.let { action ->
+                                        androidx.compose.material3.TextButton(onClick = { action(cue) }) { Text("ویرایش راهنما") }
+                                    }
+                                    onDeleteCue?.let { action ->
+                                        androidx.compose.material3.TextButton(onClick = { action(cue) }) { Text("حذف راهنما") }
+                                    }
+                                }
                             }
                         }
                     }
                 }
                 if (editable) {
                     onAddCue?.let { action ->
-                        androidx.compose.material3.OutlinedButton(onClick = action) { Text("افزودن راهنمای صحنه") }
+                        androidx.compose.material3.TextButton(onClick = action) { Text("افزودن راهنمای صحنه") }
                     }
                 }
             }
@@ -346,7 +466,6 @@ fun DirectorOfficeTurnCard(
         }
     }
 }
-
 private fun toPersianOfficeDigits(value: String): String = value.map { ch ->
     if (ch in '0'..'9') ('۰'.code + ch.code - '0'.code).toChar() else ch
 }.joinToString("")
