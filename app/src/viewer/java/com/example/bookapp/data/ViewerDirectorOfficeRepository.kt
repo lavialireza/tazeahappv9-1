@@ -3,9 +3,110 @@ package com.example.bookapp.data
 import android.content.Context
 import androidx.room.withTransaction
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** تمام عملیات تغییردهنده دفتر شخصی از این لایه عبور می‌کنند و مجوز در لحظه اجرا بررسی می‌شود. */
 object ViewerDirectorOfficeRepository {
+
+    /** ساخت دفتر شخصی مستقیماً از کتابخانه محلی همین Viewer؛ هیچ بسته‌ای از Admin دریافت نمی‌شود. */
+    suspend fun createPersonalFromLibrary(
+        context: Context,
+        contentDb: AppDatabase,
+        personalDb: ViewerDirectorOfficeDatabase,
+        taziehUid: String?,
+        method: String
+    ): Long {
+        val permissions = ViewerAccessPolicy.getEffectivePermissions(context)
+        require(DirectorOfficeAccessRules.canCreatePersonal(permissions, method)) {
+            "مدیر ساخت دفتر شخصی با این روش را برای این Viewer مجاز نکرده است."
+        }
+        require(method in DirectorOfficeSharedContract.methodCodes) { "روش ساخت دفتر معتبر نیست." }
+
+        val sourceTazieh = if (method == DirectorOfficeSharedContract.MANUAL) {
+            taziehUid?.takeIf { it.isNotBlank() }?.let { contentDb.taziehDao().getByUid(it) }
+        } else {
+            require(!taziehUid.isNullOrBlank()) { "ابتدا مجلس موردنظر را از کتابخانه انتخاب کنید." }
+            contentDb.taziehDao().getByUid(taziehUid) ?: error("مجلس انتخاب‌شده در کتابخانه محلی پیدا نشد.")
+        }
+        val sourceVersion = sourceTazieh?.let { local ->
+            contentDb.archiveDao().currentVersion(local.uid)
+                ?: contentDb.archiveDao().versionsForTazieh(local.uid).firstOrNull()
+        }
+        val roles = when {
+            sourceTazieh == null -> emptyList()
+            sourceVersion != null -> contentDb.roleDao().getByVersionUid(sourceVersion.uid)
+            else -> contentDb.roleDao().getByTazieh(sourceTazieh.id).filter { it.versionUid.isBlank() }
+                .sortedWith(compareBy<RoleEntity> { it.orderIndex }.thenBy { it.id })
+        }
+        val sections = if (roles.isEmpty()) emptyList() else {
+            val rolesById = roles.associateBy { it.id }
+            contentDb.sectionDao().getByRoles(roles.map { it.id })
+                .filter { it.content.isNotBlank() && rolesById.containsKey(it.roleId) }
+                .sortedWith(compareBy<SectionEntity> { section -> rolesById[section.roleId]?.orderIndex ?: Int.MAX_VALUE }
+                    .thenBy { it.orderIndex }.thenBy { it.id })
+        }
+        if (method == DirectorOfficeSharedContract.SELECTOR) {
+            require(sections.isNotEmpty()) { "برای روش انتخاب‌گر، متن نقش‌های مجلس در کتابخانه محلی پیدا نشد." }
+        }
+
+        val now = System.currentTimeMillis()
+        val dao = personalDb.directorDao()
+        return personalDb.withTransaction {
+            val title = sourceTazieh?.title?.let { "دفتر شخصی — $it" } ?: "دفتر شخصی جدید"
+            val planId = dao.insertPlan(DirectorPlanEntity(
+                uid = "personal-${UUID.randomUUID()}", taziehUid = sourceTazieh?.uid.orEmpty(),
+                title = title, status = DirectorPlanEntity.STATUS_DRAFT,
+                description = "دفتر مستقل این Viewer؛ روش ساخت: $method؛ منبع: کتابخانه محلی همین دستگاه؛ بدون انتقال دفتر از Admin.",
+                createdAt = now, updatedAt = now
+            ))
+            val versionId = dao.insertVersion(DirectorPlanVersionEntity(
+                planId = planId, versionNumber = 1, title = "نسخه شخصی اول",
+                status = DirectorPlanVersionEntity.STATUS_DRAFT,
+                changeNotes = "دفتر شخصی؛ روش ساخت: $method؛ منبع: کتابخانه محلی همین دستگاه",
+                createdAt = now
+            ))
+            val roleInputs = roles.map { role ->
+                DirectorOfficeBuildRole(uid = role.uid, title = role.title, orderIndex = role.orderIndex)
+            }
+            val roleUidById = roles.associate { it.id to it.uid }
+            val sectionInputs = sections.mapNotNull { section ->
+                val roleUid = roleUidById[section.roleId] ?: return@mapNotNull null
+                DirectorOfficeBuildSection(
+                    uid = section.uid, roleUid = roleUid, content = section.content, orderIndex = section.orderIndex
+                )
+            }
+            DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+                dao = dao, versionId = versionId, method = method,
+                roles = roleInputs, sections = sectionInputs
+            )
+            planId
+        }
+    }
+
+    /** فهرست انتخاب‌گر از متن محلی همان مجلس ساخته می‌شود، نه از فایل دفتر رسمی. */
+    suspend fun selectorEntries(contentDb: AppDatabase, taziehUid: String): List<DirectorOfficeSelectorEntry> =
+        withContext(Dispatchers.IO) {
+            val tazieh = contentDb.taziehDao().getByUid(taziehUid) ?: return@withContext emptyList()
+            val version = contentDb.archiveDao().currentVersion(tazieh.uid)
+                ?: contentDb.archiveDao().versionsForTazieh(tazieh.uid).firstOrNull()
+            val roles = if (version != null) contentDb.roleDao().getByVersionUid(version.uid)
+            else contentDb.roleDao().getByTazieh(tazieh.id).filter { it.versionUid.isBlank() }
+                .sortedWith(compareBy<RoleEntity> { it.orderIndex }.thenBy { it.id })
+            if (roles.isEmpty()) return@withContext emptyList()
+            val roleById = roles.associateBy { it.id }
+            val sections = contentDb.sectionDao().getByRoles(roles.map { it.id })
+                .filter { it.content.isNotBlank() && roleById.containsKey(it.roleId) }
+                .sortedWith(compareBy<SectionEntity> { section -> roleById[section.roleId]?.orderIndex ?: Int.MAX_VALUE }
+                    .thenBy { it.orderIndex }.thenBy { it.id })
+            sections.flatMap { section ->
+                val role = roleById[section.roleId] ?: return@flatMap emptyList()
+                DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, text ->
+                    DirectorOfficeSelectorEntry("${section.uid}:$index", role.uid, role.title, section.uid, section.title, text)
+                }
+            }
+        }
+
     private fun requireEdit(context: Context) {
         require(DirectorOfficeAccessRules.canEditPersonal(ViewerAccessPolicy.getEffectivePermissions(context))) {
             "مدیر اجازه ویرایش دفتر شخصی را برای این Viewer فعال نکرده است."
@@ -86,19 +187,8 @@ object ViewerDirectorOfficeRepository {
 
     suspend fun reorderTurns(context: Context, db: ViewerDirectorOfficeDatabase, orderedTurns: List<DirectorTurnEntity>) {
         requireEdit(context)
-        val dao = db.directorDao()
-        require(orderedTurns.map { it.id }.distinct().size == orderedTurns.size) { "فهرست نوبت‌ها تکراری است." }
-        val first = orderedTurns.firstOrNull() ?: return
-        val version = dao.version(first.versionId) ?: error("نسخه دفتر شخصی پیدا نشد.")
-        val plan = dao.plan(version.planId) ?: error("دفتر شخصی پیدا نشد.")
-        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
-        require(orderedTurns.all { it.versionId == version.id }) { "ترتیب نوبت‌های چند نسخه قابل تغییر هم‌زمان نیست." }
-        require(orderedTurns.all { dao.turn(it.id)?.versionId == version.id }) { "نوبت متعلق به دفتر شخصی انتخاب‌شده نیست." }
         db.withTransaction {
-            // شاخص موقت منفی از برخورد با unique(versionId, sequenceIndex) جلوگیری می‌کند.
-            val finalOrder = DirectorOfficeWorkspaceUseCases.normalizedOrder(orderedTurns)
-            finalOrder.forEachIndexed { index, (turnId, _) -> dao.moveTurn(turnId, -100000 - index) }
-            finalOrder.forEach { (turnId, index) -> dao.moveTurn(turnId, index) }
+            DirectorOfficeWorkspaceOperations.reorderTurns(db.directorDao(), orderedTurns)
         }
     }
 
@@ -137,7 +227,7 @@ object ViewerDirectorOfficeRepository {
         context: Context,
         db: ViewerDirectorOfficeDatabase,
         planId: Long,
-        entry: ViewerDirectorOfficePublicationImporter.SelectorEntry
+        entry: DirectorOfficeSelectorEntry
     ) {
         requireEdit(context)
         require(ViewerAccessPolicy.hasPermission(context, "director.personal.method.selector")) {

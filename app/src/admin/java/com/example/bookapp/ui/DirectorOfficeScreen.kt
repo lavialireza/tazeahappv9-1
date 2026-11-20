@@ -1,7 +1,6 @@
 package com.example.bookapp.ui
 
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -921,32 +920,7 @@ if (currentVersion != null) {
                                 finally { busy = false }
                             }
                         }) { Text("انتشار نسخه انتخابی", maxLines = 2) }
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = selectedPlan != null && selectedVersion?.status == DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy,
-                            onClick = {
-                                val plan = selectedPlan
-                                val version = selectedVersion
-                                if (plan == null || version == null) return@OutlinedButton
-                                scope.launch {
-                                    busy = true
-                                    try {
-                                        val uri = withContext(Dispatchers.IO) {
-                                            DirectorOfficePublicationSigner.createShareUri(context, db, plan.id, version.id)
-                                        }
-                                        val send = Intent(Intent.ACTION_SEND).apply {
-                                            type = DirectorOfficePublicationContract.MIME_TYPE
-                                            putExtra(Intent.EXTRA_STREAM, uri)
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                        context.startActivity(Intent.createChooser(send, "ارسال دفتر رسمی به Viewer"))
-                                        message = "بسته رسمی امضاشده آماده ارسال آفلاین است. در دستگاه Viewer فایل را باز و وارد کنید."
-                                    } catch (e: Exception) {
-                                        message = "ساخت بسته رسمی ناموفق بود: ${e.message ?: "خطای نامشخص"}"
-                                    } finally { busy = false }
-                                }
-                            }
-                        ) { Text("ارسال آفلاین نسخه رسمی به Viewer") }
+
                     }
                     Card(
                         Modifier.fillMaxWidth(),
@@ -1210,253 +1184,129 @@ if (currentVersion != null) {
                 }
                 items(visibleTurns, key = { it.id }) { turn ->
                     val segmentState = remember(turn.id) { mutableStateOf("") }
+                    val segmentsState = remember(turn.id) { mutableStateOf(emptyList<DirectorTextSegmentEntity>()) }
+                    val participantsState = remember(turn.id) { mutableStateOf(emptyList<DirectorParticipantEntity>()) }
                     var savingDialogue by remember(turn.id) { mutableStateOf(false) }
                     var showTurnCueDialog by remember(turn.id) { mutableStateOf(false) }
-                    var showTurnCuePanel by remember(turn.id) { mutableStateOf(false) }
                     var turnCueDraft by remember(turn.id) { mutableStateOf("") }
                     var editingTurnCueId by remember(turn.id) { mutableStateOf<Long?>(null) }
                     val turnStageCues = stageCues.filter { it.turnId == turn.id }
-                    val turnCardIndex = turns.indexOfFirst { it.id == turn.id }
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (darkMode) {
-                                if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.surfaceVariant
-                                else MaterialTheme.colorScheme.secondaryContainer
-                            } else {
-                                if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.surfaceVariant
-                                else Color(0xFFE8F5E9)
-                            },
-                            contentColor = if (darkMode) {
-                                if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.onSurfaceVariant
-                                else MaterialTheme.colorScheme.onSecondaryContainer
-                            } else {
-                                if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.onSurfaceVariant
-                                else Color(0xFF1B4332)
-                            }
-                        )
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(turn.title + if (turn.turnType == DirectorTurnEntity.TYPE_COLLECTIVE) " • جمعی" else "")
-                            val turnPosition = turns.indexOfFirst { it.id == turn.id }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(enabled = turnPosition > 0, onClick = {
-                                    scope.launch {
-                                        val ordered = turns
-                                        if (turnPosition > 0) {
-                                            val previous = ordered[turnPosition - 1]
-                                            val temporary = (ordered.maxOfOrNull { it.sequenceIndex } ?: 0) + 1000
-                                            db.withTransaction {
-                                                dao.moveTurn(turn.id, temporary)
-                                                dao.moveTurn(previous.id, turn.sequenceIndex)
-                                                dao.moveTurn(turn.id, previous.sequenceIndex)
-                                            }
-                                            turns = dao.turns(turn.versionId)
-                                            previewText = buildDirectorVersionPreview(dao, turn.versionId)
-                                        }
+                    val turnPosition = turns.indexOfFirst { it.id == turn.id }
+                    val turnCardIndex = turnPosition
+
+                    LaunchedEffect(turn.id, refresh) {
+                        segmentsState.value = dao.textSegments(turn.id)
+                        segmentState.value = segmentsState.value.joinToString("\n") { it.text }
+                        participantsState.value = dao.participants(turn.id)
+                    }
+
+                    DirectorOfficeTurnCard(
+                        turn = turn,
+                        position = turnPosition,
+                        totalTurns = turns.size,
+                        participants = participantsState.value,
+                        segments = segmentsState.value,
+                        stageCues = turnStageCues,
+                        editable = true,
+                        collapseStageCues = true,
+                        containerColor = if (darkMode) {
+                            if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.surfaceVariant
+                            else MaterialTheme.colorScheme.secondaryContainer
+                        } else {
+                            if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.surfaceVariant
+                            else Color(0xFFE8F5E9)
+                        },
+                        contentColor = if (darkMode) {
+                            if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            if (turnCardIndex % 2 == 0) MaterialTheme.colorScheme.onSurfaceVariant
+                            else Color(0xFF1B4332)
+                        },
+                        inlineEditorText = segmentState.value,
+                        onInlineEditorTextChange = { segmentState.value = it },
+                        onSaveInlineEditor = {
+                            scope.launch {
+                                savingDialogue = true
+                                try {
+                                    val textToSave = segmentState.value.trim()
+                                    db.withTransaction {
+                                        DirectorOfficeWorkspaceOperations.replaceTurnText(dao, turn.id, textToSave)
                                     }
-                                }) { Text("↑ انتقال به بالا") }
-                                TextButton(enabled = turnPosition >= 0 && turnPosition < turns.lastIndex, onClick = {
-                                    scope.launch {
-                                        val next = turns.getOrNull(turnPosition + 1)
-                                        if (next != null) {
-                                            val temporary = (turns.maxOfOrNull { it.sequenceIndex } ?: 0) + 1000
-                                            db.withTransaction {
-                                                dao.moveTurn(turn.id, temporary)
-                                                dao.moveTurn(next.id, turn.sequenceIndex)
-                                                dao.moveTurn(turn.id, next.sequenceIndex)
-                                            }
-                                            turns = dao.turns(turn.versionId)
-                                            previewText = buildDirectorVersionPreview(dao, turn.versionId)
-                                        }
-                                    }
-                                }) { Text("↓ انتقال به پایین") }
-                            }
-                            var editedNumber by remember(turn.id) { mutableStateOf(turn.turnNumber.toString()) }
-                            OutlinedTextField(
-                                value = editedNumber,
-                                onValueChange = { editedNumber = it.filter(Char::isDigit).take(6) },
-                                label = {
-                                    Text(
-                                        "نوبت ${toPersianDirectorDigits(turn.turnNumber.toString())} از ${toPersianDirectorDigits(turns.size.toString())} • جایگاه اجرا ${toPersianDirectorDigits((turnPosition + 1).coerceAtLeast(1).toString())}",
-                                        maxLines = 1
-                                    )
-                                },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp, max = 58.dp),
-                                singleLine = true
-                            )
-                            if (editedNumber != turn.turnNumber.toString()) {
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        val value = editedNumber.toIntOrNull()
-                                        if (value != null && value > 0) {
-                                            db.withTransaction { DirectorOfficeWorkspaceOperations.updateTurn(dao, turn.copy(turnNumber = value)) }
-                                            turns = dao.turns(turn.versionId)
-                                            previewText = buildDirectorVersionPreview(dao, turn.versionId)
-                                            message = "شماره نوبت اصلاح شد؛ ترتیب نمایش حفظ شد."
-                                        } else message = "شماره نوبت معتبر نیست."
-                                    }
-                                }) { Text("ذخیره شماره نوبت") }
-                            }
-                            if (turn.notes.isNotBlank()) Text(turn.notes, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                            val participantsState = remember(turn.id) { mutableStateOf(emptyList<DirectorParticipantEntity>()) }
-                            LaunchedEffect(turn.id, refresh) {
-                                segmentState.value = dao.textSegments(turn.id).joinToString("\n") { it.text }
-                                participantsState.value = dao.participants(turn.id)
-                            }
-                            OutlinedTextField(
-                                value = segmentState.value,
-                                onValueChange = { segmentState.value = it },
-                                // Keep each turn's editor bounded; long text scrolls inside this field
-                                // while the surrounding LazyColumn remains independently scrollable.
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp), minLines = 3
-                            )
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                TextButton(
-                                    modifier = Modifier.weight(1f).height(36.dp),
-                                    enabled = !savingDialogue,
-                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
-                                    onClick = {
-                                        scope.launch {
-                                            savingDialogue = true
-                                            try {
-                                                val textToSave = segmentState.value.trim()
-                                                db.withTransaction {
-                                                    val currentSegments = dao.textSegments(turn.id)
-                                                    if (currentSegments.isEmpty()) {
-                                                        dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turn.id, segmentIndex = 0, text = textToSave))
-                                                    } else {
-                                                        dao.updateTextSegment(currentSegments.first().copy(text = textToSave, segmentIndex = 0))
-                                                        currentSegments.drop(1).forEach { dao.deleteTextSegment(it.id) }
-                                                    }
-                                                }
-                                                val savedSegments = dao.textSegments(turn.id)
-                                                val savedText = savedSegments.joinToString("\n") { it.text }
-                                                segmentState.value = savedText
-                                                turnSearchCorpus = turnSearchCorpus + (turn.id to savedText)
-                                                previewText = buildDirectorVersionPreview(dao, turn.versionId)
-                                                message = "متن دیالوگ نوبت ${turn.turnNumber} ذخیره شد؛ متن اصلی کتابخانه تغییر نکرد."
-                                            } catch (e: Exception) {
-                                                message = "ذخیره ویرایش دیالوگ ناموفق بود: ${e.message ?: "خطای نامشخص"}"
-                                            } finally {
-                                                savingDialogue = false
-                                            }
-                                        }
-                                    }
-                                ) { Text(if (savingDialogue) "در حال ذخیره…" else "ذخیره ویرایش دیالوگ", style = MaterialTheme.typography.labelSmall) }
-                                OutlinedButton(
-                                    modifier = Modifier.weight(1f).height(36.dp),
-                                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
-                                    onClick = { showTurnCuePanel = !showTurnCuePanel }
-                                ) { Text("راهنمای صحنه (${turnStageCues.size})", style = MaterialTheme.typography.labelSmall) }
-                            }
-                            if (showTurnCuePanel) {
-                                Card(
-                                    Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-                                ) {
-                                    Column(
-                                        Modifier.fillMaxWidth().padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        if (turnStageCues.isEmpty()) {
-                                            Text("برای این نوبت هنوز راهنمای صحنه ثبت نشده است.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
-                                        }
-                                        turnStageCues.forEach { cue ->
-                                            Column(Modifier.fillMaxWidth()) {
-                                                Text(
-                                                    cue.title.replace("دستور صحنه", "راهنمای صحنه").ifBlank { if (cue.cueType == DirectorStageCueEntity.CUE_IMMEDIATE) "بلافاصله" else "راهنمای اجرا" },
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
-                                                Text(
-                                                    cue.instruction + if (cue.blocksNextTurn) " • ادامه همین نقش و توقف انتقال به نوبت بعد" else "",
-                                                    style = MaterialTheme.typography.bodyMedium
-                                                )
-                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    TextButton(onClick = {
-                                                        editingTurnCueId = cue.id
-                                                        turnCueDraft = cue.instruction
-                                                        showTurnCueDialog = true
-                                                    }) { Text("ویرایش") }
-                                                    TextButton(onClick = {
-                                                        scope.launch {
-                                                            try {
-                                                                db.withTransaction { DirectorOfficeWorkspaceOperations.deleteStageCue(dao, cue.id) }
-                                                                stageCues = dao.stageCues(turn.versionId)
-                                                                message = "راهنمای صحنه از این نوبت حذف شد؛ متن دیالوگ بدون تغییر ماند."
-                                                            } catch (e: Exception) { message = "حذف راهنمای صحنه انجام نشد: ${e.message}" }
-                                                        }
-                                                    }) { Text("حذف") }
-                                                }
-                                            }
-                                        }
-                                        OutlinedButton(
-                                            modifier = Modifier.align(androidx.compose.ui.Alignment.End).height(32.dp),
-                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                                            onClick = {
-                                                editingTurnCueId = null
-                                                turnCueDraft = ""
-                                                showTurnCueDialog = true
-                                            }
-                                        ) { Text("افزودن راهنما", style = MaterialTheme.typography.labelSmall) }
-                                    }
+                                    val savedSegments = dao.textSegments(turn.id)
+                                    segmentsState.value = savedSegments
+                                    val savedText = savedSegments.joinToString("\n") { it.text }
+                                    segmentState.value = savedText
+                                    turnSearchCorpus = turnSearchCorpus + (turn.id to savedText)
+                                    previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                    message = "متن دیالوگ نوبت ${turn.turnNumber} ذخیره شد؛ متن اصلی کتابخانه تغییر نکرد."
+                                } catch (e: Exception) {
+                                    message = "ذخیره متن نوبت انجام نشد: ${e.message}"
+                                } finally {
+                                    savingDialogue = false
                                 }
                             }
-                            if (showTurnCueDialog) {
-                                AlertDialog(
-                                    onDismissRequest = { showTurnCueDialog = false },
-                                    title = { Text(if (editingTurnCueId == null) "ثبت راهنمای صحنه — نوبت ${turn.turnNumber}" else "ویرایش راهنمای صحنه — نوبت ${turn.turnNumber}") },
-                                    text = {
-                                        OutlinedTextField(
-                                            value = turnCueDraft,
-                                            onValueChange = { turnCueDraft = it },
-                                            label = { Text("راهنمای مستقل کارگردان برای این نوبت") },
-                                            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 240.dp),
-                                            minLines = 4
-                                        )
-                                    },
-                                    confirmButton = {
-                                        TextButton(
-                                            enabled = turnCueDraft.isNotBlank() && !busy,
-                                            onClick = {
-                                                scope.launch {
-                                                    try {
-                                                        val existingCue = editingTurnCueId?.let { id -> dao.cuesForTurn(turn.id).firstOrNull { it.id == id } }
-                                                        if (existingCue != null) {
-                                                            db.withTransaction { DirectorOfficeWorkspaceOperations.updateStageCue(dao, existingCue.copy(instruction = turnCueDraft.trim())) }
-                                                            message = "راهنمای صحنه این نوبت ویرایش شد."
-                                                        } else {
-                                                            db.withTransaction {
-                                                                DirectorOfficeWorkspaceOperations.addStageCue(
-                                                                    dao = dao,
-                                                                    planId = selectedPlan!!.id,
-                                                                    title = "راهنمای صحنه",
-                                                                    instruction = turnCueDraft.trim(),
-                                                                    turnId = turn.id,
-                                                                    cueType = DirectorStageCueEntity.CUE_OTHER
-                                                                )
-                                                            }
-                                                            message = "راهنمای صحنه به نوبت ${turn.turnNumber} متصل شد."
-                                                        }
-                                                        stageCues = dao.stageCues(turn.versionId)
-                                                        showTurnCueDialog = false
-                                                    } catch (e: Exception) {
-                                                        message = "ذخیره راهنمای صحنه انجام نشد: ${e.message}"
-                                                    }
-                                                }
-                                            }
-                                        ) { Text("ذخیره راهنما") }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showTurnCueDialog = false }) { Text("انصراف") }
+                        },
+                        onSaveNumber = { value ->
+                            scope.launch {
+                                try {
+                                    db.withTransaction {
+                                        DirectorOfficeWorkspaceOperations.updateTurn(dao, turn.copy(turnNumber = value))
                                     }
-                                )
+                                    turns = dao.turns(turn.versionId)
+                                    previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                    message = "شماره نوبت اصلاح شد؛ ترتیب نمایش حفظ شد."
+                                } catch (e: Exception) {
+                                    message = "اصلاح شماره نوبت انجام نشد: ${e.message}"
+                                }
                             }
+                        },
+                        onMoveUp = if (turnPosition > 0) ({
+                            scope.launch {
+                                try {
+                                    val reordered = turns.toMutableList().apply { add(turnPosition - 1, removeAt(turnPosition)) }
+                                    db.withTransaction { DirectorOfficeWorkspaceOperations.reorderTurns(dao, reordered) }
+                                    turns = dao.turns(turn.versionId)
+                                    previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                } catch (e: Exception) {
+                                    message = "تغییر ترتیب نوبت انجام نشد: ${e.message}"
+                                }
+                            }
+                        }) else null,
+                        onMoveDown = if (turnPosition >= 0 && turnPosition < turns.lastIndex) ({
+                            scope.launch {
+                                try {
+                                    val reordered = turns.toMutableList().apply { add(turnPosition + 1, removeAt(turnPosition)) }
+                                    db.withTransaction { DirectorOfficeWorkspaceOperations.reorderTurns(dao, reordered) }
+                                    turns = dao.turns(turn.versionId)
+                                    previewText = buildDirectorVersionPreview(dao, turn.versionId)
+                                } catch (e: Exception) {
+                                    message = "تغییر ترتیب نوبت انجام نشد: ${e.message}"
+                                }
+                            }
+                        }) else null,
+                        onEditCue = { cue ->
+                            editingTurnCueId = cue.id
+                            turnCueDraft = cue.instruction
+                            showTurnCueDialog = true
+                        },
+                        onDeleteCue = { cue ->
+                            scope.launch {
+                                try {
+                                    db.withTransaction { DirectorOfficeWorkspaceOperations.deleteStageCue(dao, cue.id) }
+                                    stageCues = dao.stageCues(turn.versionId)
+                                    message = "راهنمای صحنه از این نوبت حذف شد؛ متن دیالوگ بدون تغییر ماند."
+                                } catch (e: Exception) {
+                                    message = "حذف راهنمای صحنه انجام نشد: ${e.message}"
+                                }
+                            }
+                        },
+                        onAddCue = {
+                            editingTurnCueId = null
+                            turnCueDraft = ""
+                            showTurnCueDialog = true
+                        },
+                        extraContent = {
                             participantsState.value.filter { it.roleUid.startsWith("unmatched-") }.forEach { participant ->
                                 var mappingExpanded by remember(participant.id) { mutableStateOf(false) }
                                 ExposedDropdownMenuBox(expanded = mappingExpanded, onExpandedChange = { mappingExpanded = !mappingExpanded }) {
@@ -1474,7 +1324,9 @@ if (currentVersion != null) {
                                                         dao.updateParticipant(participant.copy(roleUid = role.uid, roleTitle = role.title))
                                                         participantsState.value = dao.participants(turn.id)
                                                         message = "نقش «${participant.roleTitle}» به «${role.title}» متصل شد."
-                                                    } catch (e: Exception) { message = "اتصال نقش انجام نشد: ${e.message}" }
+                                                    } catch (e: Exception) {
+                                                        message = "اتصال نقش انجام نشد: ${e.message}"
+                                                    }
                                                 }
                                                 mappingExpanded = false
                                             })
@@ -1483,6 +1335,58 @@ if (currentVersion != null) {
                                 }
                             }
                         }
+                    )
+
+                    if (savingDialogue) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (showTurnCueDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showTurnCueDialog = false },
+                            title = { Text(if (editingTurnCueId == null) "ثبت راهنمای صحنه — نوبت ${turn.turnNumber}" else "ویرایش راهنمای صحنه — نوبت ${turn.turnNumber}") },
+                            text = {
+                                DirectorOfficeStageCueInputFields(
+                                    instruction = turnCueDraft,
+                                    onInstructionChange = { turnCueDraft = it },
+                                    instructionLabel = "راهنمای مستقل کارگردان برای این نوبت",
+                                    instructionMinHeight = 120,
+                                    instructionMaxHeight = 240
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    enabled = turnCueDraft.isNotBlank() && !busy,
+                                    onClick = {
+                                        scope.launch {
+                                            try {
+                                                val existingCue = editingTurnCueId?.let { id -> dao.stageCue(id) }
+                                                if (existingCue != null) {
+                                                    db.withTransaction {
+                                                        DirectorOfficeWorkspaceOperations.updateStageCue(dao, existingCue.copy(instruction = turnCueDraft.trim()))
+                                                    }
+                                                    message = "راهنمای صحنه این نوبت ویرایش شد."
+                                                } else {
+                                                    db.withTransaction {
+                                                        DirectorOfficeWorkspaceOperations.addStageCue(
+                                                            dao = dao,
+                                                            planId = selectedPlan!!.id,
+                                                            title = "راهنمای صحنه",
+                                                            instruction = turnCueDraft.trim(),
+                                                            turnId = turn.id,
+                                                            cueType = DirectorStageCueEntity.CUE_OTHER
+                                                        )
+                                                    }
+                                                    message = "راهنمای صحنه به نوبت ${turn.turnNumber} متصل شد."
+                                                }
+                                                stageCues = dao.stageCues(turn.versionId)
+                                                showTurnCueDialog = false
+                                            } catch (e: Exception) {
+                                                message = "ذخیره راهنمای صحنه انجام نشد: ${e.message}"
+                                            }
+                                        }
+                                    }
+                                ) { Text("ذخیره راهنما") }
+                            },
+                            dismissButton = { TextButton(onClick = { showTurnCueDialog = false }) { Text("انصراف") } }
+                        )
                     }
                 }
             }
@@ -1499,11 +1403,12 @@ if (currentVersion != null) {
                     Text("معین‌البکا تعیین کند دفتر چگونه ساخته شود. با تأیید، فقط نوبت‌های همین نسخه دفتر بازسازی می‌شوند؛ نسخه‌های دیگر و متن اصلی کتابخانه دست‌نخورده می‌مانند:")
                     DirectorOfficeSharedContract.buildMethods.forEachIndexed { index, method ->
                         val orderLabel = listOf("۱)", "۲)", "۳)", "۴)").getOrElse(index) { "${index + 1})" }
-                        val label = "$orderLabel ${method.description}"
-                        Row(Modifier.fillMaxWidth().clickable { selectedBuildMode = method.code }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            RadioButton(selected = selectedBuildMode == method.code, onClick = { selectedBuildMode = method.code })
-                            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        }
+                        DirectorOfficeBuildMethodOption(
+                            method = method,
+                            selected = selectedBuildMode == method.code,
+                            onClick = { selectedBuildMode = method.code },
+                            orderLabel = orderLabel
+                        )
                     }
                 }
             },
@@ -1524,77 +1429,27 @@ if (currentVersion != null) {
                             val sections = db.sectionDao().getByRoles(roles.map { it.id })
                                 .filter { it.content.isNotBlank() }
                                 .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
+                            val roleInputs = roles.map { role ->
+                                DirectorOfficeBuildRole(uid = role.uid, title = role.title, orderIndex = role.orderIndex)
+                            }
+                            val roleUidById = roles.associate { it.id to it.uid }
+                            val sectionInputs = sections.mapNotNull { section ->
+                                val roleUid = roleUidById[section.roleId] ?: return@mapNotNull null
+                                DirectorOfficeBuildSection(
+                                    uid = section.uid,
+                                    roleUid = roleUid,
+                                    content = section.content,
+                                    orderIndex = section.orderIndex
+                                )
+                            }
                             db.withTransaction {
-                                if (selectedBuildMode != DirectorOfficeSharedContract.MANUAL) {
-                                    dao.turns(version.id).forEach { dao.deleteTurn(it.id) }
-                                }
-                                if (selectedBuildMode == DirectorOfficeSharedContract.ROLE_NUMBERED) {
-                                    // Match each role's own dialogue number instead of assigning
-                                    // sequential numbers by role order. Equal numbers across roles
-                                    // become one collective turn (e.g. Shمر/Imam for turn 1/2).
-                                    data class NumberedEntry(
-                                        val role: RoleEntity,
-                                        val section: SectionEntity,
-                                        val text: String
-                                    )
-                                    val numberedEntries = sections.flatMap { section ->
-                                        val role = roles.firstOrNull { it.id == section.roleId }
-                                            ?: return@flatMap emptyList()
-                                        DirectorOfficeWorkspaceUseCases.parseNumberedDialogues(section.content).map { (number, text) ->
-                                            Triple(number, role, NumberedEntry(role, section, text))
-                                        }
-                                    }
-                                    if (numberedEntries.isEmpty()) {
-                                        throw IllegalStateException("در متن نقش‌ها شماره دیالوگ پیدا نشد. شماره هر دیالوگ را در ابتدای خط، مانند «۱- متن دیالوگ»، وارد کنید.")
-                                    }
-                                    var sequence = 0
-                                    for ((number, entriesForNumber) in numberedEntries.groupBy { it.first }.toSortedMap()) {
-                                        val entries = entriesForNumber.map { it.third }
-                                        val distinctRoles = entries.map { it.role }.distinctBy { it.uid }
-                                        val turnId = dao.insertTurn(
-                                            DirectorTurnEntity(
-                                                versionId = version.id,
-                                                turnNumber = number,
-                                                sequenceIndex = sequence++,
-                                                turnType = if (distinctRoles.size > 1) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
-                                                title = if (distinctRoles.size > 1) distinctRoles.joinToString("، ") { it.title } else distinctRoles.first().title
-                                            )
-                                        )
-                                        distinctRoles.forEachIndexed { index, role ->
-                                            dao.insertParticipant(
-                                                DirectorParticipantEntity(
-                                                    turnId = turnId,
-                                                    roleUid = role.uid,
-                                                    roleTitle = role.title,
-                                                    orderIndex = index,
-                                                    isLead = index == 0
-                                                )
-                                            )
-                                        }
-                                        entries.forEachIndexed { index, entry ->
-                                            dao.insertTextSegment(
-                                                DirectorTextSegmentEntity(
-                                                    turnId = turnId,
-                                                    segmentIndex = index,
-                                                    text = entry.text,
-                                                    sectionUid = entry.section.uid
-                                                )
-                                            )
-                                        }
-                                    }
-                                } else if (selectedBuildMode == DirectorOfficeSharedContract.FULL_TEXT) {
-                                    var seq = 0
-                                    for (role in roles) {
-                                        val roleSections = sections.filter { it.roleId == role.id }
-                                        if (roleSections.isNotEmpty()) {
-                                            val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = seq + 1, sequenceIndex = seq++, title = role.title))
-                                            dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = role.uid, roleTitle = role.title, isLead = true))
-                                            roleSections.forEachIndexed { index, section ->
-                                                dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = index, text = section.content, sectionUid = section.uid))
-                                            }
-                                        }
-                                    }
-                                }
+                                DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+                                    dao = dao,
+                                    versionId = version.id,
+                                    method = selectedBuildMode,
+                                    roles = roleInputs,
+                                    sections = sectionInputs
+                                )
                                 dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $selectedBuildMode"))
                             }
                             selectedVersion = dao.version(version.id)

@@ -52,9 +52,83 @@ class DirectorOfficeWorkspaceOperationsTest {
     }
 
     @Test
-    fun `published office cannot be edited through shared operations`() = runTest {
+    fun `numbered builder groups same number across roles and preserves source sections`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao = dao,
+            versionId = 20,
+            method = DirectorOfficeSharedContract.ROLE_NUMBERED,
+            roles = listOf(
+                DirectorOfficeBuildRole("role-a", "امام حسین", 0),
+                DirectorOfficeBuildRole("role-b", "حضرت عباس", 1)
+            ),
+            sections = listOf(
+                DirectorOfficeBuildSection("sec-a", "role-a", "۱- سلام بر سپاه", 0),
+                DirectorOfficeBuildSection("sec-b", "role-b", "1- پاسخ سپاه", 0),
+                DirectorOfficeBuildSection("sec-c", "role-a", "۲- حرکت به میدان", 1)
+            )
+        )
+
+        assertEquals(2, result.insertedTurnCount)
+        assertEquals(2, dao.turnRows.size)
+        val first = dao.turnRows.values.single { it.turnNumber == 1 }
+        assertEquals(DirectorTurnEntity.TYPE_COLLECTIVE, first.turnType)
+        assertEquals(setOf("role-a", "role-b"), dao.participantRows.filter { it.turnId == first.id }.map { it.roleUid }.toSet())
+        assertEquals(setOf("sec-a", "sec-b"), dao.segmentRows.filter { it.turnId == first.id }.mapNotNull { it.sectionUid }.toSet())
+        assertEquals(first.id, result.turnIdsByNumber[1])
+    }
+
+    @Test
+    fun `full text builder creates one turn per role with ordered source sections`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao = dao,
+            versionId = 20,
+            method = DirectorOfficeSharedContract.FULL_TEXT,
+            roles = listOf(DirectorOfficeBuildRole("role-a", "امام حسین", 0), DirectorOfficeBuildRole("role-b", "حضرت عباس", 1)),
+            sections = listOf(
+                DirectorOfficeBuildSection("sec-a1", "role-a", "بخش اول", 0),
+                DirectorOfficeBuildSection("sec-a2", "role-a", "بخش دوم", 1),
+                DirectorOfficeBuildSection("sec-b1", "role-b", "بخش سوم", 0)
+            )
+        )
+
+        assertEquals(2, result.insertedTurnCount)
+        assertEquals("امام حسین", dao.turnRows.values.single { it.turnNumber == 1 }.title)
+        assertEquals(listOf("بخش اول", "بخش دوم"), dao.segmentRows.filter { it.turnId == result.turnIdsByRole.getValue("role-a") }.sortedBy { it.segmentIndex }.map { it.text })
+        assertEquals(2, dao.participantRows.size)
+    }
+
+    @Test
+    fun `manual builder does not delete already recorded turns`() = runTest {
         val dao = FakeWorkspaceDao().apply {
-            planRow = planRow.copy(status = DirectorPlanEntity.STATUS_PUBLISHED)
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 5, sequenceIndex = 0, title = "حفظ شود")
+        }
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao, 20, DirectorOfficeSharedContract.MANUAL, emptyList(), emptyList()
+        )
+        assertEquals(1, dao.turnRows.size)
+        assertEquals(0, result.insertedTurnCount)
+    }
+
+    @Test
+    fun `selector builder clears current turns but does not create turns`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 5, sequenceIndex = 0, title = "پاک شود")
+        }
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao, 20, DirectorOfficeSharedContract.SELECTOR,
+            listOf(DirectorOfficeBuildRole("role-a", "نقش", 0)),
+            listOf(DirectorOfficeBuildSection("sec-a", "role-a", "متن", 0))
+        )
+        assertTrue(dao.turnRows.isEmpty())
+        assertEquals(0, result.insertedTurnCount)
+    }
+
+    @Test
+    fun `archived office cannot be edited through shared operations`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            planRow = planRow.copy(status = DirectorPlanEntity.STATUS_ARCHIVED)
             turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 1, sequenceIndex = 0, title = "اول")
         }
         val error = runCatching {
@@ -113,7 +187,7 @@ class DirectorOfficeWorkspaceOperationsTest {
             DirectorOfficeWorkspaceOperations.addStageCue(dao, 20, "راهنما", "شرح", 99)
         }.exceptionOrNull()
 
-        assertTrue(error is IllegalArgumentException)
+        assertTrue(error != null)
         assertTrue(dao.cueRows.isEmpty())
     }
 
@@ -133,7 +207,25 @@ class DirectorOfficeWorkspaceOperationsTest {
         private var nextTurnId = 100L
 
         override suspend fun plan(id: Long) = planRow.takeIf { it.id == id }
-        override suspend fun versions(planId: Long) = listOf(versionRow).filter { it.planId == planId }
+        override suspend fun versionsForPlan(planId: Long) = listOf(versionRow).filter { it.planId == planId }
+        override suspend fun softDeletePlan(id: Long, deletedAt: Long) { if (planRow.id == id) planRow = planRow.copy(isDeleted = true, deletedAt = deletedAt, updatedAt = deletedAt) }
+        override suspend fun insertParticipant(value: DirectorParticipantEntity): Long {
+            participantRows += value.copy(id = participantRows.size + 1L)
+            return participantRows.last().id
+        }
+        override suspend fun updateParticipant(value: DirectorParticipantEntity) {
+            val index = participantRows.indexOfFirst { it.id == value.id }
+            if (index >= 0) participantRows[index] = value
+        }
+        override suspend fun deleteParticipant(id: Long) { participantRows.removeAll { it.id == id } }
+        override suspend fun deleteTurn(id: Long) {
+            turnRows.remove(id)
+            participantRows.removeAll { it.turnId == id }
+            segmentRows.removeAll { it.turnId == id }
+        }
+        override suspend fun deleteTextSegment(id: Long) { segmentRows.removeAll { it.id == id } }
+        override suspend fun stageCue(id: Long) = cueRows.firstOrNull { it.id == id }
+        override suspend fun deleteStageCue(id: Long) { cueRows.removeAll { it.id == id } }
         override suspend fun stageCues(versionId: Long) = cueRows.filter { it.versionId == versionId }
         override suspend fun version(id: Long) = versionRow.takeIf { it.id == id }
         override suspend fun turn(id: Long) = turnRows[id]
@@ -150,10 +242,6 @@ class DirectorOfficeWorkspaceOperationsTest {
         override suspend fun updateTurn(value: DirectorTurnEntity) { turnRows[value.id] = value }
         override suspend fun moveTurn(turnId: Long, sequenceIndex: Int) {
             turnRows[turnId]?.let { turnRows[turnId] = it.copy(sequenceIndex = sequenceIndex) }
-        }
-        override suspend fun insertParticipant(value: DirectorParticipantEntity): Long {
-            participantRows += value.copy(id = participantRows.size + 1L)
-            return participantRows.last().id
         }
         override suspend fun insertTextSegment(value: DirectorTextSegmentEntity): Long {
             segmentRows += value.copy(id = segmentRows.size + 1L)

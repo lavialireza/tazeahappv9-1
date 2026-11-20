@@ -18,10 +18,6 @@ interface ViewerDirectorOfficeDao : DirectorOfficeWorkspaceDao {
     @Query("SELECT * FROM director_plans WHERE uid=:uid LIMIT 1")
     suspend fun planByUid(uid: String): DirectorPlanEntity?
 
-    /** فقط Importer امضای معتبر را بررسی کرده و این حذف را در تراکنش انجام می‌دهد. */
-    @Query("DELETE FROM director_plans WHERE uid=:uid")
-    suspend fun replaceImportedOfficialPlan(uid: String)
-
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertPlan(value: DirectorPlanEntity): Long
 

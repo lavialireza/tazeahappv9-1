@@ -22,10 +22,10 @@ class DirectorOfficeAccessRulesTest {
 
     @Test fun sharedBuildMethodContractIsSingleSourceForBothFlavors() {
         assertTrue(DirectorOfficeSharedContract.methodCodes.containsAll(setOf("ROLE_NUMBERED", "FULL_TEXT", "MANUAL", "SELECTOR")))
-        assertTrue(DirectorOfficeSharedContract.method("MANUAL")?.requiresOfficialSource == false)
-        assertTrue(DirectorOfficeSharedContract.method("ROLE_NUMBERED")?.requiresOfficialSource == true)
-        assertTrue(DirectorOfficeSharedContract.method("FULL_TEXT")?.requiresOfficialSource == true)
-        assertTrue(DirectorOfficeSharedContract.method("SELECTOR")?.requiresOfficialSource == true)
+        assertTrue(DirectorOfficeSharedContract.method("MANUAL")?.requiresLibrarySource == false)
+        assertTrue(DirectorOfficeSharedContract.method("ROLE_NUMBERED")?.requiresLibrarySource == true)
+        assertTrue(DirectorOfficeSharedContract.method("FULL_TEXT")?.requiresLibrarySource == true)
+        assertTrue(DirectorOfficeSharedContract.method("SELECTOR")?.requiresLibrarySource == true)
     }
 
     @Test fun unknownBuildMethodIsNeverGranted() {

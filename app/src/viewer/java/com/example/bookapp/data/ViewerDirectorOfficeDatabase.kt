@@ -7,8 +7,10 @@ import androidx.room.RoomDatabase
 
 /**
  * پایگاه داده مستقل دفتر معین‌البکای Viewer.
- * دو فایل کاملاً مجزا دارد: رسمی فقط برای واردکردن بسته امضاشده Admin و
- * شخصی فقط برای داده‌های قابل ویرایش همین نصب. هیچ‌کدام bookapp.db ادمین نیستند.
+ * فایل رسمی فقط برای خواندن داده‌های رسمی محلیِ باقی‌مانده از نسخه‌های قبلی نگه داشته شده است؛
+ * در معماری فعلی مسیر دریافت/واردکردن دفتر وجود ندارد.
+ * فایل شخصی محل داده‌های قابل ویرایش همین نصب است و از کتابخانه محلی ساخته می‌شود.
+ * هیچ‌کدام bookapp.db ادمین نیستند.
  */
 @Database(
     entities = [
@@ -57,12 +59,6 @@ abstract class ViewerDirectorOfficeDatabase : RoomDatabase() {
                     }
                 }).build().also { personalInstance = it }
             }
-
-        internal fun unlockOfficialForVerifiedImport(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-            officialTables.forEach { table -> db.execSQL("DROP TRIGGER IF EXISTS `ro_${table}_insert`"); db.execSQL("DROP TRIGGER IF EXISTS `ro_${table}_update`"); db.execSQL("DROP TRIGGER IF EXISTS `ro_${table}_delete`") }
-        }
-
-        internal fun lockOfficialAfterImport(db: androidx.sqlite.db.SupportSQLiteDatabase) = installOfficialReadOnlyTriggers(db)
 
         private val officialTables = listOf(
             "director_plans", "director_plan_versions", "director_source_files", "director_turns",

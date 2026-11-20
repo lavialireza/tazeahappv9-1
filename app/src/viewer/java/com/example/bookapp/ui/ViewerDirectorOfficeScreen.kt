@@ -1,7 +1,5 @@
 package com.example.bookapp.ui
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,7 +18,6 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Delete
@@ -66,10 +63,11 @@ import com.example.bookapp.data.DirectorTextSegmentEntity
 import com.example.bookapp.data.DirectorTurnEntity
 import com.example.bookapp.data.ViewerPermissionEngine
 import com.example.bookapp.data.ViewerDirectorOfficeDatabase
-import com.example.bookapp.data.ViewerDirectorOfficePublicationImporter
 import com.example.bookapp.data.ViewerDirectorOfficeRepository
 import com.example.bookapp.data.Prefs
 import com.example.bookapp.data.DirectorParticipantEntity
+import com.example.bookapp.data.DirectorOfficeSelectorEntry
+import com.example.bookapp.data.TaziehEntity
 import com.example.bookapp.ui.theme.colorSchemeFor
 import com.example.bookapp.ui.theme.typographyFor
 import kotlinx.coroutines.Dispatchers
@@ -119,7 +117,7 @@ fun ViewerDirectorOfficeScreen(
         DirectorOfficeSharedContract.canCreatePersonal(policyPermissions, it.code)
     }
 
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(1) }
     var refresh by remember { mutableIntStateOf(0) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -130,7 +128,6 @@ fun ViewerDirectorOfficeScreen(
     var officialTurns by remember { mutableStateOf(emptyList<DirectorTurnEntity>()) }
     var personalTurns by remember { mutableStateOf(emptyList<DirectorTurnEntity>()) }
     var officialCues by remember { mutableStateOf(emptyList<DirectorStageCueEntity>()) }
-    var selectedOfficialSourceMode by remember { mutableStateOf<String?>(null) }
     var selectedOfficialVersionLabel by remember { mutableStateOf("") }
     var personalCues by remember { mutableStateOf(emptyList<DirectorStageCueEntity>()) }
     var officialSegments by remember { mutableStateOf<Map<Long, List<DirectorTextSegmentEntity>>>(emptyMap()) }
@@ -138,7 +135,7 @@ fun ViewerDirectorOfficeScreen(
     var officialParticipants by remember { mutableStateOf<Map<Long, List<com.example.bookapp.data.DirectorParticipantEntity>>>(emptyMap()) }
     var personalParticipants by remember { mutableStateOf<Map<Long, List<com.example.bookapp.data.DirectorParticipantEntity>>>(emptyMap()) }
     var selectedPersonalMethod by remember { mutableStateOf("") }
-    var selectorEntries by remember { mutableStateOf(emptyList<ViewerDirectorOfficePublicationImporter.SelectorEntry>()) }
+    var selectorEntries by remember { mutableStateOf(emptyList<DirectorOfficeSelectorEntry>()) }
     var manualTitle by remember { mutableStateOf("") }
     var manualText by remember { mutableStateOf("") }
     var manualNumber by remember { mutableStateOf("1") }
@@ -168,7 +165,9 @@ fun ViewerDirectorOfficeScreen(
     var customParticipantTitle by remember { mutableStateOf("") }
 
     var selectedTaziehUid by remember(taziehId) { mutableStateOf<String?>(null) }
-    var selectedTaziehResolved by remember(taziehId) { mutableStateOf(taziehId == null) }
+    var selectedTaziehResolved by remember(taziehId) { mutableStateOf(false) }
+    var libraryTaziehs by remember { mutableStateOf(emptyList<TaziehEntity>()) }
+    var taziehPickerExpanded by remember { mutableStateOf(false) }
 
     // Build searchable text once when loaded rows change, not on every keystroke/recomposition.
     val officialSearchIndex = remember(officialTurns, officialSegments, officialParticipants) {
@@ -200,7 +199,6 @@ fun ViewerDirectorOfficeScreen(
         val officialPlan = selectedOfficial
         if (officialPlan != null) {
             val version = officialDao.versions(officialPlan.id).firstOrNull { it.status == DirectorPlanVersionEntity.STATUS_PUBLISHED }
-            selectedOfficialSourceMode = version?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in DirectorOfficeSharedContract.methodCodes }
             selectedOfficialVersionLabel = version?.let { "نسخه ${it.versionNumber} — ${it.title}" }.orEmpty()
             officialTurns = version?.let { officialDao.turns(it.id) }.orEmpty()
             officialCues = version?.let { officialDao.stageCues(it.id) }.orEmpty()
@@ -208,7 +206,7 @@ fun ViewerDirectorOfficeScreen(
             officialSegments = officialTextRows.groupBy { it.turnId }
             officialParticipants = if (officialTurns.isEmpty()) emptyMap() else officialDao.participantsForTurns(officialTurns.map { it.id }).groupBy { it.turnId }
         } else {
-            officialTurns = emptyList(); officialCues = emptyList(); officialSegments = emptyMap(); officialParticipants = emptyMap(); selectedOfficialSourceMode = null; selectedOfficialVersionLabel = ""
+            officialTurns = emptyList(); officialCues = emptyList(); officialSegments = emptyMap(); officialParticipants = emptyMap(); selectedOfficialVersionLabel = ""
         }
         val personalPlan = selectedPersonal
         if (personalPlan != null) {
@@ -219,34 +217,25 @@ fun ViewerDirectorOfficeScreen(
             personalSegments = personalTextRows.groupBy { it.turnId }
             personalParticipants = if (personalTurns.isEmpty()) emptyMap() else personalDao.participantsForTurns(personalTurns.map { it.id }).groupBy { it.turnId }
             selectedPersonalMethod = version?.changeNotes?.substringAfter("روش ساخت: ", "")?.substringBefore("؛").orEmpty()
-            selectorEntries = ViewerDirectorOfficePublicationImporter.selectorEntries(contentDb, personalPlan.taziehUid)
+            selectorEntries = ViewerDirectorOfficeRepository.selectorEntries(contentDb, personalPlan.taziehUid)
         } else {
             personalTurns = emptyList(); personalCues = emptyList(); personalSegments = emptyMap(); personalParticipants = emptyMap(); selectedPersonalMethod = ""; selectorEntries = emptyList()
         }
     }
 
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            busy = true
-            try {
-                context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (_: Exception) { }
-            try {
-                message = ViewerDirectorOfficePublicationImporter.import(context, uri, officialDb)
-                refresh++
-            } catch (e: Exception) {
-                message = "واردکردن دفتر رسمی انجام نشد: ${e.message ?: "خطای نامشخص"}"
-            } finally { busy = false }
-        }
-    }
 
     LaunchedEffect(taziehId) {
-        selectedTaziehResolved = taziehId == null
+        selectedTaziehResolved = false
         selectedTaziehUid = null
-        if (taziehId != null) {
-            selectedTaziehUid = withContext(Dispatchers.IO) { contentDb.taziehDao().getById(taziehId)?.uid }
-            selectedTaziehResolved = true
+        libraryTaziehs = withContext(Dispatchers.IO) {
+            if (taziehId != null) {
+                contentDb.taziehDao().getById(taziehId)?.let(::listOf).orEmpty()
+            } else {
+                contentDb.taziehDao().getAll()
+            }
         }
+        selectedTaziehUid = if (taziehId != null) libraryTaziehs.firstOrNull()?.uid else null
+        selectedTaziehResolved = true
     }
 
     LaunchedEffect(refresh, canOfficial, selectedTaziehResolved, selectedTaziehUid) {
@@ -280,24 +269,22 @@ fun ViewerDirectorOfficeScreen(
                 )
             }
             TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("دفتر رسمی") })
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("دفتر رسمی محلی") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("دفتر شخصی") })
             }
             if (tab == 0) {
                 if (!canOfficial) {
                     Text("مدیر دسترسی مشاهده دفتر رسمی را برای این Viewer فعال نکرده است.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
                 } else {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) }, modifier = Modifier.weight(1f), enabled = !busy) {
-                            Icon(Icons.Default.FileOpen, null); Text("دریافت / به‌روزرسانی دفتر رسمی")
-                        }
-                    }
-                    Text("فقط نسخه منتشرشده و امضاشده Admin نمایش داده می‌شود. با واردکردن بسته جدیدتر، نسخه رسمی قبلی همین مجلس به‌صورت کامل جایگزین می‌شود؛ دفتر شخصی کاربر تغییر نمی‌کند. این بخش امکان ویرایش، کپی، خروجی یا انتشار ندارد.", Modifier.padding(horizontal = 14.dp), style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "این زبانه فقط داده رسمی محلیِ باقی‌مانده از نسخه‌های قبلی را به‌صورت خواندنی نشان می‌دهد؛ در معماری فعلی دفتر از Admin ارسال یا دریافت نمی‌شود. برای ساخت و استفاده از دفتر در Viewer، زبانه دفتر شخصی را باز کنید تا داده مستقیماً از کتابخانه همین دستگاه ساخته شود.",
+                        Modifier.padding(horizontal = 14.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall
+                    )
                     LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (officialPlans.isEmpty()) item {
                             Text(
-                                if (taziehId == null) "هنوز بسته رسمی از Admin دریافت نشده است."
-                                else "برای این مجلس هنوز بسته رسمی منتشرشده و دریافت‌شده‌ای وجود ندارد. ابتدا بسته همین مجلس را از Admin دریافت کنید.",
+                                if (taziehId == null) "در این نصب نسخه رسمی محلی برای نمایش وجود ندارد."
+                                else "برای این مجلس نسخه رسمی محلی برای نمایش وجود ندارد؛ برای ساخت دفتر خودتان از زبانه دفتر شخصی استفاده کنید.",
                                 modifier = Modifier.padding(vertical = 12.dp)
                             )
                         }
@@ -323,38 +310,47 @@ fun ViewerDirectorOfficeScreen(
                                 search.isBlank() || officialSearchIndex[turn.id].orEmpty().contains(search, ignoreCase = true)
                             }
                             items(filtered, key = { it.id }) { turn ->
-                                Card(Modifier.fillMaxWidth()) {
-                                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text("نوبت ${turn.turnNumber} — ${turn.title}", style = MaterialTheme.typography.titleSmall)
-                                        val officialRoleNames = officialParticipants[turn.id].orEmpty().sortedBy { it.orderIndex }.joinToString("، ") { it.roleTitle }
-                                        if (officialRoleNames.isNotBlank()) Text("نقش‌ها: $officialRoleNames", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-                                        officialSegments[turn.id].orEmpty().forEach { segment -> Text(segment.text) }
-                                        val cues = officialCuesByTurn[turn.id].orEmpty()
-                                        cues.forEach { cue ->
-                                            Text("راهنمای صحنه: ${cue.title.ifBlank { cue.cueType }} — ${cue.instruction}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                                        }
-                                    }
-                                }
+                                DirectorOfficeTurnCard(
+                                    turn = turn,
+                                    position = officialTurns.indexOfFirst { it.id == turn.id },
+                                    totalTurns = officialTurns.size,
+                                    participants = officialParticipants[turn.id].orEmpty(),
+                                    segments = officialSegments[turn.id].orEmpty(),
+                                    stageCues = officialCuesByTurn[turn.id].orEmpty(),
+                                    editable = false
+                                )
                             }
                             val globalCues = officialCues.filter { it.turnId == null }
                             if (globalCues.isNotEmpty()) item {
                                 Text("راهنماهای عمومی صحنه", style = MaterialTheme.typography.titleSmall)
                                 globalCues.forEach { cue -> Text("${cue.title}: ${cue.instruction}") }
                             }
-                            item {
-                                OutlinedButton(
-                                    onClick = { showMethodDialog = true },
-                                    enabled = canCreate && methods.isNotEmpty() && !busy,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("ساخت دفتر شخصی از این مجلس") }
-                                if (!canCreate || methods.isEmpty()) Text("مدیر اجازه ساخت دفتر شخصی یا هیچ‌یک از روش‌های ساخت را فعال نکرده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                            }
                         }
                     }
                 }
             } else {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    Text("دفتر شخصی فقط در همین دستگاه و در پایگاه داده مستقل ذخیره می‌شود. ویرایش آن هیچ اثری بر دفتر رسمی ندارد.", style = MaterialTheme.typography.bodySmall)
+                    Text("دفتر شخصی فقط در همین دستگاه و در پایگاه داده مستقل ذخیره می‌شود. ساخت آن از کتابخانه محلی انجام می‌شود و به دریافت دفتر از Admin وابسته نیست.", style = MaterialTheme.typography.bodySmall)
+                    if (taziehId == null && methods.any { it.requiresLibrarySource }) {
+                        androidx.compose.foundation.layout.Box {
+                            OutlinedButton(onClick = { taziehPickerExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text(libraryTaziehs.firstOrNull { it.uid == selectedTaziehUid }?.title ?: "انتخاب مجلس از کتابخانه محلی")
+                            }
+                            DropdownMenu(expanded = taziehPickerExpanded, onDismissRequest = { taziehPickerExpanded = false }) {
+                                libraryTaziehs.forEach { localTazieh ->
+                                    DropdownMenuItem(
+                                        text = { Text(localTazieh.title) },
+                                        onClick = {
+                                            selectedTaziehUid = localTazieh.uid
+                                            taziehPickerExpanded = false
+                                            message = "مجلس «${localTazieh.title}» برای ساخت دفتر انتخاب شد."
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (taziehId != null && !selectedTaziehResolved) Text("در حال بررسی مجلس انتخاب‌شده…", style = MaterialTheme.typography.bodySmall)
                     if (!canEdit) Text("مجوز ویرایش دفتر شخصی فعال نیست؛ دفترهای موجود فقط قابل مشاهده‌اند.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     if (!canCreate) {
                         Text("مدیر مجوز ساخت دفتر شخصی را برای این Viewer فعال نکرده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -364,12 +360,12 @@ fun ViewerDirectorOfficeScreen(
                         Text("روش‌های مجاز مدیر: ${methods.joinToString("، ") { it.label }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         OutlinedButton(
                             onClick = { showMethodDialog = true },
-                            enabled = !busy && selectedTaziehResolved && (taziehId == null || selectedTaziehUid != null),
+                            enabled = !busy && selectedTaziehResolved && (methods.any { !it.requiresLibrarySource } || !selectedTaziehUid.isNullOrBlank()),
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("ساخت دفتر شخصی جدید") }
                     }
-                    if (!canOfficial && methods.any { it.requiresOfficialSource }) {
-                        Text("روش‌های شماره‌محور، متن کامل و انتخاب‌گر به دفتر رسمی دریافت‌شده و مجوز مشاهده آن نیاز دارند؛ روش دستی مستقل است.", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
+                    if (methods.any { it.requiresLibrarySource } && selectedTaziehUid.isNullOrBlank()) {
+                        Text("برای روش‌های شماره‌محور، متن کامل و انتخاب‌گر، ابتدا یک مجلس از کتابخانه محلی انتخاب کنید. روش دستی به انتخاب مجلس نیاز ندارد.", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
                     }
                     if (canCreate && methods.isEmpty()) Text("مدیر هنوز هیچ روش ساخت دفتری را فعال نکرده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
@@ -498,61 +494,72 @@ fun ViewerDirectorOfficeScreen(
                             search.isBlank() || personalSearchIndex[turn.id].orEmpty().contains(search, ignoreCase = true)
                         }
                         items(visible, key = { it.id }) { turn ->
-                            Card(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("نوبت ${turn.turnNumber} — ${turn.title}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                                        if (canEdit) {
-                                            IconButton(onClick = { editingTurn = turn; editingTurnNumber = turn.turnNumber.toString(); editingTurnTitle = turn.title }) { Icon(Icons.Default.Edit, "ویرایش عنوان و شماره نوبت") }
-                                            IconButton(onClick = { addingDialogueToTurn = turn; newDialogueText = "" }) { Icon(Icons.Default.Add, "افزودن دیالوگ") }
-                                            IconButton(onClick = { managingParticipantsFor = turn; customParticipantTitle = "" }) { Icon(Icons.Default.PersonAdd, "مدیریت نقش‌های نوبت") }
-                                            IconButton(onClick = { deleteTurnCandidate = turn }) { Icon(Icons.Default.Delete, "حذف نوبت") }
-                                            IconButton(onClick = {
-                                                scope.launch {
-                                                    val current = personalTurns
-                                                    val index = current.indexOfFirst { it.id == turn.id }
-                                                    if (index > 0) {
-                                                        val reordered = current.toMutableList().apply { add(index - 1, removeAt(index)) }
-                                                        try {
-                                                            ViewerDirectorOfficeRepository.reorderTurns(context, personalDb, reordered)
-                                                            refresh++
-                                                        } catch (e: Exception) { message = "تغییر ترتیب انجام نشد: ${e.message}" }
-                                                    }
-                                                }
-                                            }, enabled = personalTurns.indexOfFirst { it.id == turn.id } > 0) { Icon(Icons.Default.ArrowUpward, "بالا") }
-                                            IconButton(onClick = {
-                                                scope.launch {
-                                                    val current = personalTurns
-                                                    val index = current.indexOfFirst { it.id == turn.id }
-                                                    if (index >= 0 && index < current.lastIndex) {
-                                                        val reordered = current.toMutableList().apply { add(index + 1, removeAt(index)) }
-                                                        try {
-                                                            ViewerDirectorOfficeRepository.reorderTurns(context, personalDb, reordered)
-                                                            refresh++
-                                                        } catch (e: Exception) { message = "تغییر ترتیب انجام نشد: ${e.message}" }
-                                                    }
-                                                }
-                                            }, enabled = personalTurns.indexOfFirst { it.id == turn.id } in 0 until personalTurns.lastIndex) { Icon(Icons.Default.ArrowDownward, "پایین") }
+                            val position = personalTurns.indexOfFirst { it.id == turn.id }
+                            DirectorOfficeTurnCard(
+                                turn = turn,
+                                position = position,
+                                totalTurns = personalTurns.size,
+                                participants = personalParticipants[turn.id].orEmpty(),
+                                segments = personalSegments[turn.id].orEmpty(),
+                                stageCues = personalCuesByTurn[turn.id].orEmpty(),
+                                editable = canEdit,
+                                onEditTurn = if (canEdit) ({
+                                    editingTurn = turn
+                                    editingTurnNumber = turn.turnNumber.toString()
+                                    editingTurnTitle = turn.title
+                                }) else null,
+                                onAddDialogue = if (canEdit) ({
+                                    addingDialogueToTurn = turn
+                                    newDialogueText = ""
+                                }) else null,
+                                onManageParticipants = if (canEdit) ({
+                                    managingParticipantsFor = turn
+                                    customParticipantTitle = ""
+                                }) else null,
+                                onDeleteTurn = if (canEdit) ({ deleteTurnCandidate = turn }) else null,
+                                onMoveUp = if (canEdit) ({
+                                    scope.launch {
+                                        val current = personalTurns
+                                        val index = current.indexOfFirst { it.id == turn.id }
+                                        if (index > 0) {
+                                            val reordered = current.toMutableList().apply { add(index - 1, removeAt(index)) }
+                                            try {
+                                                ViewerDirectorOfficeRepository.reorderTurns(context, personalDb, reordered)
+                                                refresh++
+                                            } catch (e: Exception) {
+                                                message = "تغییر ترتیب انجام نشد: ${e.message}"
+                                            }
                                         }
                                     }
-                                    val roleNames = personalParticipants[turn.id].orEmpty().sortedBy { it.orderIndex }.joinToString("، ") { it.roleTitle }
-                                    if (roleNames.isNotBlank()) Text("نقش‌ها: $roleNames", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-                                    personalSegments[turn.id].orEmpty().forEach { segment ->
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text(segment.text, modifier = Modifier.weight(1f))
-                                            if (canEdit) IconButton(onClick = { editingSegment = segment; editingSegmentText = segment.text }) { Icon(Icons.Default.Edit, "ویرایش دیالوگ") }
-                                            if (canEdit) IconButton(onClick = { deleteSegmentCandidate = segment }) { Icon(Icons.Default.Delete, "حذف دیالوگ") }
+                                }) else null,
+                                onMoveDown = if (canEdit) ({
+                                    scope.launch {
+                                        val current = personalTurns
+                                        val index = current.indexOfFirst { it.id == turn.id }
+                                        if (index >= 0 && index < current.lastIndex) {
+                                            val reordered = current.toMutableList().apply { add(index + 1, removeAt(index)) }
+                                            try {
+                                                ViewerDirectorOfficeRepository.reorderTurns(context, personalDb, reordered)
+                                                refresh++
+                                            } catch (e: Exception) {
+                                                message = "تغییر ترتیب انجام نشد: ${e.message}"
+                                            }
                                         }
                                     }
-                                    personalCuesByTurn[turn.id].orEmpty().forEach { cue ->
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text("${cue.title}: ${cue.instruction}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                            if (canEdit) IconButton(onClick = { editingCue = cue; editingCueTitle = cue.title; editingCueText = cue.instruction; editingCueType = cue.cueType }) { Icon(Icons.Default.Edit, "ویرایش راهنمای صحنه") }
-                                            if (canEdit) IconButton(onClick = { deleteCueCandidate = cue }) { Icon(Icons.Default.Delete, "حذف راهنمای صحنه") }
-                                        }
-                                    }
-                                }
-                            }
+                                }) else null,
+                                onEditSegment = if (canEdit) ({ segment ->
+                                    editingSegment = segment
+                                    editingSegmentText = segment.text
+                                }) else null,
+                                onDeleteSegment = if (canEdit) ({ segment -> deleteSegmentCandidate = segment }) else null,
+                                onEditCue = if (canEdit) ({ cue ->
+                                    editingCue = cue
+                                    editingCueTitle = cue.title
+                                    editingCueText = cue.instruction
+                                    editingCueType = cue.cueType
+                                }) else null,
+                                onDeleteCue = if (canEdit) ({ cue -> deleteCueCandidate = cue }) else null
+                            )
                         }
                         val globalPersonalCues = personalCues.filter { it.turnId == null }
                         if (globalPersonalCues.isNotEmpty()) item {
@@ -602,49 +609,41 @@ fun ViewerDirectorOfficeScreen(
             title = { Text("روش ساخت دفتر شخصی") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val sourceMode = selectedOfficialSourceMode
-                    if (selectedOfficial != null && sourceMode != null) {
-                        Text("روش محتوای منتشرشده: $sourceMode", style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (selectedOfficial == null && methods.any { it.requiresOfficialSource }) {
-                        Text("برای روش‌های مبتنی بر محتوای مجلس، ابتدا بسته رسمی را دریافت و یک دفتر را در زبانه دفتر رسمی انتخاب کنید. روش دستی بدون دفتر رسمی قابل ساخت است.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "دفتر جدید از نقش‌ها و متن‌های موجود در کتابخانه همین دستگاه ساخته می‌شود. هیچ دفتر یا بسته‌ای از Admin دریافت نمی‌شود.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    selectedTaziehUid?.let { uid ->
+                        libraryTaziehs.firstOrNull { it.uid == uid }?.let { Text("مجلس انتخاب‌شده: ${it.title}", style = MaterialTheme.typography.labelMedium) }
                     }
                     methods.forEach { method ->
-                        TextButton(onClick = {
-                            showMethodDialog = false
-                            if (method.requiresOfficialSource && !canOfficial) {
-                                message = "برای این روش، مدیر باید مجوز مشاهده دفتر رسمی را نیز فعال کند."
-                                return@TextButton
-                            }
-                            if (method.requiresOfficialSource && selectedOfficial == null) {
-                                tab = 0
-                                message = "ابتدا یک دفتر رسمی را انتخاب کنید؛ سپس از دفتر شخصی روش ساخت را اجرا کنید."
-                                return@TextButton
-                            }
-                            scope.launch {
-                                busy = true
-                                try {
-                                    val id = withContext(Dispatchers.IO) {
-                                        if (!method.requiresOfficialSource) {
-                                            ViewerDirectorOfficePublicationImporter.createBlankPersonal(context, personalDb, selectedTaziehUid)
-                                        } else {
-                                            ViewerDirectorOfficePublicationImporter.createPersonalFromOfficial(context, contentDb, officialDb, personalDb, selectedOfficial!!, method.code)
+                        DirectorOfficeBuildMethodOption(
+                            method = method,
+                            selected = false,
+                            onClick = {
+                                showMethodDialog = false
+                                if (method.requiresLibrarySource && selectedTaziehUid.isNullOrBlank()) {
+                                    message = "برای این روش ابتدا یک مجلس از کتابخانه محلی انتخاب کنید."
+                                    return@DirectorOfficeBuildMethodOption
+                                }
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        val id = withContext(Dispatchers.IO) {
+                                            ViewerDirectorOfficeRepository.createPersonalFromLibrary(
+                                                context, contentDb, personalDb, selectedTaziehUid, method.code
+                                            )
                                         }
-                                    }
-                                    selectedPersonal = personalDao.plan(id)
-                                    tab = 1
-                                    manualTitle = ""; manualText = ""; manualNumber = "1"
-                                    refresh++
-                                    message = "دفتر شخصی با روش «${method.label}» ساخته شد. این دفتر مستقل و غیرقابل انتشار رسمی است."
-                                } catch (e: Exception) { message = "ساخت دفتر شخصی ناموفق بود: ${e.message}" }
-                                finally { busy = false }
+                                        selectedPersonal = personalDao.plan(id)
+                                        tab = 1
+                                        manualTitle = ""; manualText = ""; manualNumber = "1"
+                                        refresh++
+                                        message = "دفتر شخصی با روش «${method.label}» از کتابخانه محلی ساخته شد. این دفتر مستقل و غیرقابل انتشار رسمی است."
+                                    } catch (e: Exception) { message = "ساخت دفتر شخصی ناموفق بود: ${e.message}" }
+                                    finally { busy = false }
+                                }
                             }
-                        }, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("ساخت با روش ${method.label}")
-                                Text(method.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
+                        )
                     }
                 }
             },
