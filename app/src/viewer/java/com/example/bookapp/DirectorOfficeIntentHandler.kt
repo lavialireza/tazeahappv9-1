@@ -1,32 +1,14 @@
 package com.example.bookapp
 
-import android.content.Intent
-import androidx.activity.ComponentActivity
-import androidx.lifecycle.lifecycleScope
-import com.example.bookapp.data.DirectorOfficePublicationContract
-import com.example.bookapp.data.ViewerDirectorOfficeDatabase
-import com.example.bookapp.data.ViewerDirectorOfficePublicationImporter
-import kotlinx.coroutines.launch
-
-/** دریافت مستقیم بسته رسمی از Share Sheet؛ فقط در flavor Viewer وجود دارد. */
-fun handleDirectorOfficePublicationIntent(activity: ComponentActivity, incoming: Intent?): Boolean {
-    if (incoming?.action != Intent.ACTION_SEND || incoming.type != DirectorOfficePublicationContract.MIME_TYPE) return false
-    val uri = incoming.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
-    if (uri == null) {
-        android.widget.Toast.makeText(activity, "فایل دفتر رسمی در پیام وجود ندارد.", android.widget.Toast.LENGTH_LONG).show()
-        return true
-    }
-    activity.lifecycleScope.launch {
-        try {
-            val result = ViewerDirectorOfficePublicationImporter.import(
-                activity, uri, ViewerDirectorOfficeDatabase.official(activity)
-            )
-            android.widget.Toast.makeText(activity, result, android.widget.Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            android.widget.Toast.makeText(activity, "دریافت دفتر رسمی ناموفق بود: ${e.message ?: "فایل نامعتبر است."}", android.widget.Toast.LENGTH_LONG).show()
-        } finally {
-            activity.setIntent(Intent())
-        }
-    }
-    return true
-}
+/**
+ * Legacy intent-handler tombstone.
+ *
+ * Importing or receiving Director Office publication packages is not part of
+ * the Viewer architecture. Viewer creates and manages its own local personal
+ * office from its local library. Access-policy transfer remains a separate
+ * workflow and is not handled by this class.
+ *
+ * This source file intentionally contains no executable handler. Keeping the
+ * exact legacy path in the project ensures that an older tracked copy is
+ * overwritten when this project is applied to an existing checkout.
+ */
