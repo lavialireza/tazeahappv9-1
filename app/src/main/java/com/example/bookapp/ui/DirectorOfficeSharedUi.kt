@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -154,6 +153,117 @@ fun DirectorOfficeStageCueInputFields(
     }
 }
 
+/** یک خط نمایشی از متن دیالوگ؛ واژه‌ای که به‌تنهایی به خط بعد منتقل شده، وسط‌چین می‌شود. */
+private data class DirectorOfficeDialogueVisualLine(
+    val text: String,
+    val centerAsOrphan: Boolean
+)
+
+/**
+ * متن فارسی/عربی را با جهت صریح راست‌به‌چپ و شکست فقط بین واژه‌ها نمایش می‌دهد.
+ * اگر آخرین واژه در عرض باقی‌مانده جا نشود، واژه کامل به خط بعد می‌رود؛
+ * چنانچه در آن خط تنها بماند، برای جلوگیری از ظاهر نامتوازن وسط‌چین می‌شود.
+ */
+@Composable
+private fun DirectorOfficeDialogueParagraph(
+    text: String,
+    modifier: Modifier = Modifier,
+    onLineCount: (Int) -> Unit
+) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = modifier) {
+        val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val rtlStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
+            textDirection = androidx.compose.ui.text.style.TextDirection.Rtl
+        )
+        val availableWidthPx = constraints.maxWidth.coerceAtLeast(1)
+        val visualLines = androidx.compose.runtime.remember(text, availableWidthPx, rtlStyle, textMeasurer) {
+            wrapDirectorOfficeDialogueByWords(
+                text = text,
+                style = rtlStyle,
+                availableWidthPx = availableWidthPx,
+                textMeasurer = textMeasurer
+            )
+        }
+
+        androidx.compose.runtime.SideEffect {
+            onLineCount(visualLines.size.coerceAtLeast(1))
+        }
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            visualLines.forEach { line ->
+                Text(
+                    text = line.text,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = rtlStyle,
+                    textAlign = if (line.centerAsOrphan) {
+                        androidx.compose.ui.text.style.TextAlign.Center
+                    } else {
+                        androidx.compose.ui.text.style.TextAlign.Right
+                    },
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Clip
+                )
+            }
+        }
+    }
+}
+
+private fun wrapDirectorOfficeDialogueByWords(
+    text: String,
+    style: androidx.compose.ui.text.TextStyle,
+    availableWidthPx: Int,
+    textMeasurer: androidx.compose.ui.text.TextMeasurer
+): List<DirectorOfficeDialogueVisualLine> {
+    val result = mutableListOf<DirectorOfficeDialogueVisualLine>()
+    val normalizedText = text.replace("\r\n", "\n").replace('\r', '\n')
+    val paragraphs = normalizedText.split('\n')
+
+    paragraphs.forEach { paragraph ->
+        val words = paragraph.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isEmpty()) {
+            result += DirectorOfficeDialogueVisualLine("", centerAsOrphan = false)
+            return@forEach
+        }
+
+        var currentLine = ""
+        var currentLineStartedByWrap = false
+
+        words.forEach { word ->
+            val candidate = if (currentLine.isEmpty()) word else "$currentLine $word"
+            val candidateWidth = textMeasurer.measure(
+                text = androidx.compose.ui.text.AnnotatedString(candidate),
+                style = style
+            ).size.width
+
+            if (currentLine.isEmpty() || candidateWidth <= availableWidthPx) {
+                currentLine = candidate
+            } else {
+                val currentIsSingleWord = currentLine.trim().split(Regex("\\s+")).size == 1
+                result += DirectorOfficeDialogueVisualLine(
+                    text = currentLine,
+                    centerAsOrphan = currentLineStartedByWrap && currentIsSingleWord
+                )
+                currentLine = word
+                currentLineStartedByWrap = true
+            }
+        }
+
+        if (currentLine.isNotEmpty()) {
+            val currentIsSingleWord = currentLine.trim().split(Regex("\\s+")).size == 1
+            result += DirectorOfficeDialogueVisualLine(
+                text = currentLine,
+                centerAsOrphan = currentLineStartedByWrap && currentIsSingleWord
+            )
+        }
+    }
+
+    return result.ifEmpty { listOf(DirectorOfficeDialogueVisualLine("", centerAsOrphan = false)) }
+}
+
 /**
  * کارت واحد نوبت دفتر برای هر دو Flavor.
  * تفاوت سطح دسترسی از طریق callbackهای اختیاری و editable کنترل می‌شود؛
@@ -201,19 +311,14 @@ fun DirectorOfficeTurnCard(
     var dialogueLineCounts by androidx.compose.runtime.remember(turn.id, segments) {
         androidx.compose.runtime.mutableStateOf(emptyMap<Long, Int>())
     }
-    val measuredDialogueLines = if (segments.isEmpty()) 1 else {
-        segments.sumOf { segment -> dialogueLineCounts[segment.id] ?: 1 }
-    }.coerceAtLeast(1)
-    val visibleDialogueLines = measuredDialogueLines.coerceIn(1, 4)
     // ارتفاع هر سطر با اندازه قلم و فاصله خطوط انتخاب‌شده در تنظیمات دفتر هماهنگ می‌شود.
+    // ارتفاع جداگانه برای هر قطعه متن محاسبه می‌شود تا یک متن کوتاه فضای متن دیگری را اشغال نکند.
     val configuredLineHeightSp = androidx.compose.material3.MaterialTheme.typography.bodyMedium.lineHeight.value
     val fallbackLineHeightSp = androidx.compose.material3.MaterialTheme.typography.bodyMedium.fontSize.value * 1.35f
     val dialogueLineHeightDp = (
-        (if (configuredLineHeightSp.isFinite()) configuredLineHeightSp else fallbackLineHeightSp) *
+        (if (configuredLineHeightSp.isFinite() && configuredLineHeightSp > 0f) configuredLineHeightSp else fallbackLineHeightSp) *
             androidx.compose.ui.platform.LocalDensity.current.fontScale
         ).dp
-    // فضای ثابت عنوان/دکمه‌ها به‌علاوه ۱ تا ۴ سطر؛ محتوای بیشتر داخل کادر پیمایش می‌شود.
-    val dialogueViewportHeight = 80.dp + dialogueLineHeightDp * visibleDialogueLines.toFloat()
     val roleLabel = participants.sortedBy { it.orderIndex }.joinToString("، ") { participant ->
         if (participant.isLead) "★ ${participant.roleTitle}" else participant.roleTitle
     }
@@ -343,16 +448,17 @@ fun DirectorOfficeTurnCard(
                 Text(displayNotes, color = androidx.compose.material3.MaterialTheme.colorScheme.error, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
             }
 
-            // ارتفاع کادر متناسب با ۱ تا ۴ سطر متن تنظیم می‌شود؛ متن بلندتر با پیمایش داخلی نمایش داده می‌شود.
+            // پوسته متن ثابت است؛ فقط محتوای هر قطعه دیالوگ اسکرول می‌شود.
+            // عنوان «متن دیالوگ» و دکمه‌های ویرایش/حذف هیچ‌وقت همراه متن از دید خارج نمی‌شوند.
             androidx.compose.material3.Surface(
-                modifier = Modifier.fillMaxWidth().height(dialogueViewportHeight).verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp),
                 color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
                 tonalElevation = 1.dp
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Text(
                         "متن دیالوگ",
@@ -367,28 +473,30 @@ fun DirectorOfficeTurnCard(
                         )
                     }
                     segments.sortedBy { it.segmentIndex }.forEach { segment ->
+                        val segmentLineCount = (dialogueLineCounts[segment.id] ?: 1).coerceAtLeast(1)
+                        val visibleSegmentLines = segmentLineCount.coerceAtMost(4)
+                        val segmentTextHeight = dialogueLineHeightDp * visibleSegmentLines.toFloat()
                         Column(
                             modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            // متن دیالوگ تمام عرض کادر را می‌گیرد؛ دکمه‌ها دیگر عرض متن را محدود نمی‌کنند.
-                            // این کار از شکستن زودهنگام سطرها به‌دلیل فضای اشغال‌شده آیکون‌ها جلوگیری می‌کند.
-                            Text(
-                                text = segment.text,
-                                modifier = Modifier.fillMaxWidth(),
-                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
-                                    textDirection = androidx.compose.ui.text.style.TextDirection.ContentOrRtl
-                                ),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                                onTextLayout = { layoutResult: TextLayoutResult ->
-                                    val measuredLines = layoutResult.lineCount.coerceAtLeast(1)
-                                    if (dialogueLineCounts[segment.id] != measuredLines) {
-                                        dialogueLineCounts = dialogueLineCounts + (segment.id to measuredLines)
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier.fillMaxWidth()
+                                    .height(segmentTextHeight)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                DirectorOfficeDialogueParagraph(
+                                    text = segment.text,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onLineCount = { measuredLines ->
+                                        if (dialogueLineCounts[segment.id] != measuredLines) {
+                                            dialogueLineCounts = dialogueLineCounts + (segment.id to measuredLines)
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                             if (editable && (onEditSegment != null || onDeleteSegment != null)) {
-                                // کنترل‌های ویرایش در ردیفی مستقل و زیر متن قرار می‌گیرند تا عرض متن کامل بماند.
+                                // کنترل‌ها بیرون از محدوده اسکرول متن می‌مانند و همیشه در دسترس‌اند.
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End,
@@ -397,7 +505,7 @@ fun DirectorOfficeTurnCard(
                                     onEditSegment?.let { action ->
                                         androidx.compose.material3.IconButton(
                                             onClick = { action(segment) },
-                                            modifier = Modifier.size(36.dp)
+                                            modifier = Modifier.size(34.dp)
                                         ) {
                                             androidx.compose.material3.Icon(
                                                 androidx.compose.material.icons.Icons.Default.Edit,
@@ -409,7 +517,7 @@ fun DirectorOfficeTurnCard(
                                     onDeleteSegment?.let { action ->
                                         androidx.compose.material3.IconButton(
                                             onClick = { action(segment) },
-                                            modifier = Modifier.size(36.dp)
+                                            modifier = Modifier.size(34.dp)
                                         ) {
                                             androidx.compose.material3.Icon(
                                                 androidx.compose.material.icons.Icons.Default.Delete,
