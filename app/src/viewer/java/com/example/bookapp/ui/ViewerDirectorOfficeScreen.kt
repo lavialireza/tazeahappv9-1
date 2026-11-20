@@ -247,17 +247,13 @@ fun ViewerDirectorOfficeScreen(
         colorScheme = colorSchemeFor(themeChoice, darkMode),
         typography = baseOfficeTypography
     ) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("دفتر معین‌البکا") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") } },
-                actions = {
-                    IconButton(onClick = { showOfficeSettingsDialog = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر")
-                    }
-                }
-            )
+    DirectorOfficeScreenFrame(
+        title = "دفتر معین‌البکا",
+        onBack = onBack,
+        actions = {
+            IconButton(onClick = { showOfficeSettingsDialog = true }) {
+                Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر")
+            }
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -289,16 +285,16 @@ fun ViewerDirectorOfficeScreen(
                             )
                         }
                         items(officialPlans, key = { it.uid }) { plan ->
-                            Card(Modifier.fillMaxWidth().clickable {
-                                selectedOfficial = plan
-                                scope.launch { reload() }
-                            }, colors = CardDefaults.cardColors(containerColor = if (selectedOfficial?.uid == plan.uid) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
-                                Column(Modifier.padding(12.dp)) {
-                                    Text(plan.title, style = MaterialTheme.typography.titleMedium)
-                                    Text("شناسه مجلس: ${plan.taziehUid}", style = MaterialTheme.typography.bodySmall)
-                                    Text("وضعیت: منتشرشده توسط مدیر", style = MaterialTheme.typography.labelSmall)
+                            DirectorOfficeSelectablePlanCard(
+                                title = plan.title,
+                                subtitle = "شناسه مجلس: ${plan.taziehUid}",
+                                supportingText = "وضعیت: منتشرشده توسط مدیر",
+                                selected = selectedOfficial?.uid == plan.uid,
+                                onClick = {
+                                    selectedOfficial = plan
+                                    scope.launch { reload() }
                                 }
-                            }
+                            )
                         }
                         if (selectedOfficial != null) {
                             item {
@@ -372,20 +368,20 @@ fun ViewerDirectorOfficeScreen(
                 LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (personalPlans.isEmpty()) item { Text("هنوز دفتر شخصی ساخته نشده است. از دکمه «ساخت دفتر شخصی جدید» استفاده کنید.") }
                     items(personalPlans, key = { it.uid }) { plan ->
-                        Card(Modifier.fillMaxWidth().clickable {
-                            selectedPersonal = plan
-                            scope.launch { reload() }
-                        }, colors = CardDefaults.cardColors(containerColor = if (selectedPersonal?.uid == plan.uid) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
-                            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(plan.title, style = MaterialTheme.typography.titleMedium)
-                                    Text("دفتر شخصی مستقل • روش: ${plan.description.substringAfter("روش ساخت: ", "نامشخص").substringBefore("؛")} • غیرقابل انتشار رسمی", style = MaterialTheme.typography.bodySmall)
-                                }
+                        DirectorOfficeSelectablePlanCard(
+                            title = plan.title,
+                            subtitle = "دفتر شخصی مستقل • روش: ${plan.description.substringAfter("روش ساخت: ", "نامشخص").substringBefore("؛")} • غیرقابل انتشار رسمی",
+                            selected = selectedPersonal?.uid == plan.uid,
+                            onClick = {
+                                selectedPersonal = plan
+                                scope.launch { reload() }
+                            },
+                            trailingContent = {
                                 if (canEdit) IconButton(onClick = { deletePlanCandidate = plan }) {
                                     Icon(Icons.Default.Delete, contentDescription = "حذف دفتر شخصی")
                                 }
                             }
-                        }
+                        )
                     }
                     if (selectedPersonal != null) {
                         item {

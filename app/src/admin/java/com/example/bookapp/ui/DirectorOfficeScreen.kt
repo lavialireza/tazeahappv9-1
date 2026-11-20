@@ -610,55 +610,55 @@ if (currentVersion != null) {
         colorScheme = colorSchemeFor(themeChoice, darkMode),
         typography = officeTypography
     ) {
-    Scaffold(
-        topBar = {
-            Column {
-                TopAppBar(
-                    title = { Text("دفتر معین البکا") },
-                    navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") } },
-                    actions = {
-                        IconButton(onClick = { showTurnSearch = !showTurnSearch; if (!showTurnSearch) turnSearch = "" }) {
-                            Icon(if (showTurnSearch) Icons.Default.Close else Icons.Default.Search, contentDescription = "جستجوی نوبت و متن")
-                        }
-                        IconButton(onClick = { showOfficeSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر") }
-                        IconButton(onClick = { refresh++ }) { Icon(Icons.Default.Refresh, contentDescription = "بروزرسانی") }
-                    }
+    DirectorOfficeScreenFrame(
+        title = "دفتر معین البکا",
+        onBack = onBack,
+        actions = {
+            IconButton(onClick = { showTurnSearch = !showTurnSearch; if (!showTurnSearch) turnSearch = "" }) {
+                Icon(if (showTurnSearch) Icons.Default.Close else Icons.Default.Search, contentDescription = "جستجوی نوبت و متن")
+            }
+            IconButton(onClick = { showOfficeSettingsDialog = true }) {
+                Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر")
+            }
+            IconButton(onClick = { refresh++ }) {
+                Icon(Icons.Default.Refresh, contentDescription = "بروزرسانی")
+            }
+        },
+        topBarContent = {
+            if (showTurnSearch) {
+                DirectorOfficeSearchField(
+                    value = turnSearch,
+                    onValueChange = { turnSearch = it },
+                    label = "شماره نوبت یا بخشی از متن دیالوگ را جستجو کنید",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    showSearchIcon = false
                 )
-                if (showTurnSearch) {
-                    DirectorOfficeSearchField(
-                        value = turnSearch,
-                        onValueChange = { turnSearch = it },
-                        label = "شماره نوبت یا بخشی از متن دیالوگ را جستجو کنید",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        showSearchIcon = false
-                    )
-                    if (turnSearch.isNotBlank()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                        ) {
-                            Text(
-                                if (visibleTurns.isEmpty()) "۰ نتیجه"
-                                else "${toPersianDirectorDigits((selectedSearchResultIndex + 1).toString())} از ${toPersianDirectorDigits(visibleTurns.size.toString())}",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.error,
-                                maxLines = 1
-                            )
-                            TextButton(
-                                modifier = Modifier.weight(0.75f).height(32.dp),
-                                enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex > 0,
-                                onClick = { selectedSearchResultIndex-- },
-                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
-                            ) { Text("نتیجه قبلی", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
-                            TextButton(
-                                modifier = Modifier.weight(0.75f).height(32.dp),
-                                enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex < visibleTurns.lastIndex,
-                                onClick = { selectedSearchResultIndex++ },
-                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
-                            ) { Text("نتیجه بعدی", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
-                        }
+                if (turnSearch.isNotBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (visibleTurns.isEmpty()) "۰ نتیجه"
+                            else "${toPersianDirectorDigits((selectedSearchResultIndex + 1).toString())} از ${toPersianDirectorDigits(visibleTurns.size.toString())}",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1
+                        )
+                        TextButton(
+                            modifier = Modifier.weight(0.75f).height(32.dp),
+                            enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex > 0,
+                            onClick = { selectedSearchResultIndex-- },
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                        ) { Text("نتیجه قبلی", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
+                        TextButton(
+                            modifier = Modifier.weight(0.75f).height(32.dp),
+                            enabled = visibleTurns.isNotEmpty() && selectedSearchResultIndex < visibleTurns.lastIndex,
+                            onClick = { selectedSearchResultIndex++ },
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                        ) { Text("نتیجه بعدی", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
                     }
                 }
             }
@@ -759,45 +759,46 @@ if (currentVersion != null) {
             }
             if (plans.isEmpty()) item { Text(if (planSearch.isBlank()) "هنوز دفتری ایجاد نشده است." else "دفتر منطبق با جست‌وجو پیدا نشد.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(plans, key = { it.id }) { plan ->
-                Card(Modifier.fillMaxWidth().clickable {
-                    scope.launch {
-                        selectedPlan = plan
-                        val target = db.taziehDao().getByUid(plan.taziehUid)
-                        roleOptions = target?.let { loadCurrentTaziehRoles(db, it) }.orEmpty()
-                        selectedRole = roleOptions.firstOrNull()
-                        val versions = dao.versions(plan.id)
-                        planVersions = versions
-                        selectedVersion = versions.firstOrNull()
-                        sources = dao.sourceFiles(plan.id)
-                        turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
-                        selectedVersion?.let {
-                            stageCues = dao.stageCues(it.id)
-                            previewText = buildDirectorVersionPreview(dao, it.id)
-                        } ?: run { stageCues = emptyList() }
-                        val currentVersion = selectedVersion
-                        if (currentVersion != null && !directorVersionHasText(dao, currentVersion.id)) {
-                            val tazieh = db.taziehDao().getByUid(plan.taziehUid)
-                            if (tazieh != null) {
-                                val result = importExistingTaziehText(db, currentVersion.id, tazieh.id)
-                                turns = dao.turns(currentVersion.id)
-                                previewText = buildDirectorVersionPreview(dao, currentVersion.id)
-                                message = if (result.sectionCount > 0) "${result.sectionCount} بخش از متن‌های داخلی همین مجلس در ${result.turnCount} نوبت به دفتر منتقل شد." else "متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
+                val tazieh = taziehOptions.firstOrNull { it.uid == plan.taziehUid }
+                val fieldTitle = tazieh?.let { t -> fieldOptions.firstOrNull { it.id == t.fieldId }?.title }.orEmpty()
+                DirectorOfficeSelectablePlanCard(
+                    title = plan.title,
+                    subtitle = "${fieldTitle.ifBlank { "زمینه نامشخص" }}  ←  ${tazieh?.title ?: plan.taziehUid}",
+                    selected = selectedPlan?.id == plan.id,
+                    titleBold = true,
+                    onClick = {
+                        scope.launch {
+                            selectedPlan = plan
+                            val target = db.taziehDao().getByUid(plan.taziehUid)
+                            roleOptions = target?.let { loadCurrentTaziehRoles(db, it) }.orEmpty()
+                            selectedRole = roleOptions.firstOrNull()
+                            val versions = dao.versions(plan.id)
+                            planVersions = versions
+                            selectedVersion = versions.firstOrNull()
+                            sources = dao.sourceFiles(plan.id)
+                            turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
+                            selectedVersion?.let {
+                                stageCues = dao.stageCues(it.id)
+                                previewText = buildDirectorVersionPreview(dao, it.id)
+                            } ?: run { stageCues = emptyList() }
+                            val currentVersion = selectedVersion
+                            if (currentVersion != null && !directorVersionHasText(dao, currentVersion.id)) {
+                                val selectedTazieh = db.taziehDao().getByUid(plan.taziehUid)
+                                if (selectedTazieh != null) {
+                                    val result = importExistingTaziehText(db, currentVersion.id, selectedTazieh.id)
+                                    turns = dao.turns(currentVersion.id)
+                                    previewText = buildDirectorVersionPreview(dao, currentVersion.id)
+                                    message = if (result.sectionCount > 0) "${result.sectionCount} بخش از متن‌های داخلی همین مجلس در ${result.turnCount} نوبت به دفتر منتقل شد." else "متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
+                                }
                             }
                         }
-                    }
-                }, colors = CardDefaults.cardColors(containerColor = if (selectedPlan?.id == plan.id) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
-                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(Modifier.weight(1f)) {
-                            Text(plan.title, fontWeight = FontWeight.Bold)
-                            val tazieh = taziehOptions.firstOrNull { it.uid == plan.taziehUid }
-                            val fieldTitle = tazieh?.let { t -> fieldOptions.firstOrNull { it.id == t.fieldId }?.title }.orEmpty()
-                            Text("${fieldTitle.ifBlank { "زمینه نامشخص" }}  ←  ${tazieh?.title ?: plan.taziehUid}", style = MaterialTheme.typography.bodySmall)
-                        }
+                    },
+                    trailingContent = {
                         IconButton(onClick = { deletePlanCandidate = plan }) {
                             Icon(Icons.Default.Delete, contentDescription = "حذف دفتر")
                         }
                     }
-                }
+                )
             }
             if (hasMorePlans) item {
                 OutlinedButton(enabled = !loadingMorePlans, onClick = {
