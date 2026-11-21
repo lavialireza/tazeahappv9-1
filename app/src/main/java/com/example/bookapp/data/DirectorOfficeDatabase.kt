@@ -6,6 +6,8 @@ import androidx.room.Database
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 /** دیتابیس فقط‌خواندنی دفتر رسمی Viewer؛ DAO این کلاس هیچ عملیات نوشتن ندارد. */
 @Database(
@@ -40,10 +42,11 @@ abstract class OfficialDirectorOfficeDatabase : RoomDatabase() {
         DirectorPlanEntity::class, DirectorPlanVersionEntity::class,
         DirectorSourceFileEntity::class, DirectorTurnEntity::class,
         DirectorParticipantEntity::class, DirectorTextSegmentEntity::class,
+        DirectorChangeHistoryEntity::class,
         DirectorStageCueEntity::class, DirectorSessionEntity::class,
         DirectorTurnProgressEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 abstract class PersonalDirectorOfficeDatabase : RoomDatabase() {
@@ -51,11 +54,46 @@ abstract class PersonalDirectorOfficeDatabase : RoomDatabase() {
 
     companion object {
         const val FILE_NAME = "director_personal.db"
+
+        /**
+         * Version 1 -> 2: add dialogue provenance and the local change-history table.
+         * Existing personal-office rows are preserved; history starts empty for legacy edits.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Be tolerant of development builds that may already have added some provenance columns
+                // without incrementing this dedicated database's version.
+                val existingColumns = mutableSetOf<String>()
+                db.query("PRAGMA table_info(`director_text_segments`)").use { cursor ->
+                    val nameIndex = cursor.getColumnIndexOrThrow("name")
+                    while (cursor.moveToNext()) existingColumns += cursor.getString(nameIndex)
+                }
+                val provenanceColumns = listOf(
+                    "sourceTaziehUid" to "TEXT",
+                    "sourceRoleUid" to "TEXT",
+                    "sourceSectionTitle" to "TEXT NOT NULL DEFAULT ''",
+                    "sourceSectionUids" to "TEXT NOT NULL DEFAULT ''",
+                    "sourceMethod" to "TEXT NOT NULL DEFAULT 'LEGACY'",
+                    "sourceContentHash" to "TEXT NOT NULL DEFAULT ''"
+                )
+                provenanceColumns.forEach { (column, definition) ->
+                    if (column !in existingColumns) {
+                        db.execSQL("ALTER TABLE `director_text_segments` ADD COLUMN `$column` $definition")
+                    }
+                }
+                db.execSQL("CREATE TABLE IF NOT EXISTS `director_change_history` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `planId` INTEGER NOT NULL, `versionId` INTEGER NOT NULL, `turnId` INTEGER, `entityType` TEXT NOT NULL, `fieldName` TEXT NOT NULL, `changeType` TEXT NOT NULL, `summary` TEXT NOT NULL, `oldValue` TEXT NOT NULL, `newValue` TEXT NOT NULL, `changedAt` INTEGER NOT NULL, `restoredFromId` INTEGER)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_planId` ON `director_change_history` (`planId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_versionId` ON `director_change_history` (`versionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_turnId_changedAt` ON `director_change_history` (`turnId`, `changedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_changedAt` ON `director_change_history` (`changedAt`)")
+            }
+        }
+
         @Volatile private var instance: PersonalDirectorOfficeDatabase? = null
         fun get(context: Context): PersonalDirectorOfficeDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, PersonalDirectorOfficeDatabase::class.java, FILE_NAME
-            ).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
         }
     }
 }
