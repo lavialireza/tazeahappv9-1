@@ -34,8 +34,11 @@ import com.example.bookapp.ui.theme.FontChoiceLabels
 import com.example.bookapp.ui.theme.colorSchemeFor
 import com.example.bookapp.ui.theme.typographyFor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
 import androidx.compose.foundation.layout.Arrangement
@@ -89,6 +92,17 @@ internal data class DirectorLibraryImportResult(
     val turnCount: Int,
     val usedDialogueOrder: Boolean
 )
+
+private data class BuiltOfficeScreenData(
+    val roles: List<RoleEntity>,
+    val selectedRole: RoleEntity?,
+    val selectorRole: RoleEntity?,
+    val selectorTurnNumber: String,
+    val selectorItems: List<DirectorSelectorItem>,
+    val selectedDialogueKeys: Set<String>,
+    val workspace: DirectorOfficeWorkspaceState,
+    val generatedTurnCount: Int
+)
 /**
  * Copies the selected majlis' already-stored library text into an empty director version.
  * It never edits roles/sections or imports content from another majlis.
@@ -105,9 +119,8 @@ private suspend fun loadCurrentTaziehRoles(
 }
 
 internal suspend fun directorVersionHasText(dao: DirectorOfficeMainPageDao, versionId: Long): Boolean {
-    return dao.turns(versionId).any { turn ->
-        dao.textSegments(turn.id).any { it.text.isNotBlank() }
-    }
+    val turnIds = dao.turns(versionId).map { it.id }
+    return turnIds.isNotEmpty() && dao.textSegmentsForTurns(turnIds).any { it.text.isNotBlank() }
 }
 
 internal suspend fun importExistingTaziehText(
@@ -146,11 +159,12 @@ internal suspend fun importExistingTaziehText(
     var bestCoverage = -1
     for (dialogue in dialogues) {
         val dialogueTurns = db.dialogueTurnDao().getByDialogue(dialogue.id)
+        val metadataByTurnId = db.dialogueTurnMetadataDao().getByDialogue(dialogue.id).associateBy { it.turnId }
         val candidate = mutableListOf<Entry>()
         for (sourceTurn in dialogueTurns) {
             val section = sectionById[sourceTurn.sectionId] ?: continue
             val role = roleById[section.roleId] ?: continue
-            val metadata = db.dialogueTurnMetadataDao().getByTurn(sourceTurn.id)
+            val metadata = metadataByTurnId[sourceTurn.id]
             val verified = metadata != null && metadata.sourceSequenceIndex != null &&
                 (metadata.sourceSequenceStatus == DialogueTurnMetadataEntity.SOURCE_DOCUMENTED ||
                  metadata.sourceSequenceStatus == DialogueTurnMetadataEntity.SOURCE_DIRECTOR_CONFIRMED)
@@ -182,15 +196,13 @@ internal suspend fun importExistingTaziehText(
         // Preserve any version that already contains text. Empty placeholder turns from earlier
         // failed imports are removed so they cannot hide the recovered library content.
         val existingTurns = dao.turns(versionId)
-        val alreadyHasText = existingTurns.any { existing ->
-            dao.textSegments(existing.id).any { it.text.isNotBlank() }
-        }
-        if (alreadyHasText) return@run
-        existingTurns.forEach { existing ->
-            dao.participants(existing.id).forEach { dao.deleteParticipant(it.id) }
-            dao.textSegments(existing.id).forEach { dao.deleteTextSegment(it.id) }
-            dao.deleteTurn(existing.id)
-        }
+        val existingTurnIds = existingTurns.map { it.id }
+        val existingSegments = if (existingTurnIds.isEmpty()) emptyList() else dao.textSegmentsForTurns(existingTurnIds)
+        if (existingSegments.any { it.text.isNotBlank() }) return@run
+        val existingParticipants = if (existingTurnIds.isEmpty()) emptyList() else dao.participantsForTurns(existingTurnIds)
+        existingParticipants.forEach { dao.deleteParticipant(it.id) }
+        existingSegments.forEach { dao.deleteTextSegment(it.id) }
+        existingTurns.forEach { dao.deleteTurn(it.id) }
         var sequence = 0
         val grouped = entries.groupBy { it.turnNumber }.toSortedMap()
         for ((number, group) in grouped) {
@@ -232,23 +244,11 @@ internal suspend fun importExistingTaziehText(
 }
 
 
-internal suspend fun buildDirectorVersionPreview(
-    dao: DirectorOfficeMainPageDao,
-    versionId: Long
-): String {
-    // DAO methods are suspend functions; fetch each relation in a normal suspend loop
-    // instead of calling them from joinToString's non-suspending transform lambda.
-    val turns = dao.turns(versionId)
-    val previewBlocks = mutableListOf<String>()
-
-    for (turn in turns) {
-        val participants = dao.participants(turn.id)
-        val roleTitles = participants.joinToString("، ") { it.roleTitle }
-
-        val segments = dao.textSegments(turn.id)
-        val turnText = segments.joinToString("\n") { it.text }
-
-        previewBlocks += buildString {
+internal fun buildDirectorVersionPreview(workspace: DirectorOfficeWorkspaceState): String {
+    return workspace.turns.joinToString("\n\n") { turn ->
+        val roleTitles = workspace.participantsByTurn[turn.id].orEmpty().joinToString("، ") { it.roleTitle }
+        val turnText = workspace.textSegmentsByTurn[turn.id].orEmpty().joinToString("\n") { it.text }
+        buildString {
             append("نوبت ")
             append(turn.turnNumber)
             append(" — ")
@@ -257,8 +257,46 @@ internal suspend fun buildDirectorVersionPreview(
             append(turnText)
         }
     }
+}
 
-    return previewBlocks.joinToString("\n\n")
+/** نسخه سازگار برای نقاطی که فقط شناسه نسخه در اختیار دارند؛ روابط را گروهی می‌خواند. */
+internal suspend fun buildDirectorVersionPreview(
+    dao: DirectorOfficeMainPageDao,
+    versionId: Long
+): String {
+    val turns = dao.turns(versionId)
+    if (turns.isEmpty()) return ""
+    val turnIds = turns.map { it.id }
+    val participantsByTurn = dao.participantsForTurns(turnIds).groupBy { it.turnId }
+    val segmentsByTurn = dao.textSegmentsForTurns(turnIds).groupBy { it.turnId }
+    return turns.joinToString("\n\n") { turn ->
+        val roleTitles = participantsByTurn[turn.id].orEmpty().joinToString("، ") { it.roleTitle }
+        val turnText = segmentsByTurn[turn.id].orEmpty().joinToString("\n") { it.text }
+        buildString {
+            append("نوبت "); append(turn.turnNumber); append(" — ")
+            append(roleTitles.ifBlank { turn.title }); append("\n"); append(turnText)
+        }
+    }
+}
+
+/**
+ * نسخه بدون پرس‌وجوی دیتابیس از تطبیق دیالوگ‌های استفاده‌شده با Snapshot بارگذاری‌شده.
+ * برای صفحه مشترک، این مسیر مانع خواندن مجدد turns/segments بعد از ساخت یا بازکردن دفتر می‌شود.
+ */
+internal fun usedDirectorDialogueKeys(
+    workspace: DirectorOfficeWorkspaceState,
+    items: List<DirectorSelectorItem>
+): Set<String> {
+    val used = mutableSetOf<String>()
+    val segments = workspace.turns.flatMap { turn -> workspace.textSegmentsByTurn[turn.id].orEmpty() }
+    for (segment in segments) {
+        val sectionUid = segment.sectionUid ?: continue
+        val match = items.firstOrNull { item ->
+            item.key !in used && item.section.uid == sectionUid && item.text == segment.text
+        }
+        if (match != null) used += match.key
+    }
+    return used
 }
 
 /**
@@ -271,14 +309,15 @@ internal suspend fun usedDirectorDialogueKeys(
     items: List<DirectorSelectorItem>
 ): Set<String> {
     val used = mutableSetOf<String>()
-    for (turn in dao.turns(versionId)) {
-        for (segment in dao.textSegments(turn.id)) {
-            val sectionUid = segment.sectionUid ?: continue
-            val match = items.firstOrNull { item ->
-                item.key !in used && item.section.uid == sectionUid && item.text == segment.text
-            }
-            if (match != null) used += match.key
+    val turns = dao.turns(versionId)
+    if (turns.isEmpty()) return used
+    val segments = dao.textSegmentsForTurns(turns.map { it.id })
+    for (segment in segments) {
+        val sectionUid = segment.sectionUid ?: continue
+        val match = items.firstOrNull { item ->
+            item.key !in used && item.section.uid == sectionUid && item.text == segment.text
         }
+        if (match != null) used += match.key
     }
     return used
 }
@@ -405,30 +444,38 @@ fun DirectorOfficeSharedMainScreen(
     }
 
     suspend fun loadPlans(reset: Boolean) {
-        if (initialTaziehId != null) {
-            val currentTazieh = libraryDb.taziehDao().getById(initialTaziehId)
-            val onlyPlan = currentTazieh?.let { dao.plansForTazieh(it.uid) }.orEmpty()
-                .filter { planSearch.isBlank() || it.title.contains(planSearch.trim(), ignoreCase = true) }
-            plans = onlyPlan
-            hasMorePlans = false
-            return
-        }
         val offset = if (reset) 0 else plans.size
-        val page = dao.plansPage(planSearch.trim(), 50, offset)
-        plans = if (reset) page else plans + page
-        hasMorePlans = page.size == 50
+        val (loadedPage, canLoadMore) = withContext(Dispatchers.IO) {
+            if (initialTaziehId != null) {
+                val currentTazieh = libraryDb.taziehDao().getById(initialTaziehId)
+                val rows = currentTazieh?.let { dao.plansForTazieh(it.uid) }.orEmpty()
+                    .filter { planSearch.isBlank() || it.title.contains(planSearch.trim(), ignoreCase = true) }
+                rows to false
+            } else {
+                val rows = dao.plansPage(planSearch.trim(), 50, offset)
+                rows to (rows.size == 50)
+            }
+        }
+        plans = if (reset) loadedPage else plans + loadedPage
+        hasMorePlans = canLoadMore
     }
 
-    /** تنها مسیر بارگذاری snapshot فضای کاری مشترک؛ فهرست منابع و کتابخانه همچنان Admin-only است. */
-    suspend fun loadWorkspaceIntoScreen(planId: Long, preferredVersionId: Long? = selectedVersion?.id) {
-        val loaded = workspaceRepository.loadWorkspace(planId, preferredVersionId)
+    fun applyWorkspaceToScreen(loaded: DirectorOfficeWorkspaceState) {
         workspaceState = loaded
         selectedPlan = loaded.plan
         planVersions = loaded.versions
         selectedVersion = loaded.selectedVersion
         turns = loaded.turns
         stageCues = loaded.stageCues
-        previewText = loaded.selectedVersion?.let { buildDirectorVersionPreview(dao, it.id) }.orEmpty()
+        previewText = buildDirectorVersionPreview(loaded)
+    }
+
+    /** بارگذاری روابط دفتر با پرس‌وجوهای گروهی و خارج از رشته اصلی رابط کاربری. */
+    suspend fun loadWorkspaceIntoScreen(planId: Long, preferredVersionId: Long? = selectedVersion?.id) {
+        val loaded = withContext(Dispatchers.IO) {
+            workspaceRepository.loadWorkspace(planId, preferredVersionId)
+        }
+        applyWorkspaceToScreen(loaded)
     }
 
     /** ساخت نسخه اول دفتر با روش انتخاب‌شده؛ منطق چهار روش در یک مسیر اجرا می‌شود. */
@@ -439,69 +486,99 @@ fun DirectorOfficeSharedMainScreen(
         manualRoleUid: String? = null,
         manualTurnNumber: Int? = null,
         manualText: String = ""
-    ) {
-        val tazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
-            ?: throw IllegalStateException("مجلس مرتبط با این دفتر در کتابخانه پیدا نشد.")
-        val roles = loadCurrentTaziehRoles(libraryDb, tazieh)
-        val sections = libraryDb.sectionDao().getByRoles(roles.map { it.id })
-            .filter { it.content.isNotBlank() }
-            .sortedWith(
-                compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }
-                    .thenBy { it.orderIndex }.thenBy { it.id }
-            )
-        val roleInputs = roles.map { DirectorOfficeBuildRole(uid = it.uid, title = it.title, orderIndex = it.orderIndex) }
-        val roleUidById = roles.associate { it.id to it.uid }
-        val sectionInputs = sections.mapNotNull { section ->
-            val roleUid = roleUidById[section.roleId] ?: return@mapNotNull null
-            DirectorOfficeBuildSection(uid = section.uid, roleUid = roleUid, content = section.content, orderIndex = section.orderIndex)
-        }
+    ): String {
+        // خواندن کتابخانه، ساخت نوبت‌ها و تهیه Snapshot خارج از رشته اصلی رابط انجام می‌شود.
+        val result = withContext(Dispatchers.IO) {
+            val tazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
+                ?: throw IllegalStateException("مجلس مرتبط با این دفتر در کتابخانه پیدا نشد.")
+            val roles = loadCurrentTaziehRoles(libraryDb, tazieh)
+            val roleById = roles.associateBy { it.id }
+            val sections = libraryDb.sectionDao().getByRoles(roles.map { it.id })
+                .filter { it.content.isNotBlank() && roleById.containsKey(it.roleId) }
+                .sortedWith(
+                    compareBy<SectionEntity> { section -> roleById[section.roleId]?.orderIndex ?: Int.MAX_VALUE }
+                        .thenBy { it.orderIndex }.thenBy { it.id }
+                )
+            val roleInputs = roles.map { DirectorOfficeBuildRole(uid = it.uid, title = it.title, orderIndex = it.orderIndex) }
+            val roleUidById = roles.associate { it.id to it.uid }
+            val sectionInputs = sections.mapNotNull { section ->
+                val roleUid = roleUidById[section.roleId] ?: return@mapNotNull null
+                DirectorOfficeBuildSection(uid = section.uid, roleUid = roleUid, content = section.content, orderIndex = section.orderIndex)
+            }
 
-        workspaceRepository.buildDraftFromLibrary(version.id, method, roleInputs, sectionInputs)
-        dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $method"))
+            val buildResult = workspaceRepository.buildDraftFromLibrary(version.id, method, roleInputs, sectionInputs)
+            dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $method"))
 
-        if (method == DirectorOfficeSharedContract.MANUAL) {
-            val role = roles.firstOrNull { it.uid == manualRoleUid }
-                ?: throw IllegalStateException("نقش نوبت دستی انتخاب نشده است.")
-            val number = manualTurnNumber?.takeIf { it > 0 }
-                ?: throw IllegalStateException("شماره نوبت دستی معتبر نیست.")
-            if (manualText.isBlank()) throw IllegalStateException("متن اولین نوبت را وارد کنید.")
-            workspaceRepository.addRoleLinkedTurn(
-                versionId = version.id, turnNumber = number, roleUid = role.uid,
-                roleTitle = role.title, text = manualText.trim(), allowPublishedPlan = true
+            if (method == DirectorOfficeSharedContract.MANUAL) {
+                val role = roles.firstOrNull { it.uid == manualRoleUid }
+                    ?: throw IllegalStateException("نقش نوبت دستی انتخاب نشده است.")
+                val number = manualTurnNumber?.takeIf { it > 0 }
+                    ?: throw IllegalStateException("شماره نوبت دستی معتبر نیست.")
+                if (manualText.isBlank()) throw IllegalStateException("متن اولین نوبت را وارد کنید.")
+                workspaceRepository.addRoleLinkedTurn(
+                    versionId = version.id, turnNumber = number, roleUid = role.uid,
+                    roleTitle = role.title, text = manualText.trim(), allowPublishedPlan = true
+                )
+            }
+
+            val selectorItems = sections.flatMap { section ->
+                val role = roleById[section.roleId] ?: return@flatMap emptyList()
+                DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part ->
+                    DirectorSelectorItem("${section.uid}:$index", section, role, part)
+                }
+            }
+            // فقط یک Snapshot نهایی گرفته می‌شود و همان داده برای پیش‌نمایش و انتخاب‌گر استفاده می‌شود.
+            val workspace = workspaceRepository.loadWorkspace(plan.id, version.id)
+            val selectedKeys = if (method == DirectorOfficeSharedContract.SELECTOR) {
+                usedDirectorDialogueKeys(workspace, selectorItems)
+            } else emptySet()
+            val nextTurnNumber = (workspace.turns.maxOfOrNull { it.turnNumber } ?: 0) + 1
+            BuiltOfficeScreenData(
+                roles = roles,
+                selectedRole = roles.firstOrNull { it.uid == manualRoleUid } ?: roles.firstOrNull(),
+                selectorRole = roles.firstOrNull(),
+                selectorTurnNumber = nextTurnNumber.toString(),
+                selectorItems = selectorItems,
+                selectedDialogueKeys = selectedKeys,
+                workspace = workspace,
+                generatedTurnCount = buildResult.insertedTurnCount
             )
         }
 
         selectedBuildMode = method
-        roleOptions = roles
-        selectedRole = roles.firstOrNull { it.uid == manualRoleUid } ?: roles.firstOrNull()
-        selectorRole = roles.firstOrNull()
-        selectorTurnNumber = ((dao.turns(version.id).maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
-        selectorItems = sections.flatMap { section ->
-            val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
-            DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part ->
-                DirectorSelectorItem("${section.uid}:$index", section, role, part)
-            }
+        roleOptions = result.roles
+        selectedRole = result.selectedRole
+        selectorRole = result.selectorRole
+        selectorTurnNumber = result.selectorTurnNumber
+        selectorItems = result.selectorItems
+        selectedDialogueKeys = result.selectedDialogueKeys
+        applyWorkspaceToScreen(result.workspace)
+        val resultMessage = when (method) {
+            DirectorOfficeSharedContract.ROLE_NUMBERED -> if (result.generatedTurnCount > 0)
+                "${result.generatedTurnCount} نوبت شماره‌دار از متن نقش‌ها استخراج شد."
+            else "شماره دیالوگی در متن شناسایی نشد؛ دفتر خالی ذخیره شد و می‌توانید نوبت‌ها را دستی اضافه کنید."
+            DirectorOfficeSharedContract.FULL_TEXT -> if (result.generatedTurnCount > 0)
+                "متن کامل ${result.generatedTurnCount} نقش به ترتیب وارد دفتر شد."
+            else "برای نقش‌های این مجلس متن قابل انتقال پیدا نشد؛ دفتر خالی ذخیره شد و می‌توانید نوبت‌ها را بعداً اضافه کنید."
+            DirectorOfficeSharedContract.MANUAL -> "نخستین نوبت دستی نیز ثبت شد."
+            else -> "دفتر خالی آماده است؛ اکنون می‌توانید نقش و دیالوگ‌ها را با انتخاب‌گر وارد کنید."
         }
-        selectedDialogueKeys = if (method == DirectorOfficeSharedContract.SELECTOR) {
-            usedDirectorDialogueKeys(dao, version.id, selectorItems)
-        } else emptySet()
-        loadWorkspaceIntoScreen(plan.id, version.id)
-        message = when (method) {
-            DirectorOfficeSharedContract.ROLE_NUMBERED -> "دفتر ساخته و ذخیره شد؛ نوبت‌های شماره‌دار از متن نقش‌های همین مجلس استخراج شدند."
-            DirectorOfficeSharedContract.FULL_TEXT -> "دفتر ساخته و ذخیره شد؛ متن کامل نقش‌ها به ترتیب وارد دفتر شد."
-            DirectorOfficeSharedContract.MANUAL -> "دفتر ساخته و ذخیره شد؛ نخستین نوبت دستی نیز ثبت شد."
-            else -> "دفتر ساخته و ذخیره شد؛ اکنون می‌توانید نقش و دیالوگ‌ها را با انتخاب‌گر وارد کنید."
-        }
+        message = resultMessage
+        return resultMessage
     }
+
 
     fun reload() {
         scope.launch {
             loadPlans(reset = true)
             selectedPlan?.let { current ->
-                val targetTazieh = libraryDb.taziehDao().getByUid(current.taziehUid)
-                roleOptions = targetTazieh?.let { loadCurrentTaziehRoles(libraryDb, it) }.orEmpty()
-                selectedRole = selectedRole?.let { old -> roleOptions.firstOrNull { it.uid == old.uid } } ?: roleOptions.firstOrNull()
-                sources = dao.sourceFiles(current.id)
+                val refreshedRoles = withContext(Dispatchers.IO) {
+                    val targetTazieh = libraryDb.taziehDao().getByUid(current.taziehUid)
+                    targetTazieh?.let { loadCurrentTaziehRoles(libraryDb, it) }.orEmpty()
+                }
+                roleOptions = refreshedRoles
+                selectedRole = selectedRole?.let { old -> refreshedRoles.firstOrNull { it.uid == old.uid } } ?: refreshedRoles.firstOrNull()
+                sources = withContext(Dispatchers.IO) { dao.sourceFiles(current.id) }
                 loadWorkspaceIntoScreen(current.id, selectedVersion?.id)
                 val currentVersion = selectedVersion
                 selectedBuildMode = currentVersion?.changeNotes
@@ -513,9 +590,13 @@ fun DirectorOfficeSharedMainScreen(
     }
     LaunchedEffect(initialTaziehId) {
         try {
-            val allTaziehs = libraryDb.taziehDao().getAll()
-            taziehOptions = if (initialTaziehId == null) allTaziehs else allTaziehs.filter { it.id == initialTaziehId }
-            fieldOptions = libraryDb.fieldDao().getAll()
+            val (loadedTaziehs, loadedFields) = withContext(Dispatchers.IO) {
+                val rows = if (initialTaziehId == null) libraryDb.taziehDao().getAll()
+                    else listOfNotNull(libraryDb.taziehDao().getById(initialTaziehId))
+                rows to libraryDb.fieldDao().getAll()
+            }
+            taziehOptions = loadedTaziehs
+            fieldOptions = loadedFields
         } catch (e: Exception) { message = "دریافت فهرست زمینه‌ها و تعزیه‌ها ناموفق بود: ${e.message}" }
     }
     LaunchedEffect(initialTaziehId, taziehOptions) {
@@ -524,10 +605,9 @@ fun DirectorOfficeSharedMainScreen(
             if (chosen != null) {
                 selectedTazieh = chosen
                 planTitle = chosen.title
-                roleOptions = loadCurrentTaziehRoles(libraryDb, chosen)
+                roleOptions = withContext(Dispatchers.IO) { loadCurrentTaziehRoles(libraryDb, chosen) }
                 selectedRole = roleOptions.firstOrNull()
-                loadPlans(reset = true)
-                val existingPlan = dao.plansForTazieh(chosen.uid).firstOrNull()
+                val existingPlan = withContext(Dispatchers.IO) { dao.plansForTazieh(chosen.uid).firstOrNull() }
                 screenStage = if (existingPlan == null) {
                     if (canCreatePersonal) DirectorOfficeScreenStage.CREATE_OFFICE else DirectorOfficeScreenStage.SAVED_OFFICES
                 } else {
@@ -539,30 +619,42 @@ fun DirectorOfficeSharedMainScreen(
             }
         }
     }
-    LaunchedEffect(refresh) { reload() }
-    LaunchedEffect(planSearch) { loadPlans(reset = true) }
-    LaunchedEffect(selectedVersion?.id, selectedBuildMode, roleOptions, selectedPlan?.id) {
+    LaunchedEffect(refresh) { if (refresh > 0) reload() }
+    LaunchedEffect(planSearch) {
+        delay(250)
+        loadPlans(reset = true)
+    }
+    LaunchedEffect(selectedVersion?.id, selectedBuildMode, roleOptions, selectedPlan?.id, workspaceState?.selectedVersion?.id) {
         val version = selectedVersion
         val plan = selectedPlan
-        if (version != null && plan != null && selectedBuildMode == DirectorOfficeSharedContract.SELECTOR && roleOptions.isNotEmpty()) {
+        val roles = roleOptions
+        if (version != null && plan != null && selectedBuildMode == DirectorOfficeSharedContract.SELECTOR && roles.isNotEmpty()) {
             try {
-                val tazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
-                if (tazieh != null) {
-                    val roles = loadCurrentTaziehRoles(libraryDb, tazieh)
+                val selectorData = withContext(Dispatchers.IO) {
                     val sections = libraryDb.sectionDao().getByRoles(roles.map { it.id })
                         .filter { it.content.isNotBlank() }
                         .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
-                    selectorItems = sections.flatMap { section ->
+                    val items = sections.flatMap { section ->
                         val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
-                        DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
+                        DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part ->
+                            DirectorSelectorItem("${section.uid}:$index", section, role, part)
+                        }
                     }
-                    selectedDialogueKeys = usedDirectorDialogueKeys(dao, version.id, selectorItems)
-                    selectorRole = selectorRole?.let { old -> roles.firstOrNull { it.uid == old.uid } } ?: roles.firstOrNull()
-                    selectorTurnNumber = ((dao.turns(version.id).maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                    val currentSnapshot = workspaceState?.takeIf { it.selectedVersion?.id == version.id }
+                    val alreadyUsed = currentSnapshot?.let { usedDirectorDialogueKeys(it, items) }
+                        ?: usedDirectorDialogueKeys(dao, version.id, items)
+                    val nextNumber = (currentSnapshot?.turns?.maxOfOrNull { it.turnNumber }
+                        ?: dao.turns(version.id).maxOfOrNull { it.turnNumber } ?: 0) + 1
+                    Triple(items, alreadyUsed, nextNumber)
                 }
+                selectorItems = selectorData.first
+                selectedDialogueKeys = selectorData.second
+                selectorRole = selectorRole?.let { old -> roles.firstOrNull { it.uid == old.uid } } ?: roles.firstOrNull()
+                selectorTurnNumber = selectorData.third.toString()
             } catch (e: Exception) { message = "بارگذاری متن‌های انتخابی ناموفق بود: ${e.message}" }
         }
     }
+
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
@@ -794,9 +886,10 @@ fun DirectorOfficeSharedMainScreen(
                                                     selectorRole = null
                                                     taziehMenuExpanded = false
                                                     scope.launch {
-                                                        roleOptions = loadCurrentTaziehRoles(libraryDb, option)
-                                                        selectedRole = roleOptions.firstOrNull()
-                                                        selectorRole = roleOptions.firstOrNull()
+                                                        val loadedRoles = withContext(Dispatchers.IO) { loadCurrentTaziehRoles(libraryDb, option) }
+                                                        roleOptions = loadedRoles
+                                                        selectedRole = loadedRoles.firstOrNull()
+                                                        selectorRole = loadedRoles.firstOrNull()
                                                     }
                                                 }
                                             )
@@ -904,47 +997,60 @@ fun DirectorOfficeSharedMainScreen(
                                             busy = true
                                             var createdPlanId: Long? = null
                                             try {
+                                                // برای هر مجلس چند دفتر مستقل مجاز است. عنوان تکراری به‌صورت خودکار شماره می‌گیرد
+                                                // تا دفتر دوم و سوم در فهرست به‌روشنی از یکدیگر قابل تشخیص باشند.
                                                 val target = selectedTazieh ?: error("مجلس انتخاب نشده است.")
-                                                val existingPlan = dao.plansForTazieh(target.uid).firstOrNull()
-                                                if (existingPlan != null) {
-                                                    message = "برای این مجلس دفتر ثبت‌شده وجود دارد؛ آن را از فهرست انتخاب کنید."
-                                                    screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
-                                                } else {
-                                                    val now = System.currentTimeMillis()
-                                                    val newPlanId = dao.insertPlan(
+                                                val now = System.currentTimeMillis()
+                                                val baseTitle = planTitle.trim().ifBlank { target.title }
+                                                val existingTitles = withContext(Dispatchers.IO) {
+                                                    dao.plansForTazieh(target.uid).filterNot { it.isDeleted }.map { it.title }
+                                                }
+                                                val finalTitle = DirectorOfficeWorkspaceUseCases.uniqueOfficeTitle(baseTitle, existingTitles)
+                                                val planUid = UUID.randomUUID().toString()
+                                                val (newPlanId, newVersionId) = transactionRunner.run {
+                                                    val planId = dao.insertPlan(
                                                         DirectorPlanEntity(
-                                                            uid = UUID.randomUUID().toString(),
+                                                            uid = planUid,
                                                             taziehUid = target.uid,
-                                                            title = planTitle.trim(),
+                                                            title = finalTitle,
                                                             createdAt = now,
                                                             updatedAt = now
                                                         )
                                                     )
-                                                    createdPlanId = newPlanId
-                                                    val newVersionId = dao.insertVersion(
+                                                    val versionId = dao.insertVersion(
                                                         DirectorPlanVersionEntity(
-                                                            planId = newPlanId, versionNumber = 1, title = "نسخه اول",
+                                                            planId = planId, versionNumber = 1, title = "نسخه اول",
                                                             createdAt = now, changeNotes = "روش تکمیل دفتر: $selectedBuildMode"
                                                         )
                                                     )
-                                                    val newPlan = dao.plan(newPlanId) ?: error("دفتر جدید ذخیره نشد.")
-                                                    val newVersion = dao.version(newVersionId) ?: error("نسخه اولیه دفتر ساخته نشد.")
-                                                    buildNewOfficeWithMethod(
-                                                        plan = newPlan,
-                                                        version = newVersion,
-                                                        method = selectedBuildMode,
-                                                        manualRoleUid = selectedRole?.uid,
-                                                        manualTurnNumber = turnNumber.toIntOrNull(),
-                                                        manualText = turnText
-                                                    )
-                                                    loadPlans(reset = true)
-                                                    screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
-                                                    selectedTazieh = null
-                                                    planTitle = ""
-                                                    turnNumber = "1"
-                                                    turnText = ""
-                                                    message = "دفتر «${newPlan.title}» ذخیره شد. برای مشاهده و ادامه کار، آن را از فهرست دفاتر انتخاب کنید."
+                                                    planId to versionId
                                                 }
+                                                createdPlanId = newPlanId
+                                                // از دو پرس‌وجوی اضافی plan()/version() استفاده نمی‌کنیم؛ شناسه‌ها
+                                                // در همین تراکنش ساخته شده‌اند و مقادیر این دو شیء معلوم است.
+                                                val newPlan = DirectorPlanEntity(
+                                                    id = newPlanId, uid = planUid, taziehUid = target.uid, title = finalTitle,
+                                                    createdAt = now, updatedAt = now
+                                                )
+                                                val newVersion = DirectorPlanVersionEntity(
+                                                    id = newVersionId, planId = newPlanId, versionNumber = 1, title = "نسخه اول",
+                                                    createdAt = now, changeNotes = "روش تکمیل دفتر: $selectedBuildMode"
+                                                )
+                                                val buildSummary = buildNewOfficeWithMethod(
+                                                    plan = newPlan,
+                                                    version = newVersion,
+                                                    method = selectedBuildMode,
+                                                    manualRoleUid = selectedRole?.uid,
+                                                    manualTurnNumber = turnNumber.toIntOrNull(),
+                                                    manualText = turnText
+                                                )
+                                                loadPlans(reset = true)
+                                                screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
+                                                selectedTazieh = null
+                                                planTitle = ""
+                                                turnNumber = "1"
+                                                turnText = ""
+                                                message = "دفتر «${newPlan.title}» ذخیره شد. $buildSummary"
                                             } catch (e: Exception) {
                                                 createdPlanId?.let { runCatching { dao.softDeletePlan(it, System.currentTimeMillis()) } }
                                                 message = "ساخت دفتر ناموفق بود: ${e.message ?: "خطای نامشخص"}"
@@ -1011,34 +1117,46 @@ fun DirectorOfficeSharedMainScreen(
                                     busy = true
                                     try {
                                         message = null
-                                        selectedPlan = plan
-                                        val target = libraryDb.taziehDao().getByUid(plan.taziehUid)
-                                        roleOptions = target?.let { loadCurrentTaziehRoles(libraryDb, it) }.orEmpty()
-                                        selectedRole = roleOptions.firstOrNull()
-                                        val versions = dao.versions(plan.id)
-                                        planVersions = versions
-                                        selectedVersion = versions.firstOrNull()
-                                        sources = dao.sourceFiles(plan.id)
-                                        selectedVersion?.let {
-                                            turns = dao.turns(it.id)
-                                            stageCues = dao.stageCues(it.id)
-                                            previewText = buildDirectorVersionPreview(dao, it.id)
-                                            selectedBuildMode = it.changeNotes.substringAfter("روش تکمیل دفتر: ", "")
-                                                .takeIf { code -> code in DirectorOfficeSharedContract.methodCodes }
-                                                ?: DirectorOfficeSharedContract.ROLE_NUMBERED
-                                            if ((isAdmin || canCreatePersonal || canEditPersonal) && !directorVersionHasText(dao, it.id)) {
-                                                val existingTazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
-                                                if (existingTazieh != null) {
-                                                    val imported = importExistingTaziehText(libraryDb, dao, transactionRunner, it.id, existingTazieh.id)
-                                                    turns = dao.turns(it.id)
-                                                    previewText = buildDirectorVersionPreview(dao, it.id)
-                                                    message = if (imported.sectionCount > 0) "${imported.sectionCount} بخش از متن‌های داخلی همین مجلس در ${imported.turnCount} نوبت به دفتر منتقل شد." else "دفتر باز شد؛ متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
+                                        val prepared = withContext(Dispatchers.IO) {
+                                            coroutineScope {
+                                                // خواندن مجلس، Snapshot دفتر و فایل‌های منبع مستقل‌اند؛ هم‌زمان اجرا شوند.
+                                                val targetRequest = async { libraryDb.taziehDao().getByUid(plan.taziehUid) }
+                                                val workspaceRequest = async { workspaceRepository.loadWorkspace(plan.id) }
+                                                val sourceRequest = async { if (isAdmin) dao.sourceFiles(plan.id) else emptyList() }
+                                                val target = targetRequest.await()
+                                                val rolesRequest = target?.let { selectedTazieh ->
+                                                    async { loadCurrentTaziehRoles(libraryDb, selectedTazieh) }
                                                 }
+                                                val roles = rolesRequest?.await().orEmpty()
+                                                Triple(target, roles, workspaceRequest.await() to sourceRequest.await())
                                             }
-                                            loadWorkspaceIntoScreen(plan.id, it.id)
-                                        } ?: run {
-                                            turns = emptyList(); stageCues = emptyList(); workspaceState = null
                                         }
+                                        val targetTazieh = prepared.first
+                                        roleOptions = prepared.second
+                                        selectedRole = roleOptions.firstOrNull()
+                                        sources = prepared.third.second
+                                        var loadedWorkspace = prepared.third.first
+                                        val chosenVersion = loadedWorkspace.selectedVersion
+                                        selectedBuildMode = chosenVersion?.changeNotes
+                                            ?.substringAfter("روش تکمیل دفتر: ", "")
+                                            ?.takeIf { code -> code in DirectorOfficeSharedContract.methodCodes }
+                                            ?: DirectorOfficeSharedContract.ROLE_NUMBERED
+
+                                        // روش انتخاب‌گر عمداً دفتر خالی می‌سازد؛ آن را با ورود خودکار همه متن‌ها خنثی نکن.
+                                        val hasStoredDialogue = loadedWorkspace.textSegmentsByTurn.values.any { rows -> rows.any { it.text.isNotBlank() } }
+                                        if (chosenVersion != null && selectedBuildMode != DirectorOfficeSharedContract.SELECTOR &&
+                                            (isAdmin || canCreatePersonal || canEditPersonal) && !hasStoredDialogue && targetTazieh != null) {
+                                            val imported = withContext(Dispatchers.IO) {
+                                                importExistingTaziehText(libraryDb, dao, transactionRunner, chosenVersion.id, targetTazieh.id)
+                                            }
+                                            if (imported.sectionCount > 0) {
+                                                loadedWorkspace = withContext(Dispatchers.IO) {
+                                                    workspaceRepository.loadWorkspace(plan.id, chosenVersion.id)
+                                                }
+                                                message = "${imported.sectionCount} بخش از متن‌های داخلی همین مجلس در ${imported.turnCount} نوبت به دفتر منتقل شد."
+                                            }
+                                        }
+                                        applyWorkspaceToScreen(loadedWorkspace)
                                         screenStage = DirectorOfficeScreenStage.SELECTED_OFFICE
                                     } catch (e: Exception) {
                                         message = "بازکردن دفتر ناموفق بود: ${e.message}"
