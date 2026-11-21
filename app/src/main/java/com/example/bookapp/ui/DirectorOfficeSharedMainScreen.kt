@@ -284,6 +284,10 @@ internal suspend fun usedDirectorDialogueKeys(
 }
 
 
+private enum class DirectorOfficeScreenStage {
+    SAVED_OFFICES, CREATE_OFFICE, SELECTED_OFFICE
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DirectorOfficeSharedMainScreen(
@@ -339,6 +343,7 @@ fun DirectorOfficeSharedMainScreen(
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var planTitle by remember { mutableStateOf("") }
+    var screenStage by remember { mutableStateOf(DirectorOfficeScreenStage.SAVED_OFFICES) }
     var taziehOptions by remember { mutableStateOf(emptyList<TaziehEntity>()) }
     var fieldOptions by remember { mutableStateOf(emptyList<FieldEntity>()) }
     var selectedTazieh by remember { mutableStateOf<TaziehEntity?>(null) }
@@ -426,6 +431,69 @@ fun DirectorOfficeSharedMainScreen(
         previewText = loaded.selectedVersion?.let { buildDirectorVersionPreview(dao, it.id) }.orEmpty()
     }
 
+    /** ساخت نسخه اول دفتر با روش انتخاب‌شده؛ منطق چهار روش در یک مسیر اجرا می‌شود. */
+    suspend fun buildNewOfficeWithMethod(
+        plan: DirectorPlanEntity,
+        version: DirectorPlanVersionEntity,
+        method: String,
+        manualRoleUid: String? = null,
+        manualTurnNumber: Int? = null,
+        manualText: String = ""
+    ) {
+        val tazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
+            ?: throw IllegalStateException("مجلس مرتبط با این دفتر در کتابخانه پیدا نشد.")
+        val roles = loadCurrentTaziehRoles(libraryDb, tazieh)
+        val sections = libraryDb.sectionDao().getByRoles(roles.map { it.id })
+            .filter { it.content.isNotBlank() }
+            .sortedWith(
+                compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }
+                    .thenBy { it.orderIndex }.thenBy { it.id }
+            )
+        val roleInputs = roles.map { DirectorOfficeBuildRole(uid = it.uid, title = it.title, orderIndex = it.orderIndex) }
+        val roleUidById = roles.associate { it.id to it.uid }
+        val sectionInputs = sections.mapNotNull { section ->
+            val roleUid = roleUidById[section.roleId] ?: return@mapNotNull null
+            DirectorOfficeBuildSection(uid = section.uid, roleUid = roleUid, content = section.content, orderIndex = section.orderIndex)
+        }
+
+        workspaceRepository.buildDraftFromLibrary(version.id, method, roleInputs, sectionInputs)
+        dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $method"))
+
+        if (method == DirectorOfficeSharedContract.MANUAL) {
+            val role = roles.firstOrNull { it.uid == manualRoleUid }
+                ?: throw IllegalStateException("نقش نوبت دستی انتخاب نشده است.")
+            val number = manualTurnNumber?.takeIf { it > 0 }
+                ?: throw IllegalStateException("شماره نوبت دستی معتبر نیست.")
+            if (manualText.isBlank()) throw IllegalStateException("متن اولین نوبت را وارد کنید.")
+            workspaceRepository.addRoleLinkedTurn(
+                versionId = version.id, turnNumber = number, roleUid = role.uid,
+                roleTitle = role.title, text = manualText.trim(), allowPublishedPlan = true
+            )
+        }
+
+        selectedBuildMode = method
+        roleOptions = roles
+        selectedRole = roles.firstOrNull { it.uid == manualRoleUid } ?: roles.firstOrNull()
+        selectorRole = roles.firstOrNull()
+        selectorTurnNumber = ((dao.turns(version.id).maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+        selectorItems = sections.flatMap { section ->
+            val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
+            DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part ->
+                DirectorSelectorItem("${section.uid}:$index", section, role, part)
+            }
+        }
+        selectedDialogueKeys = if (method == DirectorOfficeSharedContract.SELECTOR) {
+            usedDirectorDialogueKeys(dao, version.id, selectorItems)
+        } else emptySet()
+        loadWorkspaceIntoScreen(plan.id, version.id)
+        message = when (method) {
+            DirectorOfficeSharedContract.ROLE_NUMBERED -> "دفتر ساخته و ذخیره شد؛ نوبت‌های شماره‌دار از متن نقش‌های همین مجلس استخراج شدند."
+            DirectorOfficeSharedContract.FULL_TEXT -> "دفتر ساخته و ذخیره شد؛ متن کامل نقش‌ها به ترتیب وارد دفتر شد."
+            DirectorOfficeSharedContract.MANUAL -> "دفتر ساخته و ذخیره شد؛ نخستین نوبت دستی نیز ثبت شد."
+            else -> "دفتر ساخته و ذخیره شد؛ اکنون می‌توانید نقش و دیالوگ‌ها را با انتخاب‌گر وارد کنید."
+        }
+    }
+
     fun reload() {
         scope.launch {
             loadPlans(reset = true)
@@ -436,10 +504,10 @@ fun DirectorOfficeSharedMainScreen(
                 sources = dao.sourceFiles(current.id)
                 loadWorkspaceIntoScreen(current.id, selectedVersion?.id)
                 val currentVersion = selectedVersion
-                currentVersion?.changeNotes
+                selectedBuildMode = currentVersion?.changeNotes
                     ?.substringAfter("روش تکمیل دفتر: ", "")
                     ?.takeIf { it in DirectorOfficeSharedContract.methodCodes }
-                    ?.let { selectedBuildMode = it }
+                    ?: DirectorOfficeSharedContract.ROLE_NUMBERED
             }
         }
     }
@@ -453,76 +521,20 @@ fun DirectorOfficeSharedMainScreen(
     LaunchedEffect(initialTaziehId, taziehOptions) {
         if (initialTaziehId != null && taziehOptions.isNotEmpty()) {
             val chosen = taziehOptions.firstOrNull { it.id == initialTaziehId }
-            if (chosen != null && selectedPlan?.taziehUid != chosen.uid) {
-                busy = true
-                try {
-                    selectedTazieh = chosen
-                    planTitle = chosen.title
-                    roleOptions = loadCurrentTaziehRoles(libraryDb, chosen)
-                    selectedRole = roleOptions.firstOrNull()
-                    var plan = dao.plansForTazieh(chosen.uid).firstOrNull()
-                    if (plan == null && !canCreatePersonal) {
-                        message = "برای ساخت دفتر شخصی این مجلس، مجوز ساخت دفتر در سیاست دسترسی فعال نیست."
-                    } else if (plan == null) {
-                        val now = System.currentTimeMillis()
-                        val newPlanId = dao.insertPlan(
-                            DirectorPlanEntity(
-                                uid = UUID.randomUUID().toString(),
-                                taziehUid = chosen.uid,
-                                title = chosen.title,
-                                createdAt = now,
-                                updatedAt = now
-                            )
-                        )
-                        val createdVersionId = dao.insertVersion(
-                            DirectorPlanVersionEntity(
-                                planId = newPlanId,
-                                versionNumber = 1,
-                                title = "نسخه اول",
-                                changeNotes = "نسخه پایه دفتر؛ روش تکمیل پس از انتخاب معین‌البکا تعیین می‌شود",
-                                createdAt = now
-                            )
-                        )
-                        selectedVersion = dao.version(createdVersionId)
-                        showBuildModeDialog = true
-                        plan = dao.plan(newPlanId)
-                    }
-                    if (plan != null) {
-                        selectedPlan = plan
-                        val versions = dao.versions(plan.id)
-                        if (versions.isEmpty()) {
-                            if (isAdmin || canCreatePersonal || canEditPersonal) {
-                                val now = System.currentTimeMillis()
-                                dao.insertVersion(DirectorPlanVersionEntity(planId = plan.id, versionNumber = 1, title = "نسخه اول", createdAt = now))
-                            } else {
-                                message = "برای ایجاد نسخه دفتر، مجوز ساخت یا ویرایش در سیاست دسترسی فعال نیست."
-                            }
-                        }
-                        planVersions = dao.versions(plan.id)
-                        selectedVersion = planVersions.firstOrNull()
-                        selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in DirectorOfficeSharedContract.methodCodes }?.let { selectedBuildMode = it }
-                        sources = dao.sourceFiles(plan.id)
-                        val currentVersion = selectedVersion
-                        if (currentVersion != null && (isAdmin || canCreatePersonal || canEditPersonal) && !showBuildModeDialog && !directorVersionHasText(dao, currentVersion.id)) {
-                            val result = importExistingTaziehText(libraryDb, dao, transactionRunner, currentVersion.id, chosen.id)
-                            turns = dao.turns(currentVersion.id)
-                            message = if (result.sectionCount > 0) {
-                                "${result.sectionCount} بخش متن از ${result.roleCount} نقش در ${result.turnCount} نوبت به دفتر منتقل شد. ${if (result.usedDialogueOrder) "ترتیب ثبت‌شده گفت‌وگوی داخلی مبنا قرار گرفت؛ ترتیب تاریخی فقط در موارد مستند تأیید است." else "ترتیب بر اساس ترتیب ثبت نقش‌ها و بخش‌ها تنظیم شد و نیازمند بازبینی است."}"
-                            } else {
-                                "دفتر این مجلس ایجاد/باز شد، اما در نقش‌های آن متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
-                            }
-                        } else {
-                            turns = currentVersion?.let { dao.turns(it.id) }.orEmpty()
-                        }
-                        if (currentVersion != null) previewText = buildDirectorVersionPreview(dao, currentVersion.id)
-                        stageCues = currentVersion?.let { dao.stageCues(it.id) }.orEmpty()
-                        loadWorkspaceIntoScreen(plan.id, currentVersion?.id)
-                        loadPlans(reset = true)
-                    }
-                } catch (e: Exception) {
-                    message = "آماده‌سازی دفتر همین مجلس ناموفق بود: ${e.message}"
-                } finally {
-                    busy = false
+            if (chosen != null) {
+                selectedTazieh = chosen
+                planTitle = chosen.title
+                roleOptions = loadCurrentTaziehRoles(libraryDb, chosen)
+                selectedRole = roleOptions.firstOrNull()
+                loadPlans(reset = true)
+                val existingPlan = dao.plansForTazieh(chosen.uid).firstOrNull()
+                screenStage = if (existingPlan == null) {
+                    if (canCreatePersonal) DirectorOfficeScreenStage.CREATE_OFFICE else DirectorOfficeScreenStage.SAVED_OFFICES
+                } else {
+                    DirectorOfficeScreenStage.SAVED_OFFICES
+                }
+                if (existingPlan == null && !canCreatePersonal) {
+                    message = "برای ساخت دفتر این مجلس، مجوز ساخت دفتر در سیاست دسترسی فعال نیست."
                 }
             }
         }
@@ -741,154 +753,335 @@ fun DirectorOfficeSharedMainScreen(
         },
         listState = turnListState
     ) {
-            item {
-                Text("ساخت و آماده‌سازی دفتر معین البکا برای هر تعزیه", style = MaterialTheme.typography.bodyMedium)
-            }
-            item {
-                Card {
-                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("ایجاد دفتر جدید", fontWeight = FontWeight.Bold)
-                        Text("انتخاب تعزیه از کتابخانه", style = MaterialTheme.typography.labelLarge)
-                        Box {
-                            OutlinedButton(
-                                onClick = { taziehMenuExpanded = true },
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = taziehOptions.isNotEmpty()
-                            ) {
-                                Text(selectedTazieh?.title ?: if (taziehOptions.isEmpty()) "تعزیه‌ای در کتابخانه پیدا نشد" else "برای انتخاب تعزیه لمس کنید")
+            when (screenStage) {
+                DirectorOfficeScreenStage.CREATE_OFFICE -> {
+                    item {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { screenStage = DirectorOfficeScreenStage.SAVED_OFFICES }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("بازگشت به دفاتر ثبت‌شده")
                             }
-                            DropdownMenu(
-                                expanded = taziehMenuExpanded,
-                                onDismissRequest = { taziehMenuExpanded = false },
-                                modifier = Modifier.fillMaxWidth(0.92f)
-                            ) {
-                                taziehOptions.forEach { item ->
-                                    DropdownMenuItem(
-                                        text = { Text("${fieldOptions.firstOrNull { it.id == item.fieldId }?.title ?: "زمینه نامشخص"}  ←  ${item.title}") },
-                                        onClick = {
-                                            selectedTazieh = item
-                                            if (planTitle.isBlank()) planTitle = item.title
-                                            taziehMenuExpanded = false
+                        }
+                    }
+                    item {
+                        Card {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("ساخت دفتر معین‌البکاء", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                Text("ابتدا مجلس را انتخاب کنید، سپس روش ایجاد دفتر را مشخص کنید.", style = MaterialTheme.typography.bodyMedium)
+                                Text("انتخاب تعزیه از کتابخانه", style = MaterialTheme.typography.labelLarge)
+                                Box {
+                                    OutlinedButton(
+                                        onClick = { taziehMenuExpanded = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        enabled = taziehOptions.isNotEmpty()
+                                    ) {
+                                        Text(selectedTazieh?.title ?: if (taziehOptions.isEmpty()) "تعزیه‌ای در کتابخانه پیدا نشد" else "برای انتخاب تعزیه لمس کنید")
+                                    }
+                                    DropdownMenu(
+                                        expanded = taziehMenuExpanded,
+                                        onDismissRequest = { taziehMenuExpanded = false },
+                                        modifier = Modifier.fillMaxWidth(0.92f)
+                                    ) {
+                                        taziehOptions.forEach { option ->
+                                            DropdownMenuItem(
+                                                text = { Text("${fieldOptions.firstOrNull { it.id == option.fieldId }?.title ?: "زمینه نامشخص"}  ←  ${option.title}") },
+                                                onClick = {
+                                                    selectedTazieh = option
+                                                    if (planTitle.isBlank()) planTitle = option.title
+                                                    roleOptions = emptyList()
+                                                    selectedRole = null
+                                                    selectorRole = null
+                                                    taziehMenuExpanded = false
+                                                    scope.launch {
+                                                        roleOptions = loadCurrentTaziehRoles(libraryDb, option)
+                                                        selectedRole = roleOptions.firstOrNull()
+                                                        selectorRole = roleOptions.firstOrNull()
+                                                    }
+                                                }
+                                            )
                                         }
+                                    }
+                                }
+                                selectedTazieh?.let { target ->
+                                    Text(
+                                        "زمینه: ${fieldOptions.firstOrNull { it.id == target.fieldId }?.title ?: "نامشخص"} | مجلس: ${target.title}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                }
+                                OutlinedTextField(
+                                    value = planTitle,
+                                    onValueChange = { planTitle = it },
+                                    label = { Text("عنوان دفتر") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    enabled = canCreatePersonal
+                                )
+                                Divider()
+                                Text("روش ایجاد دفتر را انتخاب کنید", fontWeight = FontWeight.Bold)
+                                listOf(
+                                    DirectorOfficeSharedContract.ROLE_NUMBERED,
+                                    DirectorOfficeSharedContract.MANUAL,
+                                    DirectorOfficeSharedContract.FULL_TEXT,
+                                    DirectorOfficeSharedContract.SELECTOR
+                                ).forEachIndexed { index, methodCode ->
+                                    val method = DirectorOfficeSharedContract.method(methodCode) ?: return@forEachIndexed
+                                    val orderLabel = listOf("۱.", "۲.", "۳.", "۴.").getOrElse(index) { "${index + 1}." }
+                                    val displayTitle = when (method.code) {
+                                        DirectorOfficeSharedContract.ROLE_NUMBERED -> "تشخیص نوبت‌های شماره‌دار از متن"
+                                        DirectorOfficeSharedContract.MANUAL -> "ساخت دستی نوبت‌ها"
+                                        DirectorOfficeSharedContract.FULL_TEXT -> "ساخت از متن کامل"
+                                        else -> "ساخت با انتخاب‌گر"
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().clickable(enabled = canBuildMethod(method.code)) { selectedBuildMode = method.code },
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        RadioButton(
+                                            selected = selectedBuildMode == method.code,
+                                            onClick = { selectedBuildMode = method.code },
+                                            enabled = canBuildMethod(method.code)
+                                        )
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("$orderLabel $displayTitle", fontWeight = FontWeight.SemiBold)
+                                            Text(method.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        when (selectedBuildMode) {
+                                            DirectorOfficeSharedContract.ROLE_NUMBERED -> {
+                                                Text("تشخیص نوبت‌های شماره‌دار از متن", fontWeight = FontWeight.Bold)
+                                                Text("برنامه متن نقش‌های همین مجلس را بررسی می‌کند و دیالوگ‌های دارای شماره را به نوبت تبدیل می‌کند. دیالوگ‌های هم‌شماره در یک نوبت گروهی قرار می‌گیرند.", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            DirectorOfficeSharedContract.FULL_TEXT -> {
+                                                Text("ساخت از متن کامل", fontWeight = FontWeight.Bold)
+                                                Text("متن کامل بخش‌های نقش‌های همین مجلس به ترتیب نقش‌ها در دفتر ثبت می‌شود.", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            DirectorOfficeSharedContract.MANUAL -> {
+                                                Text("ثبت نخستین نوبت دستی", fontWeight = FontWeight.Bold)
+                                                ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
+                                                    OutlinedTextField(
+                                                        value = selectedRole?.title ?: "ابتدا نقش مجلس را انتخاب کنید",
+                                                        onValueChange = {}, readOnly = true,
+                                                        label = { Text("نقش نوبت") },
+                                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(roleMenuExpanded) },
+                                                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                                                        enabled = roleOptions.isNotEmpty()
+                                                    )
+                                                    ExposedDropdownMenu(expanded = roleMenuExpanded, onDismissRequest = { roleMenuExpanded = false }) {
+                                                        roleOptions.forEach { role ->
+                                                            DropdownMenuItem(text = { Text(role.title) }, onClick = { selectedRole = role; roleMenuExpanded = false })
+                                                        }
+                                                    }
+                                                }
+                                                DirectorOfficeTurnInputFields(
+                                                    number = turnNumber,
+                                                    onNumberChange = { turnNumber = it },
+                                                    text = turnText,
+                                                    onTextChange = { turnText = it },
+                                                    textLabel = "متن نخستین نوبت",
+                                                    textMinHeight = 100,
+                                                    textMaxHeight = 180
+                                                )
+                                            }
+                                            else -> {
+                                                Text("ساخت با انتخاب‌گر", fontWeight = FontWeight.Bold)
+                                                Text("پس از ذخیره دفتر، نقش و دیالوگ‌های موردنظر را از کتابخانه انتخاب می‌کنید. در صفحه دفتر فقط فهرست دیالوگ‌های باقی‌مانده نمایش داده می‌شود.", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+                                    }
+                                }
+                                Button(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = canCreatePersonal && canBuildMethod(selectedBuildMode) && selectedTazieh != null && planTitle.isNotBlank() && !busy &&
+                                        (selectedBuildMode != DirectorOfficeSharedContract.MANUAL || (selectedRole != null && turnText.isNotBlank() && (turnNumber.toIntOrNull() ?: 0) > 0)),
+                                    onClick = {
+                                        scope.launch {
+                                            busy = true
+                                            var createdPlanId: Long? = null
+                                            try {
+                                                val target = selectedTazieh ?: error("مجلس انتخاب نشده است.")
+                                                val existingPlan = dao.plansForTazieh(target.uid).firstOrNull()
+                                                if (existingPlan != null) {
+                                                    message = "برای این مجلس دفتر ثبت‌شده وجود دارد؛ آن را از فهرست انتخاب کنید."
+                                                    screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
+                                                } else {
+                                                    val now = System.currentTimeMillis()
+                                                    val newPlanId = dao.insertPlan(
+                                                        DirectorPlanEntity(
+                                                            uid = UUID.randomUUID().toString(),
+                                                            taziehUid = target.uid,
+                                                            title = planTitle.trim(),
+                                                            createdAt = now,
+                                                            updatedAt = now
+                                                        )
+                                                    )
+                                                    createdPlanId = newPlanId
+                                                    val newVersionId = dao.insertVersion(
+                                                        DirectorPlanVersionEntity(
+                                                            planId = newPlanId, versionNumber = 1, title = "نسخه اول",
+                                                            createdAt = now, changeNotes = "روش تکمیل دفتر: $selectedBuildMode"
+                                                        )
+                                                    )
+                                                    val newPlan = dao.plan(newPlanId) ?: error("دفتر جدید ذخیره نشد.")
+                                                    val newVersion = dao.version(newVersionId) ?: error("نسخه اولیه دفتر ساخته نشد.")
+                                                    buildNewOfficeWithMethod(
+                                                        plan = newPlan,
+                                                        version = newVersion,
+                                                        method = selectedBuildMode,
+                                                        manualRoleUid = selectedRole?.uid,
+                                                        manualTurnNumber = turnNumber.toIntOrNull(),
+                                                        manualText = turnText
+                                                    )
+                                                    loadPlans(reset = true)
+                                                    screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
+                                                    selectedTazieh = null
+                                                    planTitle = ""
+                                                    turnNumber = "1"
+                                                    turnText = ""
+                                                    message = "دفتر «${newPlan.title}» ذخیره شد. برای مشاهده و ادامه کار، آن را از فهرست دفاتر انتخاب کنید."
+                                                }
+                                            } catch (e: Exception) {
+                                                createdPlanId?.let { runCatching { dao.softDeletePlan(it, System.currentTimeMillis()) } }
+                                                message = "ساخت دفتر ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                                            } finally { busy = false }
+                                        }
+                                    }
+                                ) {
+                                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    else Icon(Icons.Default.Add, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("ساخت دفتر و ذخیره")
                                 }
                             }
                         }
-                        if (selectedTazieh != null) {
-                            Text("زمینه: ${fieldOptions.firstOrNull { it.id == selectedTazieh!!.fieldId }?.title ?: "نامشخص"} | مجلس: ${selectedTazieh!!.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        OutlinedTextField(planTitle, { planTitle = it }, label = { Text("عنوان دفتر / مجلس") }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = isAdmin || canCreatePersonal)
-                        Button(enabled = canCreatePersonal && planTitle.isNotBlank() && selectedTazieh != null && !busy, onClick = {
-                            scope.launch {
-                                busy = true
-                                try {
-                                    val existingPlan = dao.plansForTazieh(selectedTazieh!!.uid).firstOrNull()
-                                    if (existingPlan != null) {
-                                        selectedPlan = existingPlan
-                                        val target = libraryDb.taziehDao().getByUid(existingPlan.taziehUid)
-                                        roleOptions = target?.let { loadCurrentTaziehRoles(libraryDb, it) }.orEmpty()
-                                        selectedRole = roleOptions.firstOrNull()
-                                        planVersions = dao.versions(existingPlan.id)
-                                        selectedVersion = planVersions.firstOrNull()
-                                        selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.takeIf { it in DirectorOfficeSharedContract.methodCodes }?.let { selectedBuildMode = it }
-                                        sources = dao.sourceFiles(existingPlan.id)
-                                        turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
-                                        stageCues = selectedVersion?.let { dao.stageCues(it.id) }.orEmpty()
-                                        val currentVersion = selectedVersion
-                                        if (currentVersion != null && !directorVersionHasText(dao, currentVersion.id)) {
-                                            val result = importExistingTaziehText(libraryDb, dao, transactionRunner, currentVersion.id, target?.id ?: selectedTazieh!!.id)
-                                            turns = dao.turns(currentVersion.id)
-                                            previewText = buildDirectorVersionPreview(dao, currentVersion.id)
-                                            message = if (result.sectionCount > 0) "${result.sectionCount} بخش از متن‌های داخلی همین مجلس در ${result.turnCount} نوبت به دفتر منتقل شد." else "دفتر باز شد؛ متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
-                                        } else {
-                                            message = "برای این مجلس دفتر اصلی از قبل وجود دارد؛ همان دفتر باز شد. نسخه‌های آن را مدیریت کنید."
-                                        }
-                                    } else {
-                                        val now = System.currentTimeMillis()
-                                        val id = dao.insertPlan(DirectorPlanEntity(uid = UUID.randomUUID().toString(), taziehUid = selectedTazieh!!.uid, title = planTitle.trim(), createdAt = now, updatedAt = now))
-                                        val versionId = dao.insertVersion(DirectorPlanVersionEntity(planId = id, versionNumber = 1, title = "نسخه اول", createdAt = now))
-                                        selectedPlan = dao.plan(id)
-                                        val target = libraryDb.taziehDao().getByUid(selectedTazieh!!.uid)
-                                        roleOptions = target?.let { loadCurrentTaziehRoles(libraryDb, it) }.orEmpty()
-                                        selectedRole = roleOptions.firstOrNull()
-                                        selectedVersion = dao.version(versionId)
-                                        turns = emptyList()
-                                        previewText = ""
-                                        selectorRole = roleOptions.firstOrNull()
-                                        planTitle = ""
-                                        selectedTazieh = null
-                                        showBuildModeDialog = true
-                                        message = "دفتر ایجاد شد؛ روش تکمیل دفتر را انتخاب کنید."
-                                    }
-                                    reload()
-                                } catch (e: Exception) { message = "ایجاد دفتر ناموفق بود: ${e.message}" }
-                                finally { busy = false }
+                    }
+                }
+                DirectorOfficeScreenStage.SAVED_OFFICES -> {
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("دفتر معین‌البکاء", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = canCreatePersonal && !busy,
+                                onClick = {
+                                    selectedTazieh = null
+                                    planTitle = ""
+                                    planSearch = ""
+                                    selectedRole = null
+                                    roleOptions = emptyList()
+                                    turnNumber = "1"
+                                    turnText = ""
+                                    selectedBuildMode = DirectorOfficeSharedContract.ROLE_NUMBERED
+                                    message = null
+                                    screenStage = DirectorOfficeScreenStage.CREATE_OFFICE
+                                }
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("افزودن دفتر جدید")
                             }
-                        }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("ایجاد دفتر") }
+                            Text("دفترهای ثبت‌شده", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    item {
+                        OutlinedTextField(
+                            value = planSearch, onValueChange = { planSearch = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("جست‌وجوی دفتر بر اساس نام مجلس") }, singleLine = true
+                        )
+                    }
+                    if (plans.isEmpty()) item {
+                        Text(if (planSearch.isBlank()) "هنوز دفتری ثبت نشده است. برای شروع «افزودن دفتر جدید» را انتخاب کنید." else "دفتر منطبق با جست‌وجو پیدا نشد.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    items(plans, key = { it.id }) { plan ->
+                        val tazieh = taziehOptions.firstOrNull { it.uid == plan.taziehUid }
+                        val fieldTitle = tazieh?.let { t -> fieldOptions.firstOrNull { it.id == t.fieldId }?.title }.orEmpty()
+                        DirectorOfficeSelectablePlanCard(
+                            title = plan.title,
+                            subtitle = "${fieldTitle.ifBlank { "زمینه نامشخص" }}  ←  ${tazieh?.title ?: plan.taziehUid}",
+                            selected = selectedPlan?.id == plan.id,
+                            titleBold = true,
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        message = null
+                                        selectedPlan = plan
+                                        val target = libraryDb.taziehDao().getByUid(plan.taziehUid)
+                                        roleOptions = target?.let { loadCurrentTaziehRoles(libraryDb, it) }.orEmpty()
+                                        selectedRole = roleOptions.firstOrNull()
+                                        val versions = dao.versions(plan.id)
+                                        planVersions = versions
+                                        selectedVersion = versions.firstOrNull()
+                                        sources = dao.sourceFiles(plan.id)
+                                        selectedVersion?.let {
+                                            turns = dao.turns(it.id)
+                                            stageCues = dao.stageCues(it.id)
+                                            previewText = buildDirectorVersionPreview(dao, it.id)
+                                            selectedBuildMode = it.changeNotes.substringAfter("روش تکمیل دفتر: ", "")
+                                                .takeIf { code -> code in DirectorOfficeSharedContract.methodCodes }
+                                                ?: DirectorOfficeSharedContract.ROLE_NUMBERED
+                                            if ((isAdmin || canCreatePersonal || canEditPersonal) && !directorVersionHasText(dao, it.id)) {
+                                                val existingTazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
+                                                if (existingTazieh != null) {
+                                                    val imported = importExistingTaziehText(libraryDb, dao, transactionRunner, it.id, existingTazieh.id)
+                                                    turns = dao.turns(it.id)
+                                                    previewText = buildDirectorVersionPreview(dao, it.id)
+                                                    message = if (imported.sectionCount > 0) "${imported.sectionCount} بخش از متن‌های داخلی همین مجلس در ${imported.turnCount} نوبت به دفتر منتقل شد." else "دفتر باز شد؛ متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
+                                                }
+                                            }
+                                            loadWorkspaceIntoScreen(plan.id, it.id)
+                                        } ?: run {
+                                            turns = emptyList(); stageCues = emptyList(); workspaceState = null
+                                        }
+                                        screenStage = DirectorOfficeScreenStage.SELECTED_OFFICE
+                                    } catch (e: Exception) {
+                                        message = "بازکردن دفتر ناموفق بود: ${e.message}"
+                                    } finally { busy = false }
+                                }
+                            },
+                            trailingContent = {
+                                if (isAdmin || canEditPersonal) IconButton(onClick = { deletePlanCandidate = plan }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "حذف دفتر")
+                                }
+                            }
+                        )
+                    }
+                    if (hasMorePlans) item {
+                        OutlinedButton(
+                            enabled = !loadingMorePlans,
+                            onClick = {
+                                scope.launch {
+                                    loadingMorePlans = true
+                                    try { loadPlans(reset = false) } finally { loadingMorePlans = false }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(if (loadingMorePlans) "در حال بارگذاری…" else "نمایش ۵۰ دفتر بعدی") }
+                    }
+                }
+                DirectorOfficeScreenStage.SELECTED_OFFICE -> {
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { screenStage = DirectorOfficeScreenStage.SAVED_OFFICES }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("بازگشت به فهرست دفاتر")
+                            }
+                            Text(selectedPlan?.title ?: "دفتر معین‌البکاء", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
-            item {
-                Text("دفترهای موجود", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                OutlinedTextField(planSearch, { planSearch = it }, modifier = Modifier.fillMaxWidth(), label = { Text("جست‌وجوی دفتر بر اساس نام مجلس") }, singleLine = true)
-                Text("فهرست صفحه‌بندی‌شده؛ هر بار حداکثر ۵۰ دفتر بارگذاری می‌شود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (plans.isEmpty()) item { Text(if (planSearch.isBlank()) "هنوز دفتری ایجاد نشده است." else "دفتر منطبق با جست‌وجو پیدا نشد.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            items(plans, key = { it.id }) { plan ->
-                val tazieh = taziehOptions.firstOrNull { it.uid == plan.taziehUid }
-                val fieldTitle = tazieh?.let { t -> fieldOptions.firstOrNull { it.id == t.fieldId }?.title }.orEmpty()
-                DirectorOfficeSelectablePlanCard(
-                    title = plan.title,
-                    subtitle = "${fieldTitle.ifBlank { "زمینه نامشخص" }}  ←  ${tazieh?.title ?: plan.taziehUid}",
-                    selected = selectedPlan?.id == plan.id,
-                    titleBold = true,
-                    onClick = {
-                        scope.launch {
-                            selectedPlan = plan
-                            val target = libraryDb.taziehDao().getByUid(plan.taziehUid)
-                            roleOptions = target?.let { loadCurrentTaziehRoles(libraryDb, it) }.orEmpty()
-                            selectedRole = roleOptions.firstOrNull()
-                            val versions = dao.versions(plan.id)
-                            planVersions = versions
-                            selectedVersion = versions.firstOrNull()
-                            sources = dao.sourceFiles(plan.id)
-                            turns = selectedVersion?.let { dao.turns(it.id) } ?: emptyList()
-                            selectedVersion?.let {
-                                stageCues = dao.stageCues(it.id)
-                                previewText = buildDirectorVersionPreview(dao, it.id)
-                            } ?: run { stageCues = emptyList() }
-                            val currentVersion = selectedVersion
-                            if (currentVersion != null && (isAdmin || canCreatePersonal || canEditPersonal) && !directorVersionHasText(dao, currentVersion.id)) {
-                                val selectedTazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
-                                if (selectedTazieh != null) {
-                                    val result = importExistingTaziehText(libraryDb, dao, transactionRunner, currentVersion.id, selectedTazieh.id)
-                                    turns = dao.turns(currentVersion.id)
-                                    previewText = buildDirectorVersionPreview(dao, currentVersion.id)
-                                    message = if (result.sectionCount > 0) "${result.sectionCount} بخش از متن‌های داخلی همین مجلس در ${result.turnCount} نوبت به دفتر منتقل شد." else "متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
-                                }
-                            }
-                            selectedVersion?.let { loadWorkspaceIntoScreen(plan.id, it.id) }
-                        }
-                    },
-                    trailingContent = {
-                        if (isAdmin || canEditPersonal) IconButton(onClick = { deletePlanCandidate = plan }) {
-                            Icon(Icons.Default.Delete, contentDescription = "حذف دفتر")
-                        }
-                    }
-                )
-            }
-            if (hasMorePlans) item {
-                OutlinedButton(enabled = !loadingMorePlans, onClick = {
-                    scope.launch {
-                        loadingMorePlans = true
-                        try { loadPlans(reset = false) } finally { loadingMorePlans = false }
-                    }
-                }, modifier = Modifier.fillMaxWidth()) { Text(if (loadingMorePlans) "در حال بارگذاری…" else "نمایش ۵۰ دفتر بعدی") }
-            }
-            if (selectedPlan != null) {
+            if (screenStage == DirectorOfficeScreenStage.SELECTED_OFFICE && selectedPlan != null) {
                 item {
                     Divider()
-                    Text("مدیریت: ${selectedPlan!!.title}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("اطلاعات و مدیریت دفتر", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text("نسخه انتخابی: ${selectedVersion?.title ?: "ندارد"}", style = MaterialTheme.typography.bodySmall)
                     Text("نقش‌های ثبت‌شده در همین مجلس (${roleOptions.size})", fontWeight = FontWeight.SemiBold)
                     if (roleOptions.isEmpty()) Text("برای این مجلس هنوز نقشی در کتابخانه ثبت نشده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -1072,7 +1265,7 @@ fun DirectorOfficeSharedMainScreen(
                         enabled = isAdmin || canCreatePersonal || canEditPersonal || canImportSources
                     )
                 }
-                item {
+                if (selectedBuildMode == DirectorOfficeSharedContract.ROLE_NUMBERED) item {
                     Button(
                         enabled = canBuildMethod(DirectorOfficeSharedContract.ROLE_NUMBERED) && (isAdmin || canCreatePersonal || canEditPersonal) && selectedVersion != null && selectedRole != null && previewText.isNotBlank() && !busy,
                         onClick = {
@@ -1163,7 +1356,7 @@ fun DirectorOfficeSharedMainScreen(
                         }
                     }
                 }
-                item {
+                if (selectedBuildMode == DirectorOfficeSharedContract.MANUAL) item {
                     Text("ساخت نوبت دستی از متن", fontWeight = FontWeight.Bold)
                     ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
                         OutlinedTextField(
@@ -1679,6 +1872,8 @@ fun DirectorOfficeSharedMainScreen(
                             if (selectedPlan?.id == candidate.id) {
                                 selectedPlan = null; selectedVersion = null; planVersions = emptyList()
                                 sources = emptyList(); turns = emptyList(); roleOptions = emptyList(); selectedRole = null
+                                workspaceState = null
+                                screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
                             }
                             message = "دفتر حذف شد؛ اطلاعات آن به‌صورت نرم نگهداری شده و متن اصلی مجلس دست‌نخورده است."
                             deletePlanCandidate = null
