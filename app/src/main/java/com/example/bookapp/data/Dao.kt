@@ -140,6 +140,9 @@ suspend fun getByRoles(roleIds: List<Long>): List<SectionEntity>
     @Query("SELECT * FROM sections WHERE uid = :uid LIMIT 1")
     suspend fun getByUid(uid: String): SectionEntity?
 
+    @Query("SELECT * FROM sections WHERE uid IN (:uids)")
+    suspend fun getByUids(uids: List<String>): List<SectionEntity>
+
     @Query("SELECT * FROM sections WHERE sourceUid = :sourceUid AND roleId = :roleId")
     suspend fun getBySourceAndRole(sourceUid: String, roleId: Long): List<SectionEntity>
 

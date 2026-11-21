@@ -119,7 +119,37 @@ data class DirectorTextSegmentEntity(
     val sectionUid: String? = null,
     val sourceFileId: Long? = null,
     val sourcePageStart: Int? = null,
-    val sourcePageEnd: Int? = null
+    val sourcePageEnd: Int? = null,
+    /** Automatic provenance from the local library; the source section itself is never modified. */
+    val sourceTaziehUid: String? = null,
+    val sourceRoleUid: String? = null,
+    val sourceSectionTitle: String = "",
+    @ColumnInfo(defaultValue = "''") val sourceSectionUids: String = "",
+    @ColumnInfo(defaultValue = "'LEGACY'") val sourceMethod: String = "MANUAL",
+    @ColumnInfo(defaultValue = "''") val sourceContentHash: String = ""
+)
+
+/** Local, offline audit trail for dialogue/turn/role edits. It stores snapshots, not source-library content. */
+@Entity(
+    tableName = "director_change_history",
+    indices = [Index("planId"), Index("versionId"), Index(value = ["turnId", "changedAt"]), Index("changedAt")]
+)
+data class DirectorChangeHistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val planId: Long,
+    val versionId: Long,
+    val turnId: Long?,
+    /** DIALOGUE, TURN, ROLE */
+    val entityType: String,
+    /** segments, turnNumber, title, participants */
+    val fieldName: String,
+    /** UPDATE, ADD, REMOVE, RESTORE */
+    val changeType: String,
+    val summary: String,
+    val oldValue: String,
+    val newValue: String,
+    val changedAt: Long,
+    val restoredFromId: Long? = null
 )
 
 @Entity(

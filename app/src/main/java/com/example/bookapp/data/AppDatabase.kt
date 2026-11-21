@@ -11,7 +11,7 @@ import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 
-const val APP_DATABASE_SCHEMA_VERSION = 19
+const val APP_DATABASE_SCHEMA_VERSION = 20
 
 @Database(
     entities = [
@@ -56,6 +56,7 @@ const val APP_DATABASE_SCHEMA_VERSION = 19
         DirectorTurnEntity::class,
         DirectorParticipantEntity::class,
         DirectorTextSegmentEntity::class,
+        DirectorChangeHistoryEntity::class,
         DirectorStageCueEntity::class,
         DirectorSessionEntity::class,
         DirectorTurnProgressEntity::class
@@ -93,6 +94,23 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `director_plans` ADD COLUMN `isDeleted` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `director_plans` ADD COLUMN `deletedAt` INTEGER")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_plans_isDeleted` ON `director_plans` (`isDeleted`)")
+            }
+        }
+
+        /** Version 20: source provenance and local edit history for the director office. */
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `director_text_segments` ADD COLUMN `sourceTaziehUid` TEXT")
+                db.execSQL("ALTER TABLE `director_text_segments` ADD COLUMN `sourceRoleUid` TEXT")
+                db.execSQL("ALTER TABLE `director_text_segments` ADD COLUMN `sourceSectionTitle` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `director_text_segments` ADD COLUMN `sourceSectionUids` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `director_text_segments` ADD COLUMN `sourceMethod` TEXT NOT NULL DEFAULT 'LEGACY'")
+                db.execSQL("ALTER TABLE `director_text_segments` ADD COLUMN `sourceContentHash` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `director_change_history` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `planId` INTEGER NOT NULL, `versionId` INTEGER NOT NULL, `turnId` INTEGER, `entityType` TEXT NOT NULL, `fieldName` TEXT NOT NULL, `changeType` TEXT NOT NULL, `summary` TEXT NOT NULL, `oldValue` TEXT NOT NULL, `newValue` TEXT NOT NULL, `changedAt` INTEGER NOT NULL, `restoredFromId` INTEGER)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_planId` ON `director_change_history` (`planId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_versionId` ON `director_change_history` (`versionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_turnId_changedAt` ON `director_change_history` (`turnId`, `changedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_changedAt` ON `director_change_history` (`changedAt`)")
             }
         }
 
@@ -655,7 +673,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_15_16,
                         MIGRATION_16_17,
                         MIGRATION_17_18,
-                        MIGRATION_18_19
+                        MIGRATION_18_19,
+                        MIGRATION_19_20
                     )
                     .build()
 
