@@ -226,6 +226,16 @@ class DirectorOfficeWorkspaceOperationsTest {
     }
 
     @Test
+    fun `manual builder creates a raw empty draft when no turns exist`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao, 20, DirectorOfficeSharedContract.MANUAL, emptyList(), emptyList()
+        )
+        assertTrue(dao.turnRows.isEmpty())
+        assertEquals(0, result.insertedTurnCount)
+    }
+
+    @Test
     fun `manual builder does not delete already recorded turns`() = runTest {
         val dao = FakeWorkspaceDao().apply {
             turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 5, sequenceIndex = 0, title = "حفظ شود")
