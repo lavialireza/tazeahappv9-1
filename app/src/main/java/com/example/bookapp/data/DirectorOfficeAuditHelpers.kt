@@ -99,7 +99,8 @@ object DirectorOfficeQualityChecker {
     fun check(
         workspace: DirectorOfficeWorkspaceState,
         currentSourceSections: Map<String, String?> = emptyMap(),
-        currentSourceRoleUids: Set<String>? = null
+        currentSourceRoleUids: Set<String>? = null,
+        expectedSourceRoles: Map<String, String>? = null
     ): List<DirectorOfficeQualityIssue> {
         val issues = mutableListOf<DirectorOfficeQualityIssue>()
         val participantsByTurn = workspace.participantsByTurn
@@ -107,9 +108,33 @@ object DirectorOfficeQualityChecker {
 
         if (workspace.turns.isEmpty()) {
             issues += DirectorOfficeQualityIssue(
-                code = "EMPTY_OFFICE", severity = DirectorOfficeQualitySeverity.INFO,
-                message = "این نسخه هنوز نوبتی ندارد."
+                code = "EMPTY_OFFICE", severity = DirectorOfficeQualitySeverity.WARNING,
+                message = "این نسخه هنوز هیچ نوبتی ندارد و دفتر کامل نیست."
             )
+        }
+
+        // Complete-office validation is based on the full role roster of the selected majlis,
+        // not merely on whether the turns that happen to exist look internally valid.
+        if (expectedSourceRoles == null || expectedSourceRoles.isEmpty()) {
+            issues += DirectorOfficeQualityIssue(
+                code = "SOURCE_ROLE_ROSTER_UNAVAILABLE",
+                severity = DirectorOfficeQualitySeverity.WARNING,
+                message = "فهرست نقش‌های مجلس اصلی برای مقایسه در دسترس نیست؛ کامل‌بودن کل دفتر قابل تأیید نیست."
+            )
+        } else {
+            val registeredRoleUids = workspace.participantsByTurn.values.flatten()
+                .map { it.roleUid }.filter { it.isNotBlank() && !it.startsWith("personal-role-") }.toSet()
+            expectedSourceRoles.forEach { (roleUid, roleTitle) ->
+                if (roleUid !in registeredRoleUids) {
+                    issues += DirectorOfficeQualityIssue(
+                        code = "MISSING_SOURCE_ROLE",
+                        severity = DirectorOfficeQualitySeverity.WARNING,
+                        message = "نقش «$roleTitle» هنوز در هیچ نوبتی از دفتر وارد نشده است.",
+                        turnId = null,
+                        turnNumber = null
+                    )
+                }
+            }
         }
 
         workspace.turns.forEach { turn ->
@@ -143,14 +168,28 @@ object DirectorOfficeQualityChecker {
             if (segments.none { it.text.isNotBlank() }) {
                 issues += DirectorOfficeQualityIssue(
                     "NO_TEXT", DirectorOfficeQualitySeverity.ERROR,
-                    "متن دیالوگ نوبت ${turn.turnNumber} خالی است.", turn.id, turn.turnNumber
+                    "متن نوبت ${turn.turnNumber} خالی است یا فقط از فاصله و نویسه‌های خالی تشکیل شده است.",
+                    turn.id, turn.turnNumber
                 )
             }
             segments.filter { it.text.isBlank() }.forEach {
                 issues += DirectorOfficeQualityIssue(
-                    "BLANK_SEGMENT", DirectorOfficeQualitySeverity.WARNING,
-                    "یکی از قطعه‌های دیالوگ نوبت ${turn.turnNumber} خالی است.", turn.id, turn.turnNumber
+                    "BLANK_SEGMENT", DirectorOfficeQualitySeverity.ERROR,
+                    "یک قطعه از متن نوبت ${turn.turnNumber} خالی یا فقط شامل فاصله است.",
+                    turn.id, turn.turnNumber
                 )
+            }
+            val orderedSegmentIndexes = segments.map { it.segmentIndex }.distinct().sorted()
+            if (orderedSegmentIndexes.isNotEmpty()) {
+                val expectedIndexes = (0..orderedSegmentIndexes.last()).toSet()
+                val missingIndexes = expectedIndexes - orderedSegmentIndexes.toSet()
+                if (missingIndexes.isNotEmpty()) {
+                    issues += DirectorOfficeQualityIssue(
+                        "MISSING_TEXT_SEGMENT", DirectorOfficeQualitySeverity.ERROR,
+                        "در متن نوبت ${turn.turnNumber} قطعه یا قطعه‌هایی از ترتیب متن جا افتاده‌اند (شماره قطعه: ${missingIndexes.sorted().joinToString("، ")}).",
+                        turn.id, turn.turnNumber
+                    )
+                }
             }
 
             segments.forEach { segment ->
@@ -186,21 +225,40 @@ object DirectorOfficeQualityChecker {
             }
         }
 
-        // A number may repeat for different roles (collective scenes); only the same role/number pair is suspicious.
+        // The same turn number can legitimately exist for different roles in a collective scene.
+        // It is a duplicate only when the same role/number pair occurs in multiple turns.
         val occurrences = workspace.turns.flatMap { turn ->
             participantsByTurn[turn.id].orEmpty().map { participant ->
-                Triple(participant.roleUid, turn.turnNumber, turn)
+                Triple(participant.roleUid, turn, participant.roleTitle)
             }
         }
-        occurrences.groupBy { it.first to it.second }.values.forEach { duplicateGroup ->
+        occurrences.groupBy { it.first to it.second.turnNumber }.values.forEach { duplicateGroup ->
             if (duplicateGroup.size > 1) {
-                val first = duplicateGroup.first().third
-                val roleTitle = participantsByTurn[first.id].orEmpty()
-                    .firstOrNull { it.roleUid == duplicateGroup.first().first }?.roleTitle.orEmpty()
+                duplicateGroup.forEach { occurrence ->
+                    issues += DirectorOfficeQualityIssue(
+                        "DUPLICATE_ROLE_NUMBER", DirectorOfficeQualitySeverity.ERROR,
+                        "شماره ${occurrence.second.turnNumber} برای نقش «${occurrence.third}» در چند نوبت ثبت شده است.",
+                        occurrence.second.id, occurrence.second.turnNumber
+                    )
+                }
+            }
+        }
+
+        // Also flag exact repeated dialogue text for the same role, even if the turn numbers differ.
+        // Normalize whitespace only; do not remove punctuation or Persian characters.
+        val repeatedTexts = workspace.turns.flatMap { turn ->
+            val roleRows = participantsByTurn[turn.id].orEmpty()
+            val body = segmentsByTurn[turn.id].orEmpty()
+                .sortedBy { it.segmentIndex }.joinToString(" ") { it.text.trim() }
+                .replace(Regex("\\s+"), " ").trim()
+            if (body.isBlank()) emptyList() else roleRows.map { Triple(it.roleUid, body, turn) to it.roleTitle }
+        }.groupBy { it.first.first to it.first.second }
+        repeatedTexts.values.filter { it.size > 1 }.forEach { duplicates ->
+            duplicates.forEach { (entry, roleTitle) ->
                 issues += DirectorOfficeQualityIssue(
-                    "DUPLICATE_ROLE_NUMBER", DirectorOfficeQualitySeverity.WARNING,
-                    "شماره ${first.turnNumber} برای نقش «$roleTitle» در بیش از یک نوبت تکرار شده است.",
-                    first.id, first.turnNumber
+                    "DUPLICATE_ROLE_TEXT", DirectorOfficeQualitySeverity.WARNING,
+                    "متن یکسان برای نقش «$roleTitle» در بیش از یک نوبت تکرار شده است؛ تکراری‌بودن آن را بررسی کنید.",
+                    entry.third.id, entry.third.turnNumber
                 )
             }
         }
