@@ -1693,10 +1693,16 @@ fun DirectorOfficeSharedMainScreen(
                                             }
                                         }
                                         val tazieh = libraryDb.taziehDao().getByUid(snapshot.plan.taziehUid)
-                                        val roleUids = tazieh?.let { loadCurrentTaziehRoles(libraryDb, it).map(RoleEntity::uid).toSet() } ?: emptySet()
-                                        result.toMap() to roleUids
+                                        val sourceRoles = tazieh?.let { loadCurrentTaziehRoles(libraryDb, it) }
+                                        val roleUids = sourceRoles?.map(RoleEntity::uid)?.toSet()
+                                        result.toMap() to (roleUids to sourceRoles?.associate { it.uid to it.title })
                                     }
-                                    qualityIssues = DirectorOfficeQualityChecker.check(snapshot, qualityContext.first, qualityContext.second)
+                                    qualityIssues = DirectorOfficeQualityChecker.check(
+                                        workspace = snapshot,
+                                        currentSourceSections = qualityContext.first,
+                                        currentSourceRoleUids = qualityContext.second.first,
+                                        expectedSourceRoles = qualityContext.second.second
+                                    )
                                     showQualityDialog = true
                                 } catch (e: Exception) {
                                     message = "کنترل صحت دفتر انجام نشد: ${e.message}"

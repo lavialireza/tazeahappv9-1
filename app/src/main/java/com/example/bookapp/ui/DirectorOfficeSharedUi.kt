@@ -330,9 +330,6 @@ fun DirectorOfficeTurnCard(
     var dialogueLineCounts by androidx.compose.runtime.remember(turn.id, segments) {
         androidx.compose.runtime.mutableStateOf(emptyMap<Long, Int>())
     }
-    var expandedProvenanceSegments by androidx.compose.runtime.remember(turn.id) {
-        androidx.compose.runtime.mutableStateOf(emptySet<Long>())
-    }
     // فاصله خطوط از تنظیمات دفتر به ارتفاع واقعی هر سطر و فضای اسکرول منتقل می‌شود.
     // ارتفاع مستقل هر قطعه حفظ می‌شود تا متن کوتاه فضای متن دیگری را اشغال نکند.
     val bodyStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium
@@ -515,61 +512,6 @@ fun DirectorOfficeTurnCard(
                                         }
                                     }
                                 )
-                            }
-                            val sourceSectionIds = com.example.bookapp.data.DirectorOfficeHistorySnapshots.sourceSectionIds(segment)
-                            val hasProvenance = segment.sourceTaziehUid != null || segment.sourceRoleUid != null ||
-                                segment.sourceFileId != null || sourceSectionIds.isNotEmpty()
-                            if (hasProvenance) {
-                                val provenanceExpanded = segment.id in expandedProvenanceSegments
-                                androidx.compose.material3.TextButton(
-                                    onClick = {
-                                        expandedProvenanceSegments = if (provenanceExpanded) {
-                                            expandedProvenanceSegments - segment.id
-                                        } else {
-                                            expandedProvenanceSegments + segment.id
-                                        }
-                                    },
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                                ) {
-                                    Text(if (provenanceExpanded) "بستن اطلاعات منبع" else "اطلاعات منبع", style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
-                                }
-                                if (provenanceExpanded) {
-                                    val sourceRoleTitle = participants.firstOrNull { it.roleUid == segment.sourceRoleUid }?.roleTitle
-                                    val methodLabel = when (segment.sourceMethod) {
-                                        "ROLE_NUMBERED" -> "تشخیص نوبت‌های شماره‌دار"
-                                        "FULL_TEXT" -> "متن کامل نقش"
-                                        "SELECTOR" -> "انتخاب‌گر کتابخانه"
-                                        "LIBRARY_IMPORT" -> "انتقال از متن داخلی کتابخانه"
-                                        "LIBRARY_ROLE_LINKED" -> "اتصال مستقیم به بخش کتابخانه"
-                                        "SOURCE_FILE" -> "ورود از فایل منبع"
-                                        "MERGED_EDIT" -> "متن ترکیبی و ویرایش‌شده"
-                                        "MANUAL" -> "ثبت دستی"
-                                        else -> "منبع قدیمی / نامشخص"
-                                    }
-                                    val details = buildList {
-                                        add("روش ثبت: $methodLabel")
-                                        sourceRoleTitle?.let { add("نقش منبع: $it") }
-                                            ?: segment.sourceRoleUid?.takeIf { it.isNotBlank() }?.let { add("شناسه نقش منبع: $it") }
-                                        segment.sourceSectionTitle.takeIf { it.isNotBlank() }?.let { add("بخش منبع: $it") }
-                                        if (sourceSectionIds.isNotEmpty()) add("شناسه بخش: ${sourceSectionIds.joinToString("، ")}")
-                                        segment.sourceTaziehUid?.let { add("شناسه مجلس: $it") }
-                                        segment.sourceFileId?.let { add("شناسه فایل منبع: $it") }
-                                        if (segment.sourcePageStart != null) add("صفحه: ${segment.sourcePageStart}${segment.sourcePageEnd?.let { " تا $it" }.orEmpty()}")
-                                        segment.sourceContentHash.takeIf { it.isNotBlank() }?.let { add("شناسه کنترل متن: ${it.take(12)}") }
-                                    }
-                                    androidx.compose.material3.Surface(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = androidx.compose.material3.MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
-                                    ) {
-                                        Text(
-                                            details.joinToString("\n"),
-                                            modifier = Modifier.padding(8.dp),
-                                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                    }
-                                }
                             }
                             if (editable && (onEditSegment != null || onDeleteSegment != null)) {
                                 // کنترل‌ها بیرون از محدوده اسکرول متن می‌مانند و همیشه در دسترس‌اند.

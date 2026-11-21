@@ -42,7 +42,7 @@ fun DirectorOfficeQualityDialog(
     val warnings = issues.count { it.severity == DirectorOfficeQualitySeverity.WARNING }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("گزارش کنترل صحت دفتر") },
+        title = { Text("گزارش کنترل صحت و کامل‌بودن دفتر") },
         text = {
             Column(
                 modifier = Modifier
@@ -51,10 +51,19 @@ fun DirectorOfficeQualityDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text("خطا: $errors   •   هشدار: $warnings   •   اطلاعات: ${issues.size - errors - warnings}")
+                if (errors > 0 || warnings > 0) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Text(
+                            "دفتر هنوز کامل یا بدون اشکال نیست. همه موارد شناسایی‌شده در ادامه فهرست شده‌اند؛ تا رفع خطاها و هشدارهای کامل‌بودن، دفتر تأیید نمی‌شود.",
+                            modifier = Modifier.padding(12.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
                 if (issues.isEmpty()) {
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                         Text(
-                            "مورد ناقص یا ناسازگاری قابل تشخیصی پیدا نشد. متن اصلی مجلس و اطلاعات کتابخانه تغییر نکرده‌اند.",
+                            "هیچ‌یک از موارد قابل‌کنترل در این نسخه پیدا نشد. این نتیجه فقط بر اساس اطلاعات موجود در دفتر و فهرست نقش‌های قابل‌دسترسی است.",
                             modifier = Modifier.padding(12.dp),
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
