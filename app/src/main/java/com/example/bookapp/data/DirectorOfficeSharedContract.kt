@@ -56,7 +56,9 @@ data class DirectorOfficeBuildSection(
     val uid: String,
     val roleUid: String,
     val content: String,
-    val orderIndex: Int = 0
+    val orderIndex: Int = 0,
+    /** عنوان بخش در کتابخانه؛ برای ثبت دقیق منشأ متن در دفتر معین‌البکاء. */
+    val title: String = ""
 )
 
 /** نتیجه ساخت مشترک؛ برای اتصال راهنماهای صحنه به شناسه‌های تازه استفاده می‌شود. */
@@ -74,5 +76,7 @@ data class DirectorOfficeSelectorEntry(
     val roleTitle: String,
     val sectionUid: String,
     val sectionTitle: String,
-    val text: String
+    val text: String,
+    /** هش متن اصلی بخش برای کنترل یکپارچگی و ردیابی تغییرات منبع. */
+    val sourceContentHash: String = ""
 )
