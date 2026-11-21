@@ -80,7 +80,8 @@ object ViewerDirectorOfficeRepository {
             val sectionInputs = sections.mapNotNull { section ->
                 val roleUid = roleUidById[section.roleId] ?: return@mapNotNull null
                 DirectorOfficeBuildSection(
-                    uid = section.uid, roleUid = roleUid, content = section.content, orderIndex = section.orderIndex
+                    uid = section.uid, roleUid = roleUid, content = section.content,
+                    orderIndex = section.orderIndex, title = section.title
                 )
             }
             DaoDirectorOfficeWorkspaceRepository(dao).buildDraftFromLibrary(
@@ -109,7 +110,10 @@ object ViewerDirectorOfficeRepository {
             sections.flatMap { section ->
                 val role = roleById[section.roleId] ?: return@flatMap emptyList()
                 DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, text ->
-                    DirectorOfficeSelectorEntry("${section.uid}:$index", role.uid, role.title, section.uid, section.title, text)
+                    DirectorOfficeSelectorEntry(
+                        "${section.uid}:$index", role.uid, role.title, section.uid, section.title, text,
+                        sourceContentHash = ContentUid.sha256(section.content)
+                    )
                 }
             }
         }
