@@ -27,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.bookapp.data.*
@@ -398,8 +399,12 @@ fun DirectorOfficeSharedMainScreen(
     var cueTurnId by remember { mutableStateOf<Long?>(null) }
     var stageCues by remember { mutableStateOf(emptyList<DirectorStageCueEntity>()) }
     var showBuildModeDialog by remember { mutableStateOf(false) }
+    var showVersionManagement by remember { mutableStateOf(false) }
+    var showVersionsDialog by remember { mutableStateOf(false) }
     var selectedBuildMode by remember { mutableStateOf(DirectorOfficeSharedContract.ROLE_NUMBERED) }
     val canBuildSelectedMethod = canBuildMethod(selectedBuildMode)
+    val canBuildAnyMethod = isAdmin || DirectorOfficeSharedContract.methodCodes.any { canBuildMethod(it) }
+    val canShowVersionManagement = isAdmin || canBuildAnyMethod || canEditPersonal || canImportSources
     var selectorItems by remember { mutableStateOf(emptyList<DirectorSelectorItem>()) }
     var selectorRole by remember { mutableStateOf<RoleEntity?>(null) }
     var selectorRoleMenu by remember { mutableStateOf(false) }
@@ -849,7 +854,11 @@ fun DirectorOfficeSharedMainScreen(
                 DirectorOfficeScreenStage.CREATE_OFFICE -> {
                     item {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { screenStage = DirectorOfficeScreenStage.SAVED_OFFICES }) {
+                            TextButton(onClick = {
+                                showVersionManagement = false
+                                showVersionsDialog = false
+                                screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
+                            }) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                                 Spacer(Modifier.width(4.dp))
                                 Text("بازگشت به دفاتر ثبت‌شده")
@@ -1157,6 +1166,8 @@ fun DirectorOfficeSharedMainScreen(
                                             }
                                         }
                                         applyWorkspaceToScreen(loadedWorkspace)
+                                        showVersionManagement = false
+                                        showVersionsDialog = false
                                         screenStage = DirectorOfficeScreenStage.SELECTED_OFFICE
                                     } catch (e: Exception) {
                                         message = "بازکردن دفتر ناموفق بود: ${e.message}"
@@ -1186,7 +1197,11 @@ fun DirectorOfficeSharedMainScreen(
                 DirectorOfficeScreenStage.SELECTED_OFFICE -> {
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton(onClick = { screenStage = DirectorOfficeScreenStage.SAVED_OFFICES }) {
+                            TextButton(onClick = {
+                                showVersionManagement = false
+                                showVersionsDialog = false
+                                screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
+                            }) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                                 Spacer(Modifier.width(4.dp))
                                 Text("بازگشت به فهرست دفاتر")
@@ -1198,192 +1213,242 @@ fun DirectorOfficeSharedMainScreen(
             }
             if (screenStage == DirectorOfficeScreenStage.SELECTED_OFFICE && selectedPlan != null) {
                 item {
-                    Divider()
-                    Text("اطلاعات و مدیریت دفتر", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("نسخه انتخابی: ${selectedVersion?.title ?: "ندارد"}", style = MaterialTheme.typography.bodySmall)
-                    Text("نقش‌های ثبت‌شده در همین مجلس (${roleOptions.size})", fontWeight = FontWeight.SemiBold)
-                    if (roleOptions.isEmpty()) Text("برای این مجلس هنوز نقشی در کتابخانه ثبت نشده است.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                    else Text(roleOptions.joinToString("، ") { it.title }, style = MaterialTheme.typography.bodySmall)
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                    ) {
-                        Column(Modifier.fillMaxWidth().heightIn(min = 130.dp, max = 280.dp).verticalScroll(rememberScrollState()).padding(12.dp)) {
-                            Text("متن کامل دفتر (نمایش پیوسته)", fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(6.dp))
-                            Text(previewText.ifBlank { "پس از تکمیل دفتر، متن تمام نقش‌ها به ترتیب نوبت در همین کادر نمایش داده می‌شود." }, style = MaterialTheme.typography.bodyMedium)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Divider()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("نسخه فعال", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    selectedVersion?.let { version ->
+                                        "نسخه ${version.versionNumber} • ${version.title} • ${if (version.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "منتشرشده" else "پیش‌نویس"}"
+                                    } ?: "نسخه‌ای برای این دفتر ثبت نشده است",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            if (planVersions.size > 1) {
+                                TextButton(onClick = { showVersionsDialog = true }) {
+                                    Text("انتخاب نسخه (${planVersions.size})")
+                                }
+                            }
                         }
-                    }
-                    if (planVersions.isNotEmpty()) {
+                        Text("نقش‌های ثبت‌شده در همین مجلس (${roleOptions.size})", fontWeight = FontWeight.SemiBold)
+                        if (roleOptions.isEmpty()) Text(
+                            "برای این مجلس هنوز نقشی در کتابخانه ثبت نشده است.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        ) else Text(roleOptions.joinToString("، ") { it.title }, style = MaterialTheme.typography.bodySmall)
                         Card(
                             Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                         ) {
-                            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                planVersions.forEach { version ->
-                                    TextButton(
-                                        onClick = {
-                                            selectedVersion = version
-                                            version.changeNotes.substringAfter("روش تکمیل دفتر: ", "").takeIf { it in DirectorOfficeSharedContract.methodCodes }?.let { selectedBuildMode = it }
-                                            scope.launch {
-                                                loadWorkspaceIntoScreen(selectedPlan!!.id, version.id)
+                            Column(
+                                Modifier.fillMaxWidth().heightIn(min = 96.dp, max = 220.dp)
+                                    .verticalScroll(rememberScrollState()).padding(12.dp)
+                            ) {
+                                Text("متن کامل دفتر", fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    previewText.ifBlank { "پس از تکمیل دفتر، متن تمام نقش‌ها به ترتیب نوبت در همین کادر نمایش داده می‌شود." },
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    }
+                }
+                if (canShowVersionManagement) item {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable { showVersionManagement = !showVersionManagement }.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("مدیریت نسخه و منابع", fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "بازسازی روش ساخت، ایجاد نسخه و مدیریت فایل‌های منبع",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(if (showVersionManagement) "بستن" else "نمایش")
+                            }
+                            if (showVersionManagement) {
+                                Divider()
+                                Column(
+                                    Modifier.fillMaxWidth().padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (selectedVersion != null && selectedVersion?.status != DirectorPlanVersionEntity.STATUS_PUBLISHED &&
+                                        (isAdmin || canCreatePersonal || canEditPersonal) && canBuildAnyMethod
+                                    ) {
+                                        OutlinedButton(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = !busy,
+                                            onClick = {
+                                                selectedBuildMode = selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")
+                                                    ?.takeIf { it in DirectorOfficeSharedContract.methodCodes && canBuildMethod(it) }
+                                                    ?: DirectorOfficeSharedContract.methodCodes.firstOrNull { canBuildMethod(it) }
+                                                    ?: DirectorOfficeSharedContract.ROLE_NUMBERED
+                                                showVersionManagement = true
+                                                showBuildModeDialog = true
                                             }
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) { Text("نسخه ${version.versionNumber}: ${version.title}  •  ${if (version.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "منتشرشده" else "پیش‌نویس"}") }
+                                        ) { Text("انتخاب روش ساخت / بازسازی این نسخه") }
+                                    }
+                                    if ((isAdmin || canEditPersonal) && selectedPlan != null && selectedVersion != null) {
+                                        OutlinedButton(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = !busy,
+                                            onClick = {
+                                                scope.launch {
+                                                    busy = true
+                                                    try {
+                                                        val plan = selectedPlan!!
+                                                        val sourceVersion = selectedVersion!!
+                                                        val now = System.currentTimeMillis()
+                                                        val newNumber = (dao.versions(plan.id).maxOfOrNull { it.versionNumber } ?: 0) + 1
+                                                        val newVersionId = transactionRunner.run {
+                                                            val id = dao.insertVersion(DirectorPlanVersionEntity(
+                                                                planId = plan.id, versionNumber = newNumber,
+                                                                title = "نسخه $newNumber", status = DirectorPlanVersionEntity.STATUS_DRAFT,
+                                                                changeNotes = "رونوشت از نسخه ${sourceVersion.versionNumber}", createdAt = now
+                                                            ))
+                                                            val turnMap = mutableMapOf<Long, Long>()
+                                                            dao.turns(sourceVersion.id).forEach { oldTurn ->
+                                                                val newTurnId = dao.insertTurn(oldTurn.copy(id = 0, versionId = id))
+                                                                turnMap[oldTurn.id] = newTurnId
+                                                                dao.participants(oldTurn.id).forEach { participant ->
+                                                                    dao.insertParticipant(participant.copy(id = 0, turnId = newTurnId))
+                                                                }
+                                                                dao.textSegments(oldTurn.id).forEach { segment ->
+                                                                    dao.insertTextSegment(segment.copy(id = 0, turnId = newTurnId))
+                                                                }
+                                                            }
+                                                            dao.stageCues(sourceVersion.id).forEach { cue ->
+                                                                dao.insertStageCue(cue.copy(id = 0, versionId = id, turnId = cue.turnId?.let { turnMap[it] }))
+                                                            }
+                                                            id
+                                                        }
+                                                        planVersions = dao.versions(plan.id)
+                                                        selectedVersion = dao.version(newVersionId)
+                                                        turns = dao.turns(newVersionId)
+                                                        stageCues = dao.stageCues(newVersionId)
+                                                        previewText = buildDirectorVersionPreview(dao, newVersionId)
+                                                        message = "نسخه پیش‌نویس جدید با کپی کامل ترتیب، نقش‌ها، متن‌ها و راهنماهای صحنه ساخته شد."
+                                                    } catch (e: Exception) { message = "ساخت نسخه جدید ناموفق بود: ${e.message}" }
+                                                    finally { busy = false }
+                                                }
+                                            }
+                                        ) { Text("ساخت نسخه جدید از نسخه انتخابی") }
+                                    }
+                                    if (isAdmin && selectedPlan != null && selectedVersion != null && selectedVersion?.status != DirectorPlanVersionEntity.STATUS_PUBLISHED) {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = !busy,
+                                            onClick = {
+                                                scope.launch {
+                                                    busy = true
+                                                    try {
+                                                        val plan = selectedPlan!!
+                                                        val version = selectedVersion!!
+                                                        transactionRunner.run {
+                                                            dao.versions(plan.id).filter { it.status == DirectorPlanVersionEntity.STATUS_PUBLISHED }.forEach {
+                                                                dao.updateVersion(it.copy(status = DirectorPlanVersionEntity.STATUS_SUPERSEDED))
+                                                            }
+                                                            dao.updateVersion(version.copy(status = DirectorPlanVersionEntity.STATUS_PUBLISHED, publishedAt = System.currentTimeMillis()))
+                                                            dao.updatePlan(plan.copy(status = DirectorPlanEntity.STATUS_PUBLISHED, updatedAt = System.currentTimeMillis()))
+                                                        }
+                                                        selectedPlan = dao.plan(plan.id)
+                                                        planVersions = dao.versions(plan.id)
+                                                        selectedVersion = dao.version(version.id)
+                                                        message = "نسخه ${version.versionNumber} منتشر شد؛ نسخه منتشرشده قبلی به حالت جایگزین‌شده رفت."
+                                                        reload()
+                                                    } catch (e: Exception) { message = "انتشار نسخه ناموفق بود: ${e.message}" }
+                                                    finally { busy = false }
+                                                }
+                                            }
+                                        ) { Text("انتشار نسخه انتخابی") }
+                                    }
+                                    if (turns.isEmpty() && selectedVersion != null && selectedPlan != null &&
+                                        canBuildSelectedMethod && (isAdmin || canCreatePersonal || canEditPersonal)
+                                    ) {
+                                        OutlinedButton(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = !busy,
+                                            onClick = {
+                                                scope.launch {
+                                                    busy = true
+                                                    try {
+                                                        val plan = selectedPlan!!
+                                                        val version = selectedVersion!!
+                                                        val tazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
+                                                        if (tazieh == null) {
+                                                            message = "مجلس مرتبط با این دفتر در کتابخانه پیدا نشد."
+                                                        } else {
+                                                            val result = importExistingTaziehText(libraryDb, dao, transactionRunner, version.id, tazieh.id)
+                                                            turns = dao.turns(version.id)
+                                                            previewText = buildDirectorVersionPreview(dao, version.id)
+                                                            message = if (result.sectionCount > 0) {
+                                                                "${result.sectionCount} بخش از متن‌های داخلی ${result.roleCount} نقش در ${result.turnCount} نوبت به دفتر منتقل شد."
+                                                            } else {
+                                                                "در نقش‌های این مجلس متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
+                                                            }
+                                                            refresh++
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        message = "انتقال متن‌های داخلی ناموفق بود: ${e.message}"
+                                                    } finally { busy = false }
+                                                }
+                                            }
+                                        ) { Text("تکمیل دفتر از متن‌های موجود برنامه") }
+                                    }
+                                    if (canImportSources) {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            onClick = { importLauncher.launch(arrayOf("text/plain", "application/json", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "image/*")) },
+                                            enabled = !busy
+                                        ) {
+                                            Icon(Icons.Default.FileOpen, null); Spacer(Modifier.width(6.dp)); Text("ورود فایل کامل یا فایل‌های جداگانه نقش‌ها")
+                                        }
+                                    }
+                                    if (sources.isNotEmpty()) {
+                                        Divider()
+                                        Text("فایل‌های منبع (${sources.size})", fontWeight = FontWeight.Bold)
+                                        sources.forEach { source ->
+                                            ListItem(
+                                                headlineContent = { Text(source.originalName) },
+                                                supportingContent = { Text(if (source.extractedText.isBlank()) "ذخیره‌شده؛ متن استخراج نشده" else "متن استخراج‌شده: ${source.extractedText.length} نویسه") },
+                                                leadingContent = { Icon(Icons.Default.Description, null) },
+                                                modifier = Modifier.clickable { previewText = source.extractedText }
+                                            )
+                                        }
+                                    }
+                                    if (isAdmin || canCreatePersonal || canEditPersonal || canImportSources) {
+                                        Divider()
+                                        Text("پیش‌نمایش و متن ورودی", fontWeight = FontWeight.Bold)
+                                        OutlinedTextField(
+                                            value = previewText,
+                                            onValueChange = { previewText = it },
+                                            label = { Text("متن استخراج‌شده / متن قابل اصلاح") },
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp),
+                                            minLines = 3,
+                                            enabled = isAdmin || canCreatePersonal || canEditPersonal || canImportSources
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = (isAdmin || canCreatePersonal || canEditPersonal) && canBuildSelectedMethod && selectedPlan != null && selectedVersion != null && selectedVersion!!.status != DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy,
-                            onClick = {
-                                selectedBuildMode = selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")
-                                    ?.takeIf { it in DirectorOfficeSharedContract.methodCodes } ?: DirectorOfficeSharedContract.ROLE_NUMBERED
-                                showBuildModeDialog = true
-                            }
-                        ) { Text("انتخاب روش ساخت / بازسازی این نسخه") }
-                        OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = canEditPersonal && selectedPlan != null && selectedVersion != null && !busy, onClick = {
-                            scope.launch {
-                                busy = true
-                                try {
-                                    val plan = selectedPlan!!
-                                    val sourceVersion = selectedVersion!!
-                                    val now = System.currentTimeMillis()
-                                    val newNumber = (dao.versions(plan.id).maxOfOrNull { it.versionNumber } ?: 0) + 1
-                                    val newVersionId = transactionRunner.run {
-                                        val id = dao.insertVersion(DirectorPlanVersionEntity(
-                                            planId = plan.id, versionNumber = newNumber,
-                                            title = "نسخه $newNumber", status = DirectorPlanVersionEntity.STATUS_DRAFT,
-                                            changeNotes = "رونوشت از نسخه ${sourceVersion.versionNumber}", createdAt = now
-                                        ))
-                                        val turnMap = mutableMapOf<Long, Long>()
-                                        dao.turns(sourceVersion.id).forEach { oldTurn ->
-                                            val newTurnId = dao.insertTurn(oldTurn.copy(id = 0, versionId = id))
-                                            turnMap[oldTurn.id] = newTurnId
-                                            dao.participants(oldTurn.id).forEach { participant ->
-                                                dao.insertParticipant(participant.copy(id = 0, turnId = newTurnId))
-                                            }
-                                            dao.textSegments(oldTurn.id).forEach { segment ->
-                                                dao.insertTextSegment(segment.copy(id = 0, turnId = newTurnId))
-                                            }
-                                        }
-                                        dao.stageCues(sourceVersion.id).forEach { cue ->
-                                            dao.insertStageCue(cue.copy(id = 0, versionId = id, turnId = cue.turnId?.let { turnMap[it] }))
-                                        }
-                                        id
-                                    }
-                                    planVersions = dao.versions(plan.id)
-                                    selectedVersion = dao.version(newVersionId)
-                                    turns = dao.turns(newVersionId)
-                                    stageCues = dao.stageCues(newVersionId)
-                                    previewText = buildDirectorVersionPreview(dao, newVersionId)
-                                    message = "نسخه پیش‌نویس جدید با کپی کامل ترتیب، نقش‌ها، متن‌ها و راهنماهای صحنه ساخته شد."
-                                } catch (e: Exception) { message = "ساخت نسخه جدید ناموفق بود: ${e.message}" }
-                                finally { busy = false }
-                            }
-                        }) { Text("ساخت نسخه جدید از نسخه انتخابی", maxLines = 2) }
-                        if (isAdmin) Button(modifier = Modifier.fillMaxWidth(), enabled = (isAdmin || canEditPersonal) && selectedPlan != null && selectedVersion != null && selectedVersion!!.status != DirectorPlanVersionEntity.STATUS_PUBLISHED && !busy, onClick = {
-                            scope.launch {
-                                busy = true
-                                try {
-                                    val plan = selectedPlan!!
-                                    val version = selectedVersion!!
-                                    transactionRunner.run {
-                                        dao.versions(plan.id).filter { it.status == DirectorPlanVersionEntity.STATUS_PUBLISHED }.forEach {
-                                            dao.updateVersion(it.copy(status = DirectorPlanVersionEntity.STATUS_SUPERSEDED))
-                                        }
-                                        dao.updateVersion(version.copy(status = DirectorPlanVersionEntity.STATUS_PUBLISHED, publishedAt = System.currentTimeMillis()))
-                                        dao.updatePlan(plan.copy(status = DirectorPlanEntity.STATUS_PUBLISHED, updatedAt = System.currentTimeMillis()))
-                                    }
-                                    selectedPlan = dao.plan(plan.id)
-                                    planVersions = dao.versions(plan.id)
-                                    selectedVersion = dao.version(version.id)
-                                    message = "نسخه ${version.versionNumber} منتشر شد؛ نسخه منتشرشده قبلی به حالت جایگزین‌شده رفت."
-                                    reload()
-                                } catch (e: Exception) { message = "انتشار نسخه ناموفق بود: ${e.message}" }
-                                finally { busy = false }
-                            }
-                        }) { Text("انتشار نسخه انتخابی", maxLines = 2) }
-
-                    }
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-                    ) {
-                        Column(
-                            Modifier.fillMaxWidth().padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            if (turns.isEmpty()) {
-                                OutlinedButton(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    enabled = canBuildSelectedMethod && (isAdmin || canCreatePersonal || canEditPersonal) && selectedPlan != null && selectedVersion != null && !busy,
-                                    onClick = {
-                                        scope.launch {
-                                            busy = true
-                                            try {
-                                                val plan = selectedPlan!!
-                                                val version = selectedVersion!!
-                                                val tazieh = libraryDb.taziehDao().getByUid(plan.taziehUid)
-                                                if (tazieh == null) {
-                                                    message = "مجلس مرتبط با این دفتر در کتابخانه پیدا نشد."
-                                                } else {
-                                                    val result = importExistingTaziehText(libraryDb, dao, transactionRunner, version.id, tazieh.id)
-                                                    turns = dao.turns(version.id)
-                                                    previewText = buildDirectorVersionPreview(dao, version.id)
-                                                    message = if (result.sectionCount > 0) {
-                                                        "${result.sectionCount} بخش از متن‌های داخلی ${result.roleCount} نقش در ${result.turnCount} نوبت به دفتر منتقل شد."
-                                                    } else {
-                                                        "در نقش‌های این مجلس متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
-                                                    }
-                                                    refresh++
-                                                }
-                                            } catch (e: Exception) {
-                                                message = "انتقال متن‌های داخلی ناموفق بود: ${e.message}"
-                                            } finally {
-                                                busy = false
-                                            }
-                                        }
-                                    }
-                                ) { Text("تکمیل دفتر از متن‌های موجود برنامه") }
-                            }
-                            Button(
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { importLauncher.launch(arrayOf("text/plain", "application/json", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "image/*")) },
-                                enabled = canImportSources && !busy
-                            ) {
-                                Icon(Icons.Default.FileOpen, null); Spacer(Modifier.width(6.dp)); Text("ورود فایل کامل یا فایل‌های جداگانه نقش‌ها")
-                            }
-                        }
-                    }
                 }
-                item {
-                    Text("فایل‌های منبع (${sources.size})", fontWeight = FontWeight.Bold)
-                    sources.forEach { source ->
-                        ListItem(
-                            headlineContent = { Text(source.originalName) },
-                            supportingContent = { Text(if (source.extractedText.isBlank()) "ذخیره‌شده؛ متن استخراج نشده" else "متن استخراج‌شده: ${source.extractedText.length} نویسه") },
-                            leadingContent = { Icon(Icons.Default.Description, null) },
-                            modifier = Modifier.clickable { previewText = source.extractedText }
-                        )
-                    }
-                }
-                item {
-                    Text("پیش‌نمایش و متن ورودی", fontWeight = FontWeight.Bold)
-                    OutlinedTextField(
-                        value = previewText,
-                        onValueChange = { previewText = it },
-                        label = { Text("متن استخراج‌شده / متن قابل اصلاح") },
-                        // Keep the preview compact; long content scrolls inside the field.
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 220.dp),
-                        minLines = 3,
-                        enabled = isAdmin || canCreatePersonal || canEditPersonal || canImportSources
-                    )
-                }
-                if (selectedBuildMode == DirectorOfficeSharedContract.ROLE_NUMBERED) item {
+                if (showVersionManagement && selectedBuildMode == DirectorOfficeSharedContract.ROLE_NUMBERED) item {
                     Button(
                         enabled = canBuildMethod(DirectorOfficeSharedContract.ROLE_NUMBERED) && (isAdmin || canCreatePersonal || canEditPersonal) && selectedVersion != null && selectedRole != null && previewText.isNotBlank() && !busy,
                         onClick = {
@@ -1411,7 +1476,7 @@ fun DirectorOfficeSharedMainScreen(
                         }
                     ) { Text("تشخیص نوبت‌های شماره‌دار از متن") }
                 }
-                if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR && canBuildMethod(DirectorOfficeSharedContract.SELECTOR) && selectedVersion != null) {
+                if (showVersionManagement && selectedBuildMode == DirectorOfficeSharedContract.SELECTOR && canBuildMethod(DirectorOfficeSharedContract.SELECTOR) && selectedVersion != null) {
                     item {
                         Divider()
                         Text("انتخاب دیالوگ با معین‌البکا", fontWeight = FontWeight.Bold)
@@ -1474,7 +1539,7 @@ fun DirectorOfficeSharedMainScreen(
                         }
                     }
                 }
-                if (selectedBuildMode == DirectorOfficeSharedContract.MANUAL) item {
+                if (showVersionManagement && selectedBuildMode == DirectorOfficeSharedContract.MANUAL) item {
                     Text("ساخت نوبت دستی از متن", fontWeight = FontWeight.Bold)
                     ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
                         OutlinedTextField(
@@ -1865,12 +1930,60 @@ fun DirectorOfficeSharedMainScreen(
             if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             message?.let { msg -> item { Text(msg, color = MaterialTheme.colorScheme.primary) } }
     }
+    if (showVersionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showVersionsDialog = false },
+            title = { Text("انتخاب نسخه دفتر") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.62f).dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    planVersions.sortedByDescending { it.versionNumber }.forEach { version ->
+                        val isSelected = selectedVersion?.id == version.id
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                showVersionsDialog = false
+                                showVersionManagement = false
+                                selectedVersion = version
+                                version.changeNotes.substringAfter("روش تکمیل دفتر: ", "")
+                                    .takeIf { it in DirectorOfficeSharedContract.methodCodes }
+                                    ?.let { selectedBuildMode = it }
+                                scope.launch { loadWorkspaceIntoScreen(selectedPlan!!.id, version.id) }
+                            }
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(
+                                    "نسخه ${version.versionNumber}: ${version.title}",
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                                Text(
+                                    if (version.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "منتشرشده" else "پیش‌نویس",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showVersionsDialog = false }) { Text("بستن") } }
+        )
+    }
     if (showBuildModeDialog) {
         AlertDialog(
             onDismissRequest = { showBuildModeDialog = false },
             title = { Text("روش تکمیل دفتر معین‌البکا") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.62f).dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text("معین‌البکا تعیین کند دفتر چگونه ساخته شود. با تأیید، فقط نوبت‌های همین نسخه دفتر بازسازی می‌شوند؛ نسخه‌های دیگر و متن اصلی کتابخانه دست‌نخورده می‌مانند:")
                     DirectorOfficeSharedContract.buildMethods.forEachIndexed { index, method ->
                         val orderLabel = listOf("۱)", "۲)", "۳)", "۴)").getOrElse(index) { "${index + 1})" }
@@ -1942,6 +2055,7 @@ fun DirectorOfficeSharedMainScreen(
                                 else -> "حالت انتخاب با معین‌البکا فعال شد؛ دیالوگ‌های انتخاب‌شده دیگر در فهرست باقی‌مانده نمایش داده نمی‌شوند."
                             }
                             showBuildModeDialog = false
+                            showVersionManagement = true
                         } catch (e: Exception) { message = "ساخت دفتر با روش انتخابی ناموفق بود: ${e.message}" }
                         finally { busy = false }
                     }
