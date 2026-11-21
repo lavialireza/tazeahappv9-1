@@ -55,6 +55,11 @@ class ViewerDirectorOfficeMainPageDao(
         return delegate.insertTurn(value)
     }
 
+    override suspend fun insertTurns(values: List<DirectorTurnEntity>): List<Long> {
+        requireWrite()
+        return delegate.insertTurns(values)
+    }
+
     override suspend fun updateTurn(value: DirectorTurnEntity) {
         requireAny("director.personal.edit", "director.personal.create")
         delegate.updateTurn(value)
@@ -75,6 +80,11 @@ class ViewerDirectorOfficeMainPageDao(
         return delegate.insertParticipant(value)
     }
 
+    override suspend fun insertParticipants(values: List<DirectorParticipantEntity>): List<Long> {
+        requireWrite()
+        return delegate.insertParticipants(values)
+    }
+
     override suspend fun updateParticipant(value: DirectorParticipantEntity) {
         requireAny("director.personal.edit")
         delegate.updateParticipant(value)
@@ -88,6 +98,11 @@ class ViewerDirectorOfficeMainPageDao(
     override suspend fun insertTextSegment(value: DirectorTextSegmentEntity): Long {
         requireWrite()
         return delegate.insertTextSegment(value)
+    }
+
+    override suspend fun insertTextSegments(values: List<DirectorTextSegmentEntity>): List<Long> {
+        requireWrite()
+        return delegate.insertTextSegments(values)
     }
 
     override suspend fun updateTextSegment(value: DirectorTextSegmentEntity) {
@@ -113,5 +128,10 @@ class ViewerDirectorOfficeMainPageDao(
     override suspend fun deleteStageCue(id: Long) {
         requireAny("director.personal.edit")
         delegate.deleteStageCue(id)
+    }
+
+    override suspend fun insertChangeHistory(value: DirectorChangeHistoryEntity): Long {
+        requireAny("director.personal.edit", "director.personal.create")
+        return delegate.insertChangeHistory(value)
     }
 }

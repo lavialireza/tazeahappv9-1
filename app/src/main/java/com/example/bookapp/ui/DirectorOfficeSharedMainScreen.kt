@@ -235,7 +235,13 @@ internal suspend fun importExistingTaziehText(
                         turnId = turnId,
                         segmentIndex = index,
                         text = entry.section.content,
-                        sectionUid = entry.section.uid
+                        sectionUid = entry.section.uid,
+                        sourceTaziehUid = tazieh.uid,
+                        sourceRoleUid = entry.role.uid,
+                        sourceSectionTitle = entry.section.title,
+                        sourceSectionUids = entry.section.uid,
+                        sourceMethod = "LIBRARY_IMPORT",
+                        sourceContentHash = ContentUid.sha256(entry.section.content)
                     )
                 )
             }
@@ -414,6 +420,12 @@ fun DirectorOfficeSharedMainScreen(
     var showTurnSearchField by remember { mutableStateOf(false) }
     var selectedSearchResultIndex by remember { mutableIntStateOf(0) }
     var turnSearchCorpus by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var showQualityDialog by remember { mutableStateOf(false) }
+    var qualityIssues by remember { mutableStateOf(emptyList<DirectorOfficeQualityIssue>()) }
+    var qualityChecking by remember { mutableStateOf(false) }
+    var historyDialogTurn by remember { mutableStateOf<DirectorTurnEntity?>(null) }
+    var historyEntries by remember { mutableStateOf(emptyList<DirectorChangeHistoryEntity>()) }
+    var historyRestoring by remember { mutableStateOf(false) }
     var showOfficeSettingsDialog by remember { mutableStateOf(false) }
     var officeLineSpacing by remember { mutableFloatStateOf(Prefs.getLineSpacing(context)) }
     val turnListState = rememberLazyListState()
@@ -508,7 +520,7 @@ fun DirectorOfficeSharedMainScreen(
             val roleUidById = roles.associate { it.id to it.uid }
             val sectionInputs = sections.mapNotNull { section ->
                 val roleUid = roleUidById[section.roleId] ?: return@mapNotNull null
-                DirectorOfficeBuildSection(uid = section.uid, roleUid = roleUid, content = section.content, orderIndex = section.orderIndex)
+                DirectorOfficeBuildSection(uid = section.uid, roleUid = roleUid, content = section.content, orderIndex = section.orderIndex, title = section.title)
             }
 
             val buildResult = workspaceRepository.buildDraftFromLibrary(version.id, method, roleInputs, sectionInputs)
@@ -717,8 +729,11 @@ fun DirectorOfficeSharedMainScreen(
                             title = if (isCollective) "نوبت جمعی: ${distinctRoles.joinToString("، ")}" else distinctRoles.firstOrNull().orEmpty(),
                             notes = note
                         ))
+                        val linkedRolesByName = distinctRoles.associate { roleName ->
+                            ContentUid.normalize(roleName) to resolveDirectorRole(libraryDb, selectedPlan!!.taziehUid, roleName)
+                        }
                         distinctRoles.forEachIndexed { index, roleName ->
-                            val linkedRole = resolveDirectorRole(libraryDb, selectedPlan!!.taziehUid, roleName)
+                            val linkedRole = linkedRolesByName[ContentUid.normalize(roleName)]
                             dao.insertParticipant(DirectorParticipantEntity(
                                 turnId = turnId,
                                 roleUid = linkedRole?.uid ?: "unmatched-${ContentUid.sha256("${selectedPlan!!.taziehUid}|${ContentUid.normalize(roleName)}")}",
@@ -728,8 +743,13 @@ fun DirectorOfficeSharedMainScreen(
                             ))
                         }
                         entries.forEachIndexed { index, entry ->
+                            val linkedRole = linkedRolesByName[ContentUid.normalize(entry.roleTitle)]
                             dao.insertTextSegment(DirectorTextSegmentEntity(
-                                turnId = turnId, segmentIndex = index, text = entry.text, sourceFileId = entry.sourceId
+                                turnId = turnId, segmentIndex = index, text = entry.text, sourceFileId = entry.sourceId,
+                                sourceTaziehUid = selectedPlan?.taziehUid,
+                                sourceRoleUid = linkedRole?.uid,
+                                sourceMethod = "SOURCE_FILE",
+                                sourceContentHash = ContentUid.sha256(entry.text)
                             ))
                         }
                         createdTurns++
@@ -1516,7 +1536,8 @@ fun DirectorOfficeSharedMainScreen(
                                                     roleTitle = entry.role.title,
                                                     sectionUid = entry.section.uid,
                                                     sectionTitle = entry.section.title,
-                                                    text = entry.text
+                                                    text = entry.text,
+                                                    sourceContentHash = ContentUid.sha256(entry.section.content)
                                                 ),
                                                 turnNumber = number,
                                                 versionId = version.id
@@ -1652,6 +1673,45 @@ fun DirectorOfficeSharedMainScreen(
                         }) { Text("بلافاصله") }
                     }
                 }
+                if (workspaceState != null) item(key = "director-office-quality-check") {
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !qualityChecking && !busy,
+                        onClick = {
+                            val snapshot = workspaceState ?: return@OutlinedButton
+                            scope.launch {
+                                qualityChecking = true
+                                try {
+                                    val sourceIds = snapshot.textSegmentsByTurn.values.flatten()
+                                        .flatMap { DirectorOfficeHistorySnapshots.sourceSectionIds(it) }
+                                        .distinct()
+                                    val qualityContext = withContext(Dispatchers.IO) {
+                                        val result = sourceIds.associateWith { null as String? }.toMutableMap()
+                                        sourceIds.chunked(400).forEach { batch ->
+                                            libraryDb.sectionDao().getByUids(batch).forEach { section ->
+                                                result[section.uid] = section.content
+                                            }
+                                        }
+                                        val tazieh = libraryDb.taziehDao().getByUid(snapshot.plan.taziehUid)
+                                        val roleUids = tazieh?.let { loadCurrentTaziehRoles(libraryDb, it).map(RoleEntity::uid).toSet() } ?: emptySet()
+                                        result.toMap() to roleUids
+                                    }
+                                    qualityIssues = DirectorOfficeQualityChecker.check(snapshot, qualityContext.first, qualityContext.second)
+                                    showQualityDialog = true
+                                } catch (e: Exception) {
+                                    message = "کنترل صحت دفتر انجام نشد: ${e.message}"
+                                } finally {
+                                    qualityChecking = false
+                                }
+                            }
+                        }
+                    ) {
+                        if (qualityChecking) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Search, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("کنترل صحت و کامل‌بودن دفتر")
+                    }
+                }
                 directorOfficeSharedWorkspaceItems(
                     workspace = workspaceState,
                     query = turnSearch,
@@ -1689,6 +1749,19 @@ fun DirectorOfficeSharedMainScreen(
                         }
 
                         DirectorOfficeSharedTurnActions(
+                            onShowHistory = {
+                                val planId = selectedPlan?.id
+                                if (planId != null) {
+                                    scope.launch {
+                                        try {
+                                            historyEntries = workspaceRepository.changeHistory(planId, turn.id)
+                                            historyDialogTurn = turn
+                                        } catch (e: Exception) {
+                                            message = "خواندن سابقه نوبت ناموفق بود: ${e.message}"
+                                        }
+                                    }
+                                }
+                            },
                             editable = workspaceState?.isReadOnly != true && (isAdmin || canEditPersonal),
                             participants = participantsState.value,
                             segments = segmentsState.value,
@@ -1793,9 +1866,10 @@ fun DirectorOfficeSharedMainScreen(
                                                 DropdownMenuItem(text = { Text(role.title) }, onClick = {
                                                     scope.launch {
                                                         try {
-                                                            dao.updateParticipant(participant.copy(roleUid = role.uid, roleTitle = role.title))
-                                                            participantsState.value = dao.participants(turn.id)
-                                                            message = "نقش «${participant.roleTitle}» به «${role.title}» متصل شد."
+                                                            workspaceRepository.updateParticipant(participant.copy(roleUid = role.uid, roleTitle = role.title))
+                                                            loadWorkspaceIntoScreen(selectedPlan?.id ?: error("دفتر انتخاب‌شده پیدا نشد."), turn.versionId)
+                                                            participantsState.value = workspaceState?.participantsByTurn?.get(turn.id).orEmpty()
+                                                            message = "نقش «${participant.roleTitle}» به «${role.title}» متصل شد و در سابقه ثبت شد."
                                                         } catch (e: Exception) {
                                                             message = "اتصال نقش انجام نشد: ${e.message}"
                                                         }
@@ -2024,7 +2098,8 @@ fun DirectorOfficeSharedMainScreen(
                                     uid = section.uid,
                                     roleUid = roleUid,
                                     content = section.content,
-                                    orderIndex = section.orderIndex
+                                    orderIndex = section.orderIndex,
+                                    title = section.title
                                 )
                             }
                             transactionRunner.run {
@@ -2089,6 +2164,41 @@ fun DirectorOfficeSharedMainScreen(
                 onKeepScreenOnChange(true)
             },
             onDismiss = { showOfficeSettingsDialog = false }
+        )
+    }
+    if (showQualityDialog) {
+        DirectorOfficeQualityDialog(
+            issues = qualityIssues,
+            onDismiss = { showQualityDialog = false },
+            onSelectIssue = { issue ->
+                showQualityDialog = false
+                issue.turnNumber?.let { turnSearch = it.toString(); showTurnSearchField = true }
+            }
+        )
+    }
+    historyDialogTurn?.let { historyTurn ->
+        DirectorOfficeChangeHistoryDialog(
+            turn = historyTurn,
+            entries = historyEntries,
+            canRestore = (isAdmin || canEditPersonal) && workspaceState?.isReadOnly != true,
+            restoring = historyRestoring,
+            onDismiss = { if (!historyRestoring) historyDialogTurn = null },
+            onRestore = { historyEntry ->
+                val planId = selectedPlan?.id
+                if (planId != null) scope.launch {
+                    historyRestoring = true
+                    try {
+                        workspaceRepository.restoreChangeHistory(historyEntry.id)
+                        loadWorkspaceIntoScreen(planId, historyTurn.versionId)
+                        historyEntries = workspaceRepository.changeHistory(planId, historyTurn.id)
+                        message = "وضعیت قبلی نوبت بازگردانی شد و این بازگردانی نیز در سابقه ثبت شد."
+                    } catch (e: Exception) {
+                        message = "بازگردانی سابقه انجام نشد: ${e.message}"
+                    } finally {
+                        historyRestoring = false
+                    }
+                }
+            }
         )
     }
     deletePlanCandidate?.let { candidate ->
@@ -2383,6 +2493,7 @@ fun DirectorOfficeSelectablePlanCard(
  * Admin و Viewer فقط callbackهای مجاز خودشان را به این مدل می‌دهند.
  */
 data class DirectorOfficeSharedTurnActions(
+    val onShowHistory: (() -> Unit)? = null,
     val editable: Boolean = false,
     val participants: List<DirectorParticipantEntity>? = null,
     val segments: List<DirectorTextSegmentEntity>? = null,
@@ -2531,6 +2642,7 @@ fun LazyListScope.directorOfficeSharedWorkspaceItems(
             onEditCue = actions.onEditCue,
             onDeleteCue = actions.onDeleteCue,
             onAddCue = actions.onAddCue,
+            onShowHistory = actions.onShowHistory,
             collapseStageCues = actions.collapseStageCues,
             extraContent = actions.extraContent
         )

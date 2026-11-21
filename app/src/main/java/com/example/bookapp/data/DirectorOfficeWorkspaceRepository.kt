@@ -1,5 +1,8 @@
 package com.example.bookapp.data
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+
 /**
  * تصویر یکپارچه فضای کاری دفتر؛ مستقل از Flavor و نوع پایگاه داده.
  * Admin و Viewer داده‌های خود را از Repository هم‌قرارداد می‌خوانند، اما DAO جداگانه تزریق می‌کنند.
@@ -28,6 +31,8 @@ data class DirectorOfficeWorkspaceState(
 /** قرارداد یگانه بارگذاری و عملیات عمومی دفتر. API انتشار و سیاست دسترسی در آن وجود ندارد. */
 interface DirectorOfficeWorkspaceRepository {
     suspend fun loadWorkspace(planId: Long, versionId: Long? = null): DirectorOfficeWorkspaceState
+    suspend fun changeHistory(planId: Long, turnId: Long? = null): List<DirectorChangeHistoryEntity>
+    suspend fun restoreChangeHistory(historyId: Long)
     suspend fun buildDraftFromLibrary(
         versionId: Long,
         method: String,
@@ -48,6 +53,7 @@ interface DirectorOfficeWorkspaceRepository {
     suspend fun updateStageCue(value: DirectorStageCueEntity)
     suspend fun deleteStageCue(cueId: Long)
     suspend fun addParticipant(turnId: Long, roleUid: String, roleTitle: String, isLead: Boolean = false)
+    suspend fun updateParticipant(value: DirectorParticipantEntity)
     suspend fun removeParticipant(participantId: Long, turnId: Long)
     suspend fun setLeadParticipant(turnId: Long, participantId: Long)
     suspend fun deleteTurn(turnId: Long)
@@ -71,9 +77,19 @@ class DaoDirectorOfficeWorkspaceRepository(
     private val transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
 ) : DirectorOfficeWorkspaceRepository {
 
-    override suspend fun loadWorkspace(planId: Long, versionId: Long?): DirectorOfficeWorkspaceState {
-        val plan = dao.plan(planId) ?: error("دفتر پیدا نشد.")
-        val versions = dao.versionsForPlan(planId).sortedByDescending { it.versionNumber }
+    override suspend fun changeHistory(planId: Long, turnId: Long?): List<DirectorChangeHistoryEntity> =
+        dao.changeHistory(planId, turnId)
+
+    override suspend fun restoreChangeHistory(historyId: Long) = transactionRunner.run {
+        DirectorOfficeWorkspaceOperations.restoreChangeHistory(dao, historyId)
+    }
+
+    override suspend fun loadWorkspace(planId: Long, versionId: Long?): DirectorOfficeWorkspaceState = coroutineScope {
+        // ابتدا مشخصات دفتر و نسخه‌ها هم‌زمان خوانده می‌شوند.
+        val planRequest = async { dao.plan(planId) }
+        val versionsRequest = async { dao.versionsForPlan(planId) }
+        val plan = planRequest.await() ?: error("دفتر پیدا نشد.")
+        val versions = versionsRequest.await().sortedByDescending { it.versionNumber }
         val selected = if (versionId != null) {
             versions.firstOrNull { it.id == versionId }
                 ?: error("نسخه انتخاب‌شده متعلق به این دفتر نیست یا دیگر وجود ندارد.")
@@ -81,12 +97,22 @@ class DaoDirectorOfficeWorkspaceRepository(
             versions.firstOrNull { it.status == DirectorPlanVersionEntity.STATUS_DRAFT }
                 ?: versions.firstOrNull()
         }
-        val turns = selected?.let { dao.turns(it.id) }.orEmpty().sortedWith(compareBy<DirectorTurnEntity> { it.sequenceIndex }.thenBy { it.id })
+
+        val turnsRequest = selected?.let { selectedVersion -> async { dao.turns(selectedVersion.id) } }
+        val cuesRequest = selected?.let { selectedVersion -> async { dao.stageCues(selectedVersion.id) } }
+        val turns = turnsRequest?.await().orEmpty()
+            .sortedWith(compareBy<DirectorTurnEntity> { it.sequenceIndex }.thenBy { it.id })
         val turnIds = turns.map { it.id }
-        val participants = if (turnIds.isEmpty()) emptyList() else dao.participantsForTurns(turnIds)
-        val segments = if (turnIds.isEmpty()) emptyList() else turnIds.flatMap { id -> dao.textSegments(id) }
-        val cues = selected?.let { dao.stageCues(it.id) }.orEmpty().sortedWith(compareBy<DirectorStageCueEntity> { it.orderIndex }.thenBy { it.id })
-        return DirectorOfficeWorkspaceState(
+
+        // ارتباط‌های همه نوبت‌ها با دو درخواست گروهی و به‌طور هم‌زمان بارگذاری می‌شوند.
+        val participantsRequest = if (turnIds.isEmpty()) null else async { dao.participantsForTurns(turnIds) }
+        val segmentsRequest = if (turnIds.isEmpty()) null else async { dao.textSegmentsForTurns(turnIds) }
+        val participants = participantsRequest?.await().orEmpty()
+        val segments = segmentsRequest?.await().orEmpty()
+        val cues = cuesRequest?.await().orEmpty()
+            .sortedWith(compareBy<DirectorStageCueEntity> { it.orderIndex }.thenBy { it.id })
+
+        DirectorOfficeWorkspaceState(
             plan = plan,
             versions = versions,
             selectedVersion = selected,
@@ -144,6 +170,10 @@ class DaoDirectorOfficeWorkspaceRepository(
 
     override suspend fun addParticipant(turnId: Long, roleUid: String, roleTitle: String, isLead: Boolean) = transactionRunner.run {
         DirectorOfficeWorkspaceOperations.addParticipant(dao, turnId, roleUid, roleTitle, isLead)
+    }
+
+    override suspend fun updateParticipant(value: DirectorParticipantEntity) = transactionRunner.run {
+        DirectorOfficeWorkspaceOperations.updateParticipant(dao, value)
     }
 
     override suspend fun removeParticipant(participantId: Long, turnId: Long) = transactionRunner.run {

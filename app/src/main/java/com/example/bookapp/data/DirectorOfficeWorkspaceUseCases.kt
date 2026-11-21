@@ -56,6 +56,23 @@ object DirectorOfficeWorkspaceUseCases {
         return result
     }
 
+    /**
+     * اگر چند دفتر برای یک مجلس ساخته شود، نام آن‌ها را قابل تشخیص نگه می‌دارد.
+     * نام پایه در صورت تکرار با پسوند فارسی‌پسند (۲)، (۳) و ... یکتا می‌شود.
+     */
+    fun uniqueOfficeTitle(baseTitle: String, existingTitles: Iterable<String>): String {
+        val base = baseTitle.trim().ifBlank { "دفتر معین‌البکاء" }
+        fun normalizedTitle(value: String) = normalizeNumber(value.trim()).lowercase()
+        val normalizedExisting = existingTitles.map(::normalizedTitle).toSet()
+        if (normalizedTitle(base) !in normalizedExisting) return base
+        var suffix = 2
+        while (normalizedTitle("$base ($suffix)") in normalizedExisting) suffix++
+        val localizedSuffix = suffix.toString().map { digit ->
+            if (digit in '0'..'9') ('۰'.code + digit.code - '0'.code).toChar() else digit
+        }.joinToString("")
+        return "$base ($localizedSuffix)"
+    }
+
     /** شاخص بعدی نوبت، با پشتیبانی از فهرست خالی. */
     fun nextSequenceIndex(turns: List<DirectorTurnEntity>): Int =
         (turns.maxOfOrNull { it.sequenceIndex } ?: -1) + 1
