@@ -13,17 +13,23 @@ interface DirectorOfficeWorkspaceDao {
     suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
     suspend fun participantsForTurns(turnIds: List<Long>): List<DirectorParticipantEntity>
     suspend fun insertParticipant(value: DirectorParticipantEntity): Long
+    suspend fun insertParticipants(values: List<DirectorParticipantEntity>): List<Long> = values.map { insertParticipant(it) }
     suspend fun updateParticipant(value: DirectorParticipantEntity)
     suspend fun deleteParticipant(id: Long)
     suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>
+    /** بارگذاری همه قطعه‌های چند نوبت با یک پرس‌وجو؛ پیاده‌سازی پیش‌فرض برای DAOهای آزمایشی. */
+    suspend fun textSegmentsForTurns(turnIds: List<Long>): List<DirectorTextSegmentEntity> =
+        if (turnIds.isEmpty()) emptyList() else turnIds.flatMap { textSegments(it) }
     suspend fun turns(versionId: Long): List<DirectorTurnEntity>
     suspend fun updatePlan(value: DirectorPlanEntity)
     suspend fun softDeletePlan(id: Long, deletedAt: Long)
     suspend fun insertTurn(value: DirectorTurnEntity): Long
+    suspend fun insertTurns(values: List<DirectorTurnEntity>): List<Long> = values.map { insertTurn(it) }
     suspend fun updateTurn(value: DirectorTurnEntity)
     suspend fun deleteTurn(id: Long)
     suspend fun moveTurn(turnId: Long, sequenceIndex: Int)
     suspend fun insertTextSegment(value: DirectorTextSegmentEntity): Long
+    suspend fun insertTextSegments(values: List<DirectorTextSegmentEntity>): List<Long> = values.map { insertTextSegment(it) }
     suspend fun updateTextSegment(value: DirectorTextSegmentEntity)
     suspend fun deleteTextSegment(id: Long)
     suspend fun stageCues(versionId: Long): List<DirectorStageCueEntity>

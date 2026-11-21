@@ -31,7 +31,7 @@ interface DirectorDao : DirectorOfficeMainPageDao {
     @Query("SELECT * FROM director_turns WHERE versionId=:versionId ORDER BY sequenceIndex, id") override suspend fun turns(versionId: Long): List<DirectorTurnEntity>
     @Query("SELECT * FROM director_turns WHERE id=:id LIMIT 1") override suspend fun turn(id: Long): DirectorTurnEntity?
     @Insert override suspend fun insertTurn(value: DirectorTurnEntity): Long
-    @Insert suspend fun insertTurns(values: List<DirectorTurnEntity>): List<Long>
+    @Insert override suspend fun insertTurns(values: List<DirectorTurnEntity>): List<Long>
     @Update override suspend fun updateTurn(value: DirectorTurnEntity)
     @Query("DELETE FROM director_turns WHERE id=:id") override suspend fun deleteTurn(id: Long)
     @Query("UPDATE director_turns SET sequenceIndex=:sequenceIndex WHERE id=:turnId") override suspend fun moveTurn(turnId: Long, sequenceIndex: Int)
@@ -39,13 +39,14 @@ interface DirectorDao : DirectorOfficeMainPageDao {
     @Query("SELECT * FROM director_turn_participants WHERE turnId=:turnId ORDER BY orderIndex, id") override suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
     @Query("SELECT * FROM director_turn_participants WHERE turnId IN (:turnIds) ORDER BY turnId, orderIndex, id") override suspend fun participantsForTurns(turnIds: List<Long>): List<DirectorParticipantEntity>
     @Insert(onConflict = OnConflictStrategy.ABORT) override suspend fun insertParticipant(value: DirectorParticipantEntity): Long
-    @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertParticipants(values: List<DirectorParticipantEntity>): List<Long>
+    @Insert(onConflict = OnConflictStrategy.ABORT) override suspend fun insertParticipants(values: List<DirectorParticipantEntity>): List<Long>
     @Update override suspend fun updateParticipant(value: DirectorParticipantEntity)
     @Query("DELETE FROM director_turn_participants WHERE id=:id") override suspend fun deleteParticipant(id: Long)
 
     @Query("SELECT * FROM director_text_segments WHERE turnId=:turnId ORDER BY segmentIndex, id") override suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>
+    @Query("SELECT * FROM director_text_segments WHERE turnId IN (:turnIds) ORDER BY turnId, segmentIndex, id") override suspend fun textSegmentsForTurns(turnIds: List<Long>): List<DirectorTextSegmentEntity>
     @Insert override suspend fun insertTextSegment(value: DirectorTextSegmentEntity): Long
-    @Insert suspend fun insertTextSegments(values: List<DirectorTextSegmentEntity>): List<Long>
+    @Insert override suspend fun insertTextSegments(values: List<DirectorTextSegmentEntity>): List<Long>
     @Update override suspend fun updateTextSegment(value: DirectorTextSegmentEntity)
     @Query("DELETE FROM director_text_segments WHERE id=:id") override suspend fun deleteTextSegment(id: Long)
 
