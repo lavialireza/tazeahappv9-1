@@ -398,6 +398,8 @@ fun DirectorOfficeSharedMainScreen(
     var selectedRole by remember { mutableStateOf<RoleEntity?>(null) }
     var roleMenuExpanded by remember { mutableStateOf(false) }
     var deletePlanCandidate by remember { mutableStateOf<DirectorPlanEntity?>(null) }
+    var showAddTurnDialog by remember { mutableStateOf(false) }
+    var deleteTurnCandidate by remember { mutableStateOf<DirectorTurnEntity?>(null) }
     var turnNumber by remember { mutableStateOf("1") }
     var turnText by remember { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
@@ -499,10 +501,7 @@ fun DirectorOfficeSharedMainScreen(
     suspend fun buildNewOfficeWithMethod(
         plan: DirectorPlanEntity,
         version: DirectorPlanVersionEntity,
-        method: String,
-        manualRoleUid: String? = null,
-        manualTurnNumber: Int? = null,
-        manualText: String = ""
+        method: String
     ): String {
         // خواندن کتابخانه، ساخت نوبت‌ها و تهیه Snapshot خارج از رشته اصلی رابط انجام می‌شود.
         val result = withContext(Dispatchers.IO) {
@@ -526,17 +525,6 @@ fun DirectorOfficeSharedMainScreen(
             val buildResult = workspaceRepository.buildDraftFromLibrary(version.id, method, roleInputs, sectionInputs)
             dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $method"))
 
-            if (method == DirectorOfficeSharedContract.MANUAL) {
-                val role = roles.firstOrNull { it.uid == manualRoleUid }
-                    ?: throw IllegalStateException("نقش نوبت دستی انتخاب نشده است.")
-                val number = manualTurnNumber?.takeIf { it > 0 }
-                    ?: throw IllegalStateException("شماره نوبت دستی معتبر نیست.")
-                if (manualText.isBlank()) throw IllegalStateException("متن اولین نوبت را وارد کنید.")
-                workspaceRepository.addRoleLinkedTurn(
-                    versionId = version.id, turnNumber = number, roleUid = role.uid,
-                    roleTitle = role.title, text = manualText.trim(), allowPublishedPlan = true
-                )
-            }
 
             val selectorItems = sections.flatMap { section ->
                 val role = roleById[section.roleId] ?: return@flatMap emptyList()
@@ -552,7 +540,7 @@ fun DirectorOfficeSharedMainScreen(
             val nextTurnNumber = (workspace.turns.maxOfOrNull { it.turnNumber } ?: 0) + 1
             BuiltOfficeScreenData(
                 roles = roles,
-                selectedRole = roles.firstOrNull { it.uid == manualRoleUid } ?: roles.firstOrNull(),
+                selectedRole = roles.firstOrNull(),
                 selectorRole = roles.firstOrNull(),
                 selectorTurnNumber = nextTurnNumber.toString(),
                 selectorItems = selectorItems,
@@ -577,7 +565,7 @@ fun DirectorOfficeSharedMainScreen(
             DirectorOfficeSharedContract.FULL_TEXT -> if (result.generatedTurnCount > 0)
                 "متن کامل ${result.generatedTurnCount} نقش به ترتیب وارد دفتر شد."
             else "برای نقش‌های این مجلس متن قابل انتقال پیدا نشد؛ دفتر خالی ذخیره شد و می‌توانید نوبت‌ها را بعداً اضافه کنید."
-            DirectorOfficeSharedContract.MANUAL -> "نخستین نوبت دستی نیز ثبت شد."
+            DirectorOfficeSharedContract.MANUAL -> "دفتر خام ساخته شد؛ اکنون نوبت‌ها را از داخل همین دفتر اضافه کنید."
             else -> "دفتر خالی آماده است؛ اکنون می‌توانید نقش و دیالوگ‌ها را با انتخاب‌گر وارد کنید."
         }
         message = resultMessage
@@ -984,31 +972,8 @@ fun DirectorOfficeSharedMainScreen(
                                                 Text("متن کامل بخش‌های نقش‌های همین مجلس به ترتیب نقش‌ها در دفتر ثبت می‌شود.", style = MaterialTheme.typography.bodySmall)
                                             }
                                             DirectorOfficeSharedContract.MANUAL -> {
-                                                Text("ثبت نخستین نوبت دستی", fontWeight = FontWeight.Bold)
-                                                ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
-                                                    OutlinedTextField(
-                                                        value = selectedRole?.title ?: "ابتدا نقش مجلس را انتخاب کنید",
-                                                        onValueChange = {}, readOnly = true,
-                                                        label = { Text("نقش نوبت") },
-                                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(roleMenuExpanded) },
-                                                        modifier = Modifier.menuAnchor().fillMaxWidth(),
-                                                        enabled = roleOptions.isNotEmpty()
-                                                    )
-                                                    ExposedDropdownMenu(expanded = roleMenuExpanded, onDismissRequest = { roleMenuExpanded = false }) {
-                                                        roleOptions.forEach { role ->
-                                                            DropdownMenuItem(text = { Text(role.title) }, onClick = { selectedRole = role; roleMenuExpanded = false })
-                                                        }
-                                                    }
-                                                }
-                                                DirectorOfficeTurnInputFields(
-                                                    number = turnNumber,
-                                                    onNumberChange = { turnNumber = it },
-                                                    text = turnText,
-                                                    onTextChange = { turnText = it },
-                                                    textLabel = "متن نخستین نوبت",
-                                                    textMinHeight = 100,
-                                                    textMaxHeight = 180
-                                                )
+                                                Text("ساخت دفتر خام به روش دستی", fontWeight = FontWeight.Bold)
+                                                Text("در این مرحله فقط دفتر و نسخه پیش‌نویس ساخته می‌شود. پس از ذخیره، وارد صفحه تکمیل دفتر می‌شوید و هر تعداد نوبت لازم است از همان صفحه اضافه می‌کنید.", style = MaterialTheme.typography.bodySmall)
                                             }
                                             else -> {
                                                 Text("ساخت با انتخاب‌گر", fontWeight = FontWeight.Bold)
@@ -1019,8 +984,7 @@ fun DirectorOfficeSharedMainScreen(
                                 }
                                 Button(
                                     modifier = Modifier.fillMaxWidth(),
-                                    enabled = canCreatePersonal && canBuildMethod(selectedBuildMode) && selectedTazieh != null && planTitle.isNotBlank() && !busy &&
-                                        (selectedBuildMode != DirectorOfficeSharedContract.MANUAL || (selectedRole != null && turnText.isNotBlank() && (turnNumber.toIntOrNull() ?: 0) > 0)),
+                                    enabled = canCreatePersonal && canBuildMethod(selectedBuildMode) && selectedTazieh != null && planTitle.isNotBlank() && !busy,
                                     onClick = {
                                         scope.launch {
                                             busy = true
@@ -1068,18 +1032,23 @@ fun DirectorOfficeSharedMainScreen(
                                                 val buildSummary = buildNewOfficeWithMethod(
                                                     plan = newPlan,
                                                     version = newVersion,
-                                                    method = selectedBuildMode,
-                                                    manualRoleUid = selectedRole?.uid,
-                                                    manualTurnNumber = turnNumber.toIntOrNull(),
-                                                    manualText = turnText
+                                                    method = selectedBuildMode
                                                 )
+                                                val createdRoles = withContext(Dispatchers.IO) { loadCurrentTaziehRoles(libraryDb, target) }
+                                                roleOptions = createdRoles
+                                                selectedRole = createdRoles.firstOrNull()
+                                                selectedPlan = newPlan
+                                                selectedVersion = newVersion
+                                                planVersions = listOf(newVersion)
+                                                sources = emptyList()
+                                                loadWorkspaceIntoScreen(newPlanId, newVersionId)
                                                 loadPlans(reset = true)
-                                                screenStage = DirectorOfficeScreenStage.SAVED_OFFICES
-                                                selectedTazieh = null
-                                                planTitle = ""
+                                                showVersionManagement = false
+                                                showVersionsDialog = false
+                                                screenStage = DirectorOfficeScreenStage.SELECTED_OFFICE
                                                 turnNumber = "1"
                                                 turnText = ""
-                                                message = "دفتر «${newPlan.title}» ذخیره شد. $buildSummary"
+                                                message = "دفتر «${newPlan.title}» به‌صورت پیش‌نویس خام ساخته شد. اکنون می‌توانید نوبت اول را اضافه کنید. $buildSummary"
                                             } catch (e: Exception) {
                                                 createdPlanId?.let { runCatching { dao.softDeletePlan(it, System.currentTimeMillis()) } }
                                                 message = "ساخت دفتر ناموفق بود: ${e.message ?: "خطای نامشخص"}"
@@ -1173,7 +1142,7 @@ fun DirectorOfficeSharedMainScreen(
 
                                         // روش انتخاب‌گر عمداً دفتر خالی می‌سازد؛ آن را با ورود خودکار همه متن‌ها خنثی نکن.
                                         val hasStoredDialogue = loadedWorkspace.textSegmentsByTurn.values.any { rows -> rows.any { it.text.isNotBlank() } }
-                                        if (chosenVersion != null && selectedBuildMode != DirectorOfficeSharedContract.SELECTOR &&
+                                        if (chosenVersion != null && selectedBuildMode !in setOf(DirectorOfficeSharedContract.SELECTOR, DirectorOfficeSharedContract.MANUAL) &&
                                             (isAdmin || canCreatePersonal || canEditPersonal) && !hasStoredDialogue && targetTazieh != null) {
                                             val imported = withContext(Dispatchers.IO) {
                                                 importExistingTaziehText(libraryDb, dao, transactionRunner, chosenVersion.id, targetTazieh.id)
@@ -1232,6 +1201,80 @@ fun DirectorOfficeSharedMainScreen(
                 }
             }
             if (screenStage == DirectorOfficeScreenStage.SELECTED_OFFICE && selectedPlan != null) {
+                item {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("دفتر معین‌البکاء", fontWeight = FontWeight.Bold)
+                                    Text(if (selectedVersion?.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "نسخه منتشرشده — فقط خواندنی" else "در حال تکمیل · پیش‌نویس", style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text("${turns.size} نوبت", fontWeight = FontWeight.SemiBold)
+                            }
+                            Text("فهرست نوبت‌ها", fontWeight = FontWeight.SemiBold)
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = selectedVersion?.status == DirectorPlanVersionEntity.STATUS_DRAFT && (isAdmin || canCreatePersonal || canEditPersonal) && roleOptions.isNotEmpty() && !busy,
+                                onClick = {
+                                    selectedRole = selectedRole?.let { old -> roleOptions.firstOrNull { it.uid == old.uid } } ?: roleOptions.firstOrNull()
+                                    turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                                    turnText = ""
+                                    showAddTurnDialog = true
+                                }
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("افزودن نوبت جدید")
+                            }
+                            Text("نوبت جدید به انتهای فهرست افزوده می‌شود؛ پس از ذخیره به همین صفحه بازمی‌گردید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = selectedVersion?.status == DirectorPlanVersionEntity.STATUS_DRAFT && !busy,
+                                onClick = {
+                                    scope.launch {
+                                        qualityChecking = true
+                                        try {
+                                            val snapshot = workspaceState ?: error("اطلاعات دفتر برای کنترل بارگذاری نشده است.")
+                                            val sourceIds = snapshot.textSegmentsByTurn.values.flatten()
+                                                .flatMap { DirectorOfficeHistorySnapshots.sourceSectionIds(it) }.distinct()
+                                            val qualityContext = withContext(Dispatchers.IO) {
+                                                val sourceContent = sourceIds.associateWith { null as String? }.toMutableMap()
+                                                sourceIds.chunked(400).forEach { batch ->
+                                                    libraryDb.sectionDao().getByUids(batch).forEach { section -> sourceContent[section.uid] = section.content }
+                                                }
+                                                val tazieh = libraryDb.taziehDao().getByUid(snapshot.plan.taziehUid)
+                                                val sourceRoles = tazieh?.let { loadCurrentTaziehRoles(libraryDb, it) }
+                                                sourceContent.toMap() to (sourceRoles?.map { it.uid }?.toSet() to sourceRoles?.associate { it.uid to it.title })
+                                            }
+                                            qualityIssues = DirectorOfficeQualityChecker.check(
+                                                workspace = snapshot,
+                                                currentSourceSections = qualityContext.first,
+                                                currentSourceRoleUids = qualityContext.second.first,
+                                                expectedSourceRoles = qualityContext.second.second
+                                            )
+                                            showQualityDialog = true
+                                            message = if (qualityIssues.isEmpty()) "کنترل‌های دفتر بدون مورد گزارش‌شده پایان یافت؛ دفتر آماده بررسی مرحله انتشار است." else "کنترل پایان یافت؛ ${qualityIssues.size} مورد نیازمند بررسی در گزارش نمایش داده می‌شود."
+                                        } catch (e: Exception) { message = "کنترل صحت دفتر انجام نشد: ${e.message}" }
+                                        finally { qualityChecking = false }
+                                    }
+                                }
+                            ) { Text("کنترل صحت دفتر / پایان تکمیل") }
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = selectedPlan != null && selectedVersion?.status == DirectorPlanVersionEntity.STATUS_DRAFT && !busy,
+                                onClick = {
+                                    scope.launch {
+                                        try {
+                                            dao.updatePlan(selectedPlan!!.copy(updatedAt = System.currentTimeMillis()))
+                                            loadWorkspaceIntoScreen(selectedPlan!!.id, selectedVersion!!.id)
+                                            message = "تغییرات دفتر ذخیره شد. نوبت‌هایی که جداگانه ذخیره شده‌اند در دفتر ثبت هستند."
+                                        } catch (e: Exception) { message = "ذخیره تغییرات ناموفق بود: ${e.message}" }
+                                    }
+                                }
+                            ) { Text("ذخیره تغییرات") }
+                        }
+                    }
+                }
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Divider()
@@ -1560,54 +1603,6 @@ fun DirectorOfficeSharedMainScreen(
                         }
                     }
                 }
-                if (showVersionManagement && selectedBuildMode == DirectorOfficeSharedContract.MANUAL) item {
-                    Text("ساخت نوبت دستی از متن", fontWeight = FontWeight.Bold)
-                    ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
-                        OutlinedTextField(
-                            value = selectedRole?.title ?: "ابتدا نقش مجلس را انتخاب کنید",
-                            onValueChange = {}, readOnly = true, label = { Text("اتصال به نقش موجود همین مجلس") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = roleMenuExpanded) },
-                            modifier = Modifier.menuAnchor().fillMaxWidth(), enabled = roleOptions.isNotEmpty()
-                        )
-                        ExposedDropdownMenu(expanded = roleMenuExpanded, onDismissRequest = { roleMenuExpanded = false }) {
-                            roleOptions.forEach { role ->
-                                DropdownMenuItem(text = { Text(role.title) }, onClick = { selectedRole = role; roleMenuExpanded = false })
-                            }
-                        }
-                    }
-                    DirectorOfficeTurnInputFields(
-                        number = turnNumber,
-                        onNumberChange = { turnNumber = it },
-                        text = turnText,
-                        onTextChange = { turnText = it },
-                        textLabel = "متن این نوبت",
-                        textMinHeight = 120,
-                        textMaxHeight = 220
-                    )
-                    Button(enabled = canBuildMethod(DirectorOfficeSharedContract.MANUAL) && (isAdmin || canCreatePersonal || canEditPersonal) && selectedVersion != null && selectedRole != null && turnText.isNotBlank() && !busy, onClick = {
-                        scope.launch {
-                            busy = true
-                            try {
-                                val version = selectedVersion!!
-                                val nextIndex = (dao.turns(version.id).maxOfOrNull { it.sequenceIndex } ?: -1) + 1
-                                val number = turnNumber.toIntOrNull() ?: (nextIndex + 1)
-                                val linkedRole = selectedRole!!
-                                workspaceRepository.addRoleLinkedTurn(
-                                    versionId = version.id,
-                                    turnNumber = number,
-                                    roleUid = linkedRole.uid,
-                                    roleTitle = linkedRole.title,
-                                    text = turnText.trim(),
-                                    allowPublishedPlan = true
-                                )
-                                turnText = ""
-                                message = "نوبت $number به دفتر اضافه شد."
-                                reload()
-                            } catch (e: Exception) { message = "ثبت نوبت ناموفق بود: ${e.message}" }
-                            finally { busy = false }
-                        }
-                    }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("افزودن نوبت") }
-                }
                 item {
                     Divider()
                     Text("راهنماهای صحنه", fontWeight = FontWeight.Bold)
@@ -1754,6 +1749,29 @@ fun DirectorOfficeSharedMainScreen(
                                 ?: dao.participants(turn.id)
                         }
 
+                        // ذخیره خودکار متن پس از مکث کوتاه؛ متن در حال تایپ بلافاصله بازنویسی نمی‌شود.
+                        LaunchedEffect(turn.id, segmentState.value, segmentsState.value, workspaceState?.isReadOnly) {
+                            val draftText = segmentState.value
+                            val persistedText = segmentsState.value.joinToString("\n") { it.text }
+                            if (segmentsState.value.isEmpty() || draftText == persistedText ||
+                                workspaceState?.isReadOnly == true || selectedVersion?.status != DirectorPlanVersionEntity.STATUS_DRAFT) {
+                                return@LaunchedEffect
+                            }
+                            delay(1000)
+                            if (segmentState.value == draftText && !savingDialogue) {
+                                savingDialogue = true
+                                try {
+                                    workspaceRepository.replaceTurnText(turn.id, draftText)
+                                    val updated = withContext(Dispatchers.IO) { dao.textSegments(turn.id) }
+                                    segmentsState.value = updated
+                                    turnSearchCorpus = turnSearchCorpus + (turn.id to updated.joinToString("\n") { it.text })
+                                    message = "تغییر متن نوبت ${turn.turnNumber} به‌طور خودکار ذخیره شد."
+                                } catch (e: Exception) {
+                                    message = "ذخیره خودکار نوبت ${turn.turnNumber} ناموفق بود: ${e.message}"
+                                } finally { savingDialogue = false }
+                            }
+                        }
+
                         DirectorOfficeSharedTurnActions(
                             onShowHistory = {
                                 val planId = selectedPlan?.id
@@ -1831,6 +1849,9 @@ fun DirectorOfficeSharedMainScreen(
                                     }
                                 }
                             }) else null,
+                            onDeleteTurn = if (workspaceState?.isReadOnly != true && selectedVersion?.status == DirectorPlanVersionEntity.STATUS_DRAFT && (isAdmin || canEditPersonal || canCreatePersonal)) {
+                                ({ deleteTurnCandidate = turn })
+                            } else null,
                             onEditCue = { cue ->
                                 editingTurnCueId = cue.id
                                 turnCueDraft = cue.instruction
@@ -1858,14 +1879,15 @@ fun DirectorOfficeSharedMainScreen(
                             },
                             onDeleteSegment = { segment -> deletingSegmentItem = segment },
                             extraContent = {
-                                participantsState.value.filter { it.roleUid.startsWith("unmatched-") }.forEach { participant ->
+                                participantsState.value.forEach { participant ->
                                     var mappingExpanded by remember(participant.id) { mutableStateOf(false) }
                                     ExposedDropdownMenuBox(expanded = mappingExpanded, onExpandedChange = { mappingExpanded = !mappingExpanded }) {
                                         OutlinedTextField(
-                                            value = "اتصال «${participant.roleTitle}» به نقش کتابخانه",
+                                            value = "نقش نوبت: ${participant.roleTitle} (برای ویرایش انتخاب کنید)",
                                             onValueChange = {}, readOnly = true,
                                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(mappingExpanded) },
-                                            modifier = Modifier.menuAnchor().fillMaxWidth(), enabled = roleOptions.isNotEmpty()
+                                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                                            enabled = roleOptions.isNotEmpty() && workspaceState?.isReadOnly != true && selectedVersion?.status == DirectorPlanVersionEntity.STATUS_DRAFT
                                         )
                                         ExposedDropdownMenu(expanded = mappingExpanded, onDismissRequest = { mappingExpanded = false }) {
                                             roleOptions.forEach { role ->
@@ -1875,7 +1897,7 @@ fun DirectorOfficeSharedMainScreen(
                                                             workspaceRepository.updateParticipant(participant.copy(roleUid = role.uid, roleTitle = role.title))
                                                             loadWorkspaceIntoScreen(selectedPlan?.id ?: error("دفتر انتخاب‌شده پیدا نشد."), turn.versionId)
                                                             participantsState.value = workspaceState?.participantsByTurn?.get(turn.id).orEmpty()
-                                                            message = "نقش «${participant.roleTitle}» به «${role.title}» متصل شد و در سابقه ثبت شد."
+                                                            message = "نقش نوبت از «${participant.roleTitle}» به «${role.title}» تغییر کرد و در سابقه ثبت شد."
                                                         } catch (e: Exception) {
                                                             message = "اتصال نقش انجام نشد: ${e.message}"
                                                         }
@@ -2205,6 +2227,86 @@ fun DirectorOfficeSharedMainScreen(
                     }
                 }
             }
+        )
+    }
+    if (showAddTurnDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) showAddTurnDialog = false },
+            title = { Text("افزودن نوبت به ${selectedPlan?.title.orEmpty()}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
+                        OutlinedTextField(
+                            value = selectedRole?.title ?: "انتخاب نقش",
+                            onValueChange = {}, readOnly = true,
+                            label = { Text("نقش نوبت") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(roleMenuExpanded) },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            enabled = roleOptions.isNotEmpty()
+                        )
+                        ExposedDropdownMenu(expanded = roleMenuExpanded, onDismissRequest = { roleMenuExpanded = false }) {
+                            roleOptions.forEach { role -> DropdownMenuItem(text = { Text(role.title) }, onClick = { selectedRole = role; roleMenuExpanded = false }) }
+                        }
+                    }
+                    DirectorOfficeTurnInputFields(
+                        number = turnNumber,
+                        onNumberChange = { turnNumber = it },
+                        text = turnText,
+                        onTextChange = { turnText = it },
+                        textLabel = "متن نوبت",
+                        textMinHeight = 130,
+                        textMaxHeight = 240
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy && selectedRole != null && (turnNumber.toIntOrNull() ?: 0) > 0 && turnText.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            try {
+                                val version = selectedVersion ?: error("نسخه پیش‌نویس پیدا نشد.")
+                                val role = selectedRole ?: error("نقش انتخاب نشده است.")
+                                workspaceRepository.addRoleLinkedTurn(
+                                    versionId = version.id,
+                                    turnNumber = turnNumber.toInt(),
+                                    roleUid = role.uid,
+                                    roleTitle = role.title,
+                                    text = turnText.trim()
+                                )
+                                loadWorkspaceIntoScreen(selectedPlan!!.id, version.id)
+                                turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                                turnText = ""
+                                showAddTurnDialog = false
+                                message = "نوبت جدید به انتهای دفتر اضافه و ذخیره شد."
+                            } catch (e: Exception) { message = "افزودن نوبت ناموفق بود: ${e.message}" }
+                            finally { busy = false }
+                        }
+                    }
+                ) { Text(if (busy) "در حال ذخیره…" else "ذخیره نوبت") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { showAddTurnDialog = false }) { Text("انصراف") } }
+        )
+    }
+    deleteTurnCandidate?.let { candidate ->
+        AlertDialog(
+            onDismissRequest = { deleteTurnCandidate = null },
+            title = { Text("حذف نوبت") },
+            text = { Text("نوبت ${candidate.turnNumber} از دفتر حذف شود؟ این کار متن‌ها و ارتباط‌های همین نوبت را نیز حذف می‌کند.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        try {
+                            workspaceRepository.deleteTurn(candidate.id)
+                            loadWorkspaceIntoScreen(selectedPlan!!.id, candidate.versionId)
+                            message = "نوبت ${candidate.turnNumber} حذف شد."
+                        } catch (e: Exception) { message = "حذف نوبت ناموفق بود: ${e.message}" }
+                        finally { deleteTurnCandidate = null }
+                    }
+                }) { Text("حذف") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTurnCandidate = null }) { Text("انصراف") } }
         )
     }
     deletePlanCandidate?.let { candidate ->

@@ -102,7 +102,7 @@ val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardContr
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text("کتابخانه تعزیه", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = ink)
-                            Text("مطالعه، شناخت و بررسی  مکتوب تعزیه", style = MaterialTheme.typography.bodySmall, color = muted)
+                            Text("مطالعه، شناخت و بررسی میراث مکتوب تعزیه", style = MaterialTheme.typography.bodySmall, color = muted)
                         }
                     }
                     Text(
@@ -185,7 +185,7 @@ val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardContr
                         LibraryCompactCard("فرهنگ اصطلاحات", "واژه‌ها و معناها", Icons.AutoMirrored.Filled.MenuBook, gold, Color(0xFF735A2A), onOpenGlossary, Modifier.weight(1f))
                     }
                     if (showGallery) {
-                        LibraryCompactCard("گالری تصاویر", "مستندات تصویری", Icons.Filled.PhotoLibrary, rose, Color(0xFF873F49), onOpenGallery, Modifier.weight(1f))
+                        LibraryCompactCard("گالری تصاویر", "آثار و مستندات تصویری", Icons.Filled.PhotoLibrary, rose, Color(0xFF873F49), onOpenGallery, Modifier.weight(1f))
                     }
                 }
             }
