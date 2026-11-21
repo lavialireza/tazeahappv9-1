@@ -15,6 +15,9 @@ interface ViewerDirectorOfficeDao : DirectorOfficeMainPageDao {
     @Query("SELECT * FROM director_plans WHERE id=:id LIMIT 1")
     override suspend fun plan(id: Long): DirectorPlanEntity?
 
+    @Query("SELECT * FROM director_source_files WHERE id=:id LIMIT 1")
+    override suspend fun sourceFile(id: Long): DirectorSourceFileEntity?
+
     @Query("SELECT * FROM director_plans WHERE uid=:uid LIMIT 1")
     suspend fun planByUid(uid: String): DirectorPlanEntity?
 
@@ -124,4 +127,13 @@ interface ViewerDirectorOfficeDao : DirectorOfficeMainPageDao {
 
     @Query("DELETE FROM director_stage_cues WHERE id=:id")
     override suspend fun deleteStageCue(id: Long)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    override suspend fun insertChangeHistory(value: DirectorChangeHistoryEntity): Long
+
+    @Query("SELECT * FROM director_change_history WHERE planId=:planId AND (:turnId IS NULL OR turnId=:turnId) ORDER BY changedAt DESC, id DESC")
+    override suspend fun changeHistory(planId: Long, turnId: Long?): List<DirectorChangeHistoryEntity>
+
+    @Query("SELECT * FROM director_change_history WHERE id=:id LIMIT 1")
+    override suspend fun changeHistoryEntry(id: Long): DirectorChangeHistoryEntity?
 }
