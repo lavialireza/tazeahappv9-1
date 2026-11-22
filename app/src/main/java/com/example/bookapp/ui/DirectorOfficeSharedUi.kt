@@ -417,21 +417,24 @@ fun DirectorOfficeTurnCard(
             }
 
 
-            if ((editable && (onEditTurn != null || onAddDialogue != null || onManageParticipants != null || onDeleteTurn != null)) || onShowHistory != null) {
+            if (editable && (onEditTurn != null || onAddDialogue != null || onManageParticipants != null || onDeleteTurn != null)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                 ) {
-                    onShowHistory?.let { action ->
+                    onEditTurn?.let { action ->
                         androidx.compose.material3.TextButton(
                             onClick = action,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-                        ) { Text("سابقه") }
-                    }
-                    onEditTurn?.let { action ->
-                        androidx.compose.material3.IconButton(onClick = action) {
-                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "ویرایش نوبت")
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            androidx.compose.material3.Icon(
+                                androidx.compose.material.icons.Icons.Default.Edit,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            androidx.compose.foundation.layout.Spacer(Modifier.width(4.dp))
+                            Text("ویرایش")
                         }
                     }
                     onAddDialogue?.let { action ->
@@ -452,8 +455,14 @@ fun DirectorOfficeTurnCard(
                 }
             }
 
-            if (editable && (onMoveUp != null || onMoveDown != null)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if ((editable && (onMoveUp != null || onMoveDown != null)) || onShowHistory != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    onShowHistory?.let { action ->
+                        androidx.compose.material3.TextButton(
+                            onClick = action,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                        ) { Text("سابقه") }
+                    }
                     onMoveUp?.let { action ->
                         androidx.compose.material3.TextButton(onClick = action, enabled = position > 0) { Text("↑ انتقال به بالا") }
                     }

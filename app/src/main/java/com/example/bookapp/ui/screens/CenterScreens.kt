@@ -185,7 +185,7 @@ val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardContr
                         LibraryCompactCard("فرهنگ اصطلاحات", "واژه‌ها و معناها", Icons.AutoMirrored.Filled.MenuBook, gold, Color(0xFF735A2A), onOpenGlossary, Modifier.weight(1f))
                     }
                     if (showGallery) {
-                        LibraryCompactCard("گالری تصاویر", " مستندات تصویری", Icons.Filled.PhotoLibrary, rose, Color(0xFF873F49), onOpenGallery, Modifier.weight(1f))
+                        LibraryCompactCard("گالری تصاویر", "آثار و مستندات تصویری", Icons.Filled.PhotoLibrary, rose, Color(0xFF873F49), onOpenGallery, Modifier.weight(1f))
                     }
                 }
             }
