@@ -381,8 +381,9 @@ fun DirectorOfficeTurnCard(
                         if (totalTurns > 0) {
                             Text(
                                 "جایگاه اجرا ${toPersianOfficeDigits((position + 1).coerceAtLeast(1).toString())} از ${toPersianOfficeDigits(totalTurns.toString())}",
+                                modifier = Modifier.padding(end = 16.dp),
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -411,7 +412,7 @@ fun DirectorOfficeTurnCard(
                     Text(
                         "نوبت ${toPersianOfficeDigits(turn.turnNumber.toString())}",
                         style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.secondary
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -502,39 +503,6 @@ fun DirectorOfficeTurnCard(
                                         }
                                     }
                                 )
-                            }
-                            if (editable && (onEditSegment != null || onDeleteSegment != null)) {
-                                // کنترل‌ها بیرون از محدوده اسکرول متن می‌مانند و همیشه در دسترس‌اند.
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-                                ) {
-                                    onEditSegment?.let { action ->
-                                        androidx.compose.material3.IconButton(
-                                            onClick = { action(segment) },
-                                            modifier = Modifier.size(34.dp)
-                                        ) {
-                                            androidx.compose.material3.Icon(
-                                                androidx.compose.material.icons.Icons.Default.Edit,
-                                                contentDescription = "ویرایش دیالوگ",
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                    onDeleteSegment?.let { action ->
-                                        androidx.compose.material3.IconButton(
-                                            onClick = { action(segment) },
-                                            modifier = Modifier.size(34.dp)
-                                        ) {
-                                            androidx.compose.material3.Icon(
-                                                androidx.compose.material.icons.Icons.Default.Delete,
-                                                contentDescription = "حذف دیالوگ",
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
