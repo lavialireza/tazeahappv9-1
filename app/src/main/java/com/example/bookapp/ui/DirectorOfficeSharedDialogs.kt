@@ -122,12 +122,9 @@ fun DirectorOfficeStageCueEditorDialog(
     dismissLabel: String = "انصراف",
     confirmEnabled: Boolean = instruction.isNotBlank()
 ) {
+    // در فرم ثبت راهنمای صحنه فقط دو وضعیت درخواستی نمایش داده می‌شود.
     val cueTypes = listOf(
         DirectorStageCueEntity.CUE_OTHER to "سایر",
-        DirectorStageCueEntity.CUE_MOVE to "حرکت",
-        DirectorStageCueEntity.CUE_MUSIC to "موسیقی",
-        DirectorStageCueEntity.CUE_LIGHT to "نور",
-        DirectorStageCueEntity.CUE_PAUSE to "مکث",
         DirectorStageCueEntity.CUE_IMMEDIATE to "بلافاصله"
     )
     AlertDialog(

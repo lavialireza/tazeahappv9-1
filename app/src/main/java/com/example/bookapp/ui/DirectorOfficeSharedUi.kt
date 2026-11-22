@@ -417,26 +417,12 @@ fun DirectorOfficeTurnCard(
             }
 
 
-            if (editable && (onEditTurn != null || onAddDialogue != null || onManageParticipants != null || onDeleteTurn != null)) {
+            if (editable && (onAddDialogue != null || onManageParticipants != null)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                 ) {
-                    onEditTurn?.let { action ->
-                        androidx.compose.material3.TextButton(
-                            onClick = action,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                        ) {
-                            androidx.compose.material3.Icon(
-                                androidx.compose.material.icons.Icons.Default.Edit,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            androidx.compose.foundation.layout.Spacer(Modifier.width(4.dp))
-                            Text("ویرایش")
-                        }
-                    }
                     onAddDialogue?.let { action ->
                         androidx.compose.material3.IconButton(onClick = action) {
                             androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Add, contentDescription = "افزودن دیالوگ")
@@ -445,11 +431,6 @@ fun DirectorOfficeTurnCard(
                     onManageParticipants?.let { action ->
                         androidx.compose.material3.IconButton(onClick = action) {
                             androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.PersonAdd, contentDescription = "مدیریت نقش‌های نوبت")
-                        }
-                    }
-                    onDeleteTurn?.let { action ->
-                        androidx.compose.material3.IconButton(onClick = action) {
-                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Delete, contentDescription = "حذف نوبت")
                         }
                     }
                 }
@@ -563,7 +544,7 @@ fun DirectorOfficeTurnCard(
             // دکمه ویرایش فقط ویرایشگر را باز می‌کند؛ کادر ویرایش به‌صورت پیش‌فرض مخفی است.
             // دکمه راهنمای صحنه و دکمه ویرایش/ذخیره کوچک و در یک ردیف قرار دارند.
             if ((editable && inlineEditorText != null && onInlineEditorTextChange != null && onSaveInlineEditor != null) ||
-                stageCues.isNotEmpty() || (editable && onAddCue != null)
+                stageCues.isNotEmpty() || (editable && (onAddCue != null || onEditTurn != null || onDeleteTurn != null))
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -599,6 +580,23 @@ fun DirectorOfficeTurnCard(
                             Text("راهنمای صحنه (${toPersianOfficeDigits(stageCues.size.toString())}) ${if (showStageCues) "▲" else "▼"}")
                         }
                     }
+                    if (editable) {
+                        onEditTurn?.let { action ->
+                            androidx.compose.material3.TextButton(
+                                onClick = action,
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) { Text("ویرایش") }
+                        }
+                        onDeleteTurn?.let { action ->
+                            androidx.compose.material3.IconButton(onClick = action, modifier = Modifier.size(34.dp)) {
+                                androidx.compose.material3.Icon(
+                                    androidx.compose.material.icons.Icons.Default.Delete,
+                                    contentDescription = "حذف نوبت",
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -632,23 +630,37 @@ fun DirectorOfficeTurnCard(
                             Modifier.fillMaxWidth().padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text(
-                                "${cue.title.ifBlank { cue.cueType }}${if (cue.blocksNextTurn) " • بلافاصله / توقف انتقال" else ""}",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onTertiaryContainer
-                            )
+                            if (cue.blocksNextTurn || cue.cueType == com.example.bookapp.data.DirectorStageCueEntity.CUE_IMMEDIATE) {
+                                Text(
+                                    "بلافاصله",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
                             Text(
                                 cue.instruction,
                                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onTertiaryContainer
                             )
                             if (editable) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                     onEditCue?.let { action ->
-                                        androidx.compose.material3.TextButton(onClick = { action(cue) }) { Text("ویرایش راهنما") }
+                                        androidx.compose.material3.IconButton(onClick = { action(cue) }, modifier = Modifier.size(32.dp)) {
+                                            androidx.compose.material3.Icon(
+                                                androidx.compose.material.icons.Icons.Default.Edit,
+                                                contentDescription = "ویرایش راهنما",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                     onDeleteCue?.let { action ->
-                                        androidx.compose.material3.TextButton(onClick = { action(cue) }) { Text("حذف راهنما") }
+                                        androidx.compose.material3.IconButton(onClick = { action(cue) }, modifier = Modifier.size(32.dp)) {
+                                            androidx.compose.material3.Icon(
+                                                androidx.compose.material.icons.Icons.Default.Delete,
+                                                contentDescription = "حذف راهنما",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
