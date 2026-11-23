@@ -42,7 +42,5 @@ object GlossaryStore {
             .edit().putString(KEY_TERMS, arr.toString()).commit()
     }
 
-    private fun normalize(value: String): String = value.trim()
-        .replace('ي', 'ی').replace('ك', 'ک').replace('ۀ', 'ه').replace('ة', 'ه')
-        .replace(Regex("\\s+"), " ")
+    private fun normalize(value: String): String = GlossaryNormalizer.normalize(value)
 }

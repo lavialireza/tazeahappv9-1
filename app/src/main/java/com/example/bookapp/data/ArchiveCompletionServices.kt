@@ -72,13 +72,13 @@ object GlossaryTextLinker {
         val approved = terms.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
         val byId = approved.associateBy { it.id }
         val variants = (approved.map { Triple(it.id, it.headword, it.uid) } + spellings.filter { it.termId in byId }.map { Triple(it.termId, it.spelling, byId.getValue(it.termId).uid) })
-            .filter { it.second.isNotBlank() }.distinctBy { it.first to normalizeSearchText(it.second) }
-            .sortedByDescending { normalizeSearchText(it.second).length }
+            .filter { it.second.isNotBlank() }.distinctBy { it.first to GlossaryNormalizer.normalize(it.second) }
+            .sortedByDescending { GlossaryNormalizer.normalize(it.second).length }
         val normalized = normalizeWithOffsets(text)
         val found = mutableListOf<GlossaryOccurrence>()
         val occupied = mutableListOf<IntRange>()
         for ((id, variant, uid) in variants) {
-            val needle = normalizeSearchText(variant)
+            val needle = GlossaryNormalizer.normalize(variant)
             if (needle.isBlank()) continue
             var from = 0
             while (from <= normalized.first.length - needle.length) {
@@ -106,8 +106,7 @@ object GlossaryTextLinker {
     private fun normalizeWithOffsets(source: String): Pair<String, List<Int>> {
         val out = StringBuilder(); val offsets = mutableListOf<Int>()
         source.forEachIndexed { index, raw ->
-            val c = when (raw) { 'ي', 'ى' -> 'ی'; 'ك' -> 'ک'; 'ۀ', 'ة' -> 'ه'; '\u0640', '\u200c' -> ' '; else -> raw }
-            if (c in '\u064B'..'\u065F' || c == '\u0670') return@forEachIndexed
+            val c = GlossaryNormalizer.mapCharacter(raw) ?: return@forEachIndexed
             if (c.isWhitespace()) {
                 if (out.isNotEmpty() && out.last() != ' ') { out.append(' '); offsets += index }
             } else { out.append(c.lowercaseChar()); offsets += index }
