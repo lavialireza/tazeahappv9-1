@@ -978,7 +978,9 @@ fun AppNavigation(
                 onBack = { navController.popBackStack() },
                 canAdd = featureEnabled("dictionary.add"),
                 canEdit = featureEnabled("dictionary.edit"),
-                canDelete = featureEnabled("dictionary.delete")
+                canDelete = featureEnabled("dictionary.delete"),
+                database = db,
+                isPublicViewer = publicViewer
             )
         }
 

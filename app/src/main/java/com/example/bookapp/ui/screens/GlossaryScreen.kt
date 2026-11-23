@@ -1,5 +1,7 @@
 package com.example.bookapp.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,14 +13,19 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import android.content.Context
 import com.example.bookapp.data.GlossaryStore
+import com.example.bookapp.data.AppDatabase
+import com.example.bookapp.data.GlossaryTermEntity
+import com.example.bookapp.data.GlossaryViewerJsonImporter
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,15 +59,50 @@ fun GlossaryScreen(
     onBack: () -> Unit,
     canAdd: Boolean = true,
     canEdit: Boolean = true,
-    canDelete: Boolean = true
+    canDelete: Boolean = true,
+    database: AppDatabase? = null,
+    isPublicViewer: Boolean = false
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var importMessage by remember { mutableStateOf<String?>(null) }
+    var importing by remember { mutableStateOf(false) }
+    var publishedTerms by remember { mutableStateOf(emptyList<GlossaryTerm>()) }
+    suspend fun reloadPublishedTerms() {
+        val db = database ?: return
+        val terms = db.glossaryDao().termsByStatus(GlossaryTermEntity.STATUS_VERIFIED)
+        publishedTerms = terms.mapNotNull { term ->
+            val meaning = db.glossaryDao().meanings(term.id)
+                .firstOrNull { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }?.meaning
+            meaning?.let { GlossaryTerm(term.headword, it) }
+        }
+    }
+    LaunchedEffect(database, isPublicViewer) { if (isPublicViewer) reloadPublishedTerms() }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && database != null) scope.launch {
+            importing = true
+            importMessage = null
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("خواندن فایل امکان‌پذیر نیست.")
+                val result = GlossaryViewerJsonImporter(context, database, database.glossaryDao()).import(bytes)
+                reloadPublishedTerms()
+                importMessage = if (result.alreadyImported) {
+                    "این انتشار قبلاً وارد شده است؛ تغییری اعمال نشد."
+                } else {
+                    "انتقال انجام شد: ${result.termsAdded} واژه، ${result.meaningsAdded} معنی و ${result.spellingsAdded} صورت نوشتاری جدید."
+                }
+            } catch (e: Exception) {
+                importMessage = "ورود فایل انجام نشد: ${e.message ?: "خطای نامشخص"}"
+            } finally { importing = false }
+        }
+    }
     var query by remember { mutableStateOf("") }
     var customTerms by remember { mutableStateOf(GlossaryStore.get(context)) }
     var editorTerm by remember { mutableStateOf<Pair<String, String>?>(null) }
     var showAdd by remember { mutableStateOf(false) }
-    val allTerms = remember(customTerms) {
-        GLOSSARY_TERMS + customTerms.map { GlossaryTerm(it.first, it.second) }
+    val allTerms = remember(customTerms, publishedTerms) {
+        GLOSSARY_TERMS + customTerms.map { GlossaryTerm(it.first, it.second) } + publishedTerms
     }
     val filtered = remember(query, allTerms) {
         if (query.isBlank()) allTerms
@@ -83,6 +125,16 @@ fun GlossaryScreen(
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (isPublicViewer) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = !importing,
+                        onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "application/octet-stream")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(if (importing) "در حال انتقال..." else "دریافت واژه‌نامه منتشرشده (آفلاین)") }
+                }
+                importMessage?.let { Text(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
