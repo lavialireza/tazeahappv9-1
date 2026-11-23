@@ -13,12 +13,6 @@ import androidx.compose.ui.unit.dp
 import com.example.bookapp.data.*
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.util.UUID
-
-private fun normalizeGlossaryText(value: String): String = value.trim()
-    .replace('ي', 'ی').replace('ك', 'ک').replace('ۀ', 'ه').replace('ة', 'ه')
-    .replace(Regex("[\\u064B-\\u065F\\u0670]"), "")
-    .replace(Regex("\\s+"), " ")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,32 +75,28 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
                     scope.launch {
                         busy = true; message = null
                         try {
-                            val normalized = normalizeGlossaryText(headword)
-                            require(normalized.isNotBlank()) { "سرمدخل معتبر نیست." }
-                            db.withTransaction {
-                                val dao = db.glossaryDao()
-                                val existing = dao.byNormalizedHeadword(normalized)
-                                val term = existing ?: GlossaryTermEntity(
-                                    uid = "term-${UUID.randomUUID()}", headword = headword.trim(), normalizedHeadword = normalized,
-                                    partOfSpeech = partOfSpeech.trim(), pronunciation = pronunciation.trim(), etymology = etymology.trim(),
-                                    createdAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis()
-                                ).let { draft -> draft.copy(id = dao.insertTerm(draft)) }
-                                if (spelling.isNotBlank()) {
-                                    val normalizedSpelling = normalizeGlossaryText(spelling)
-                                    require(normalizedSpelling != normalized) { "صورت نوشتاری با خود سرمدخل یکسان است." }
-                                    if (dao.spellings(term.id).none { it.normalizedSpelling == normalizedSpelling })
-                                        dao.insertSpelling(GlossarySpellingEntity(termId = term.id, spelling = spelling.trim(), normalizedSpelling = normalizedSpelling))
-                                }
-                                require(dao.duplicateMeaning(term.id, meaning.trim(), source.trim(), author.trim(), page.trim()) == null) { "این معنی با همین مشخصات منبع قبلاً ثبت شده است." }
-                                val now = System.currentTimeMillis()
-                                val m = GlossaryMeaningEntity(uid = "meaning-${UUID.randomUUID()}", termId = term.id, meaning = meaning.trim(), sourceTitle = source.trim(), sourceAuthor = author.trim(), sourcePage = page.trim(), sourceUrl = sourceUrl.trim(),
-                                    usageTaziehUid = taziehUid.trim().ifBlank { null }, usageVersionUid = versionUid.trim().ifBlank { null },
-                                    usageRoleUid = roleUid.trim().ifBlank { null }, usageSectionUid = sectionUid.trim().ifBlank { null }, usageQuote = quote.trim(), createdAt = now, updatedAt = now)
-                                dao.insertMeaning(m)
-                                dao.insertHistory(GlossaryHistoryEntity(termId = term.id, action = if (existing == null) "CREATE_TERM_AND_MEANING" else "ADD_MEANING", beforeJson = "{}", afterJson = JSONObject().put("headword", term.headword).put("meaning", m.meaning).put("source", m.sourceTitle).toString(), changedAt = now))
-                            }
+                            val repository = GlossaryRepository(db, db.glossaryDao())
+                            val result = repository.addSuggestion(
+                                GlossarySuggestionInput(
+                                    headword = headword,
+                                    meaning = meaning,
+                                    spelling = spelling,
+                                    partOfSpeech = partOfSpeech,
+                                    pronunciation = pronunciation,
+                                    etymology = etymology,
+                                    sourceTitle = source,
+                                    sourceAuthor = author,
+                                    sourcePage = page,
+                                    sourceUrl = sourceUrl,
+                                    taziehUid = taziehUid,
+                                    versionUid = versionUid,
+                                    roleUid = roleUid,
+                                    sectionUid = sectionUid,
+                                    quote = quote
+                                )
+                            )
                             headword = ""; spelling = ""; meaning = ""; source = ""; author = ""; page = ""; quote = ""; partOfSpeech = ""; pronunciation = ""; etymology = ""; sourceUrl = ""; taziehUid = ""; versionUid = ""; roleUid = ""; sectionUid = ""
-                            reload(); message = "واژه و معنی به‌صورت پیشنهادی ثبت شد؛ برای استفاده قطعی باید بررسی و تأیید شود."
+                            reload(); message = if (result.meaningCreated || result.termCreated || result.spellingCreated) "واژه و اطلاعات تکمیلی به‌صورت پیشنهادی ثبت شد؛ برای استفاده قطعی باید بررسی و تأیید شود." else "این معنی قبلاً ثبت شده بود؛ اطلاعات قبلی حفظ شد."
                         } catch (e: Exception) { message = "ثبت انجام نشد: ${e.message ?: "خطای نامشخص"}" }
                         finally { busy = false }
                     }
