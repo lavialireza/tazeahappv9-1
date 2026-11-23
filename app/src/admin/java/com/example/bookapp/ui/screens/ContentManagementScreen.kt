@@ -140,6 +140,10 @@ fun ContentManagementScreen(
                             Text("مقایسه دو نسخه مستقل یک تعزیه")
                         }
                         Spacer(Modifier.height(8.dp))
+                        OutlinedButton(onClick = onOpenGlossary, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                            Text("مدیریت واژه‌نامه تخصصی تعزیه")
+                        }
+                        Spacer(Modifier.height(8.dp))
                         OutlinedButton(onClick = onOpenEncyclopedia, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                             Text("مدیریت دانشنامه: اشخاص، وقایع، مکان‌ها و منابع")
                         }
