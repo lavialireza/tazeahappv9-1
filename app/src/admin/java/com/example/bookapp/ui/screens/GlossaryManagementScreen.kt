@@ -3,6 +3,8 @@ package com.example.bookapp.ui.screens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -34,6 +36,7 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
     var partOfSpeech by remember { mutableStateOf("") }
     var pronunciation by remember { mutableStateOf("") }
     var etymology by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
     var sourceUrl by remember { mutableStateOf("") }
     var taziehUid by remember { mutableStateOf("") }
     var versionUid by remember { mutableStateOf("") }
@@ -42,11 +45,15 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
     var terms by remember { mutableStateOf(emptyList<GlossaryTermEntity>()) }
     var selected by remember { mutableStateOf<GlossaryTermEntity?>(null) }
     var selectedMeanings by remember { mutableStateOf(emptyList<GlossaryMeaningEntity>()) }
+    var selectedSpellings by remember { mutableStateOf(emptyList<GlossarySpellingEntity>()) }
+    var editingTerm by remember { mutableStateOf<GlossaryTermEntity?>(null) }
+    var editingMeaning by remember { mutableStateOf<GlossaryMeaningEntity?>(null) }
+    var editingSpelling by remember { mutableStateOf<GlossarySpellingEntity?>(null) }
     var statusFilter by remember { mutableStateOf("ALL") }
 
     suspend fun reload() {
         terms = if (statusFilter == "ALL") db.glossaryDao().allTerms() else db.glossaryDao().termsByStatus(statusFilter)
-        selected?.let { selectedMeanings = db.glossaryDao().meanings(it.id) }
+        selected?.let { selectedMeanings = db.glossaryDao().meanings(it.id); selectedSpellings = db.glossaryDao().spellings(it.id) }
     }
     LaunchedEffect(statusFilter) { reload() }
 
@@ -115,6 +122,7 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
                 OutlinedTextField(partOfSpeech, { partOfSpeech = it }, label = { Text("نوع واژه (اسم، فعل، اصطلاح و…)") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(pronunciation, { pronunciation = it }, label = { Text("تلفظ") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(etymology, { etymology = it }, label = { Text("ریشه‌شناسی") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(notes, { notes = it }, label = { Text("یادداشت مدخل (اختیاری)") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                 OutlinedTextField(meaning, { meaning = it }, label = { Text("معنی") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                 OutlinedTextField(source, { source = it }, label = { Text("منبع معنی / عنوان کتاب") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(author, { author = it }, label = { Text("پدیدآورنده") }, modifier = Modifier.fillMaxWidth())
@@ -139,6 +147,7 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
                                     partOfSpeech = partOfSpeech,
                                     pronunciation = pronunciation,
                                     etymology = etymology,
+                                    notes = notes,
                                     sourceTitle = source,
                                     sourceAuthor = author,
                                     sourcePage = page,
@@ -150,7 +159,7 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
                                     quote = quote
                                 )
                             )
-                            headword = ""; spelling = ""; meaning = ""; source = ""; author = ""; page = ""; quote = ""; partOfSpeech = ""; pronunciation = ""; etymology = ""; sourceUrl = ""; taziehUid = ""; versionUid = ""; roleUid = ""; sectionUid = ""
+                            headword = ""; spelling = ""; meaning = ""; source = ""; author = ""; page = ""; quote = ""; partOfSpeech = ""; pronunciation = ""; etymology = ""; notes = ""; sourceUrl = ""; taziehUid = ""; versionUid = ""; roleUid = ""; sectionUid = ""
                             reload(); message = if (result.meaningCreated || result.termCreated || result.spellingCreated) "واژه و اطلاعات تکمیلی به‌صورت پیشنهادی ثبت شد؛ برای استفاده قطعی باید بررسی و تأیید شود." else "این معنی قبلاً ثبت شده بود؛ اطلاعات قبلی حفظ شد."
                         } catch (e: Exception) { message = "ثبت انجام نشد: ${e.message ?: "خطای نامشخص"}" }
                         finally { busy = false }
@@ -173,11 +182,24 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
                         if (term.partOfSpeech.isNotBlank() || term.pronunciation.isNotBlank()) Text(listOf(term.partOfSpeech, term.pronunciation).filter { it.isNotBlank() }.joinToString(" • "), style = MaterialTheme.typography.bodySmall)
                         if (term.etymology.isNotBlank()) Text("ریشه: ${term.etymology}", style = MaterialTheme.typography.bodySmall)
                         Text("وضعیت: ${if (term.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED) "تأییدشده" else if (term.reviewStatus == GlossaryTermEntity.STATUS_REJECTED) "ردشده" else "در انتظار بررسی"}", style = MaterialTheme.typography.labelSmall)
-                        TextButton(onClick = { scope.launch { selected = term; selectedMeanings = db.glossaryDao().meanings(term.id) } }) { Text("نمایش معنی‌ها") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { scope.launch { selected = term; selectedMeanings = db.glossaryDao().meanings(term.id); selectedSpellings = db.glossaryDao().spellings(term.id) } }) { Text(if (selected?.id == term.id) "بستن جزئیات" else "نمایش جزئیات") }
+                            if (selected?.id == term.id) TextButton(onClick = { editingTerm = term }) { Text("ویرایش مدخل") }
+                        }
                         if (selected?.id == term.id) {
+                            if (term.notes.isNotBlank()) Text("یادداشت: ${term.notes}", style = MaterialTheme.typography.bodySmall)
+                            Text("املای جایگزین", style = MaterialTheme.typography.labelLarge)
+                            if (selectedSpellings.isEmpty()) Text("املای جایگزینی ثبت نشده است.", style = MaterialTheme.typography.bodySmall)
+                            selectedSpellings.forEach { sp ->
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(sp.spelling)
+                                    TextButton(onClick = { editingSpelling = sp }) { Text("ویرایش") }
+                                }
+                            }
                             selectedMeanings.forEach { m ->
                                 Divider()
                                 Text(m.meaning)
+                                TextButton(onClick = { editingMeaning = m }) { Text("ویرایش معنی و اطلاعات آن") }
                                 if (m.sourceTitle.isNotBlank()) Text("منبع: ${m.sourceTitle} ${m.sourceAuthor} ${m.sourcePage}", style = MaterialTheme.typography.bodySmall)
                                 if (m.sourceUrl.isNotBlank()) Text("پیوند منبع: ${m.sourceUrl}", style = MaterialTheme.typography.bodySmall)
                                 val anchors = listOf(m.usageTaziehUid?.let { "تعزیه: $it" }, m.usageVersionUid?.let { "نسخه: $it" }, m.usageRoleUid?.let { "نقش: $it" }, m.usageSectionUid?.let { "بخش: $it" }).filterNotNull()
@@ -200,4 +222,151 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
             if (terms.isEmpty()) item { Text("هنوز مدخلی در این فهرست ثبت نشده است.") }
         }
     }
+
+    editingTerm?.let { term ->
+        GlossaryTermEditDialog(
+            term = term,
+            onDismiss = { editingTerm = null },
+            onSave = { word, pos, pron, etym, note ->
+                scope.launch {
+                    busy = true
+                    try {
+                        GlossaryRepository(db, db.glossaryDao()).updateTermDetails(term.id, word, pos, pron, etym, note)
+                        editingTerm = null
+                        reload()
+                        message = "اطلاعات مدخل ویرایش شد؛ شناسه و وضعیت تأیید آن حفظ شد."
+                    } catch (e: Exception) {
+                        message = "ویرایش انجام نشد: ${e.message ?: "خطای نامشخص"}"
+                    } finally { busy = false }
+                }
+            }
+        )
+    }
+    editingSpelling?.let { spellingRow ->
+        GlossarySpellingEditDialog(
+            spelling = spellingRow.spelling,
+            onDismiss = { editingSpelling = null },
+            onSave = { value ->
+                scope.launch {
+                    busy = true
+                    try {
+                        GlossaryRepository(db, db.glossaryDao()).updateSpellingDetails(spellingRow.id, value)
+                        editingSpelling = null
+                        reload()
+                        message = "املای جایگزین ویرایش شد."
+                    } catch (e: Exception) {
+                        message = "ویرایش املای جایگزین انجام نشد: ${e.message ?: "خطای نامشخص"}"
+                    } finally { busy = false }
+                }
+            }
+        )
+    }
+    editingMeaning?.let { meaningRow ->
+        GlossaryMeaningEditDialog(
+            meaning = meaningRow,
+            onDismiss = { editingMeaning = null },
+            onSave = { value, src, srcAuthor, srcPage, srcUrl, evidence, taziehRef, versionRef, roleRef, sectionRef ->
+                scope.launch {
+                    busy = true
+                    try {
+                        GlossaryRepository(db, db.glossaryDao()).updateMeaningDetails(
+                            meaningRow.id, value, src, srcAuthor, srcPage, srcUrl, evidence,
+                            taziehRef, versionRef, roleRef, sectionRef
+                        )
+                        editingMeaning = null
+                        reload()
+                        message = "معنی و اطلاعات منبع ویرایش شد؛ وضعیت تأیید آن حفظ شد."
+                    } catch (e: Exception) {
+                        message = "ویرایش معنی انجام نشد: ${e.message ?: "خطای نامشخص"}"
+                    } finally { busy = false }
+                }
+            }
+        )
+    }
+
+}
+
+
+@Composable
+private fun GlossaryTermEditDialog(
+    term: GlossaryTermEntity,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String, String, String) -> Unit
+) {
+    var headword by remember(term.id) { mutableStateOf(term.headword) }
+    var partOfSpeech by remember(term.id) { mutableStateOf(term.partOfSpeech) }
+    var pronunciation by remember(term.id) { mutableStateOf(term.pronunciation) }
+    var etymology by remember(term.id) { mutableStateOf(term.etymology) }
+    var notes by remember(term.id) { mutableStateOf(term.notes) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ویرایش مدخل واژه") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(headword, { headword = it }, label = { Text("واژه / سرمدخل") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(partOfSpeech, { partOfSpeech = it }, label = { Text("نوع واژه") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(pronunciation, { pronunciation = it }, label = { Text("تلفظ") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(etymology, { etymology = it }, label = { Text("ریشه‌شناسی") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(notes, { notes = it }, label = { Text("یادداشت") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            }
+        },
+        confirmButton = { TextButton(enabled = headword.isNotBlank(), onClick = { onSave(headword, partOfSpeech, pronunciation, etymology, notes) }) { Text("ذخیره") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+    )
+}
+
+@Composable
+private fun GlossarySpellingEditDialog(
+    spelling: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var value by remember(spelling) { mutableStateOf(spelling) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ویرایش املای جایگزین") },
+        text = { OutlinedTextField(value, { value = it }, label = { Text("املای جایگزین") }, modifier = Modifier.fillMaxWidth(), singleLine = true) },
+        confirmButton = { TextButton(enabled = value.isNotBlank(), onClick = { onSave(value) }) { Text("ذخیره") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+    )
+}
+
+@Composable
+private fun GlossaryMeaningEditDialog(
+    meaning: GlossaryMeaningEntity,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String, String, String, String, String, String, String, String) -> Unit
+) {
+    var value by remember(meaning.id) { mutableStateOf(meaning.meaning) }
+    var source by remember(meaning.id) { mutableStateOf(meaning.sourceTitle) }
+    var author by remember(meaning.id) { mutableStateOf(meaning.sourceAuthor) }
+    var page by remember(meaning.id) { mutableStateOf(meaning.sourcePage) }
+    var url by remember(meaning.id) { mutableStateOf(meaning.sourceUrl) }
+    var quote by remember(meaning.id) { mutableStateOf(meaning.usageQuote) }
+    var taziehUid by remember(meaning.id) { mutableStateOf(meaning.usageTaziehUid.orEmpty()) }
+    var versionUid by remember(meaning.id) { mutableStateOf(meaning.usageVersionUid.orEmpty()) }
+    var roleUid by remember(meaning.id) { mutableStateOf(meaning.usageRoleUid.orEmpty()) }
+    var sectionUid by remember(meaning.id) { mutableStateOf(meaning.usageSectionUid.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ویرایش معنی و اطلاعات آن") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value, { value = it }, label = { Text("معنی") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(source, { source = it }, label = { Text("عنوان منبع") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(author, { author = it }, label = { Text("پدیدآورنده") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(page, { page = it }, label = { Text("صفحه / جلد") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(url, { url = it }, label = { Text("پیوند منبع") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(taziehUid, { taziehUid = it }, label = { Text("شناسه تعزیه") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(versionUid, { versionUid = it }, label = { Text("شناسه نسخه") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(roleUid, { roleUid = it }, label = { Text("شناسه نقش") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(sectionUid, { sectionUid = it }, label = { Text("شناسه بخش") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(quote, { quote = it }, label = { Text("شاهد متنی") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = value.isNotBlank(), onClick = { onSave(value, source, author, page, url, quote, taziehUid, versionUid, roleUid, sectionUid) }) { Text("ذخیره") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+    )
 }
