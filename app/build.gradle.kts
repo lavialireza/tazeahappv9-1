@@ -312,7 +312,10 @@ tasks.configureEach {
     }
 }
 
-dependencies {\n    // Independent glossary data module shared by Admin and Viewer.\n    implementation(project(":glossary"))\n
+dependencies {
+    // Independent glossary data module shared by Admin and Viewer.
+    implementation(project(":glossary"))
+
     // PDF text extraction is Admin-only; Viewer APK does not package this dependency.
     add("adminImplementation", "com.tom-roush:pdfbox-android:2.0.27.0")
 
