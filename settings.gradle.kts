@@ -14,4 +14,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "BookApp"
-include(":app")
+include(":app", ":glossary")
