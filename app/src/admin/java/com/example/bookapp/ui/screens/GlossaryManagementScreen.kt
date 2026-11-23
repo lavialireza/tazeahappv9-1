@@ -1,5 +1,7 @@
 package com.example.bookapp.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -8,6 +10,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.room.withTransaction
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.bookapp.data.*
@@ -18,6 +21,9 @@ import org.json.JSONObject
 @Composable
 fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var message by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
     var headword by remember { mutableStateOf("") }
     var meaning by remember { mutableStateOf("") }
     var source by remember { mutableStateOf("") }
@@ -37,8 +43,6 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
     var selected by remember { mutableStateOf<GlossaryTermEntity?>(null) }
     var selectedMeanings by remember { mutableStateOf(emptyList<GlossaryMeaningEntity>()) }
     var statusFilter by remember { mutableStateOf("ALL") }
-    var message by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
 
     suspend fun reload() {
         terms = if (statusFilter == "ALL") db.glossaryDao().allTerms() else db.glossaryDao().termsByStatus(statusFilter)
@@ -46,12 +50,63 @@ fun GlossaryManagementScreen(db: AppDatabase, onBack: () -> Unit) {
     }
     LaunchedEffect(statusFilter) { reload() }
 
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            busy = true
+            message = null
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("خواندن فایل امکان‌پذیر نیست.")
+                val result = GlossaryJsonTransfer(context, db, db.glossaryDao()).importJson(bytes)
+                reload()
+                message = if (result.alreadyImported) {
+                    "این فایل قبلاً وارد شده است؛ تغییری اعمال نشد."
+                } else {
+                    "ورود انجام شد: ${result.termsAdded} مدخل، ${result.meaningsAdded} معنی و ${result.spellingsAdded} صورت نوشتاری جدید. همه موارد واردشده در انتظار بررسی هستند."
+                }
+            } catch (e: Exception) {
+                message = "ورود فایل انجام نشد: ${e.message ?: "خطای نامشخص"}"
+            } finally { busy = false }
+        }
+    }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) scope.launch {
+            busy = true
+            message = null
+            try {
+                val bytes = GlossaryJsonTransfer(context, db, db.glossaryDao()).exportVerifiedJson()
+                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    ?: error("ذخیره فایل امکان‌پذیر نیست.")
+                message = "خروجی JSON واژه‌های تأییدشده ذخیره شد."
+            } catch (e: Exception) {
+                message = "تهیه خروجی انجام نشد: ${e.message ?: "خطای نامشخص"}"
+            } finally { busy = false }
+        }
+    }
+
+
     Scaffold(topBar = {
         TopAppBar(title = { Text("واژه‌نامه تخصصی تعزیه") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت") }
         })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                Text("ورود و خروجی فایل واژه‌نامه", style = MaterialTheme.typography.titleMedium)
+                Text("فایل‌های تکمیلی به‌صورت افزایشی ادغام می‌شوند؛ اطلاعات قبلی حذف یا بازنویسی نمی‌شوند. فقط مدخل‌ها و معنی‌های تأییدشده در خروجی انتشار قرار می‌گیرند.", style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = !busy,
+                        onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "application/octet-stream")) },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("ورود فایل JSON") }
+                    OutlinedButton(
+                        enabled = !busy,
+                        onClick = { exportLauncher.launch("tazieh-glossary.json") },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("خروجی انتشار") }
+                }
+            }
             item {
                 Text("ثبت مدخل و معنی", style = MaterialTheme.typography.titleMedium)
                 Text("هر مدخل می‌تواند چند معنی مستقل، صورت نوشتاری و شاهد مستند داشته باشد. اطلاعات تا زمان بررسی، پیشنهادی محسوب می‌شود.", style = MaterialTheme.typography.bodySmall)
