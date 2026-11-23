@@ -12,10 +12,13 @@ interface GlossaryDao {
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertTerm(term: GlossaryTermEntity): Long
     @Update suspend fun updateTerm(term: GlossaryTermEntity): Int
     @Query("SELECT * FROM glossary_meanings WHERE termId = :termId ORDER BY id") suspend fun meanings(termId: Long): List<GlossaryMeaningEntity>
+    @Query("SELECT * FROM glossary_meanings WHERE id = :id LIMIT 1") suspend fun meaning(id: Long): GlossaryMeaningEntity?
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertMeaning(meaning: GlossaryMeaningEntity): Long
     @Query("SELECT * FROM glossary_meanings WHERE termId = :termId AND meaning = :meaning AND sourceTitle = :sourceTitle AND sourceAuthor = :sourceAuthor AND sourcePage = :sourcePage LIMIT 1") suspend fun duplicateMeaning(termId: Long, meaning: String, sourceTitle: String, sourceAuthor: String, sourcePage: String): GlossaryMeaningEntity?
     @Update suspend fun updateMeaning(meaning: GlossaryMeaningEntity): Int
     @Query("SELECT * FROM glossary_spellings WHERE termId = :termId ORDER BY id") suspend fun spellings(termId: Long): List<GlossarySpellingEntity>
+    @Query("SELECT * FROM glossary_spellings WHERE id = :id LIMIT 1") suspend fun spelling(id: Long): GlossarySpellingEntity?
+    @Update suspend fun updateSpelling(spelling: GlossarySpellingEntity): Int
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertSpelling(spelling: GlossarySpellingEntity): Long
     @Query("SELECT * FROM glossary_history WHERE termId = :termId ORDER BY changedAt DESC") suspend fun history(termId: Long): List<GlossaryHistoryEntity>
     @Insert suspend fun insertHistory(item: GlossaryHistoryEntity): Long

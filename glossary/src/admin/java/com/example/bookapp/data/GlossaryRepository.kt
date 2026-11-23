@@ -13,6 +13,7 @@ data class GlossarySuggestionInput(
     val partOfSpeech: String = "",
     val pronunciation: String = "",
     val etymology: String = "",
+    val notes: String = "",
     val sourceTitle: String = "",
     val sourceAuthor: String = "",
     val sourcePage: String = "",
@@ -43,7 +44,7 @@ class GlossaryRepository(private val database: RoomDatabase, private val dao: Gl
             val draft = GlossaryTermEntity(
                 uid = "term-${UUID.randomUUID()}", headword = headword,
                 normalizedHeadword = normalized, partOfSpeech = input.partOfSpeech.trim(),
-                pronunciation = input.pronunciation.trim(), etymology = input.etymology.trim(),
+                pronunciation = input.pronunciation.trim(), etymology = input.etymology.trim(), notes = input.notes.trim(),
                 createdAt = now, updatedAt = now
             )
             termId = dao.insertTerm(draft)
@@ -108,4 +109,154 @@ class GlossaryRepository(private val database: RoomDatabase, private val dao: Gl
         ))
         GlossarySuggestionResult(termId, termCreated, meaningCreated, spellingCreated)
     }
+
+    /** Edit a headword and its descriptive fields without changing its identity or review state. */
+    suspend fun updateTermDetails(
+        termId: Long,
+        headword: String,
+        partOfSpeech: String,
+        pronunciation: String,
+        etymology: String,
+        notes: String
+    ) = database.withTransaction {
+        val current = dao.term(termId) ?: error("مدخل موردنظر پیدا نشد.")
+        val cleanHeadword = headword.trim()
+        val normalized = GlossaryNormalizer.normalize(cleanHeadword)
+        require(normalized.isNotBlank()) { "سرمدخل معتبر نیست." }
+        val owner = dao.byNormalizedHeadword(normalized)
+        require(owner == null || owner.id == termId) { "این واژه قبلاً به‌عنوان سرمدخل ثبت شده است." }
+        val spellingOwner = dao.allSpellings().firstOrNull { it.normalizedSpelling == normalized }
+        require(spellingOwner == null) {
+            "این واژه قبلاً به‌عنوان املای جایگزین ثبت شده است؛ ابتدا املای جایگزین را اصلاح کنید."
+        }
+        val now = System.currentTimeMillis()
+        val before = JSONObject()
+            .put("headword", current.headword)
+            .put("partOfSpeech", current.partOfSpeech)
+            .put("pronunciation", current.pronunciation)
+            .put("etymology", current.etymology)
+            .put("notes", current.notes)
+        val updated = current.copy(
+            headword = cleanHeadword,
+            normalizedHeadword = normalized,
+            partOfSpeech = partOfSpeech.trim(),
+            pronunciation = pronunciation.trim(),
+            etymology = etymology.trim(),
+            notes = notes.trim(),
+            updatedAt = now
+        )
+        dao.updateTerm(updated)
+        dao.insertHistory(
+            GlossaryHistoryEntity(
+                termId = termId,
+                action = "EDIT_TERM",
+                beforeJson = before.toString(),
+                afterJson = JSONObject()
+                    .put("headword", updated.headword)
+                    .put("partOfSpeech", updated.partOfSpeech)
+                    .put("pronunciation", updated.pronunciation)
+                    .put("etymology", updated.etymology)
+                    .put("notes", updated.notes)
+                    .toString(),
+                changedAt = now
+            )
+        )
+    }
+
+    /** Edit an alternate spelling; uniqueness is checked across all headwords and spellings. */
+    suspend fun updateSpellingDetails(spellingId: Long, spelling: String) = database.withTransaction {
+        val current = dao.spelling(spellingId) ?: error("املای جایگزین پیدا نشد.")
+        val clean = spelling.trim()
+        val normalized = GlossaryNormalizer.normalize(clean)
+        require(normalized.isNotBlank()) { "املای جایگزین معتبر نیست." }
+        val ownerTerm = dao.term(current.termId) ?: error("مدخل واژه پیدا نشد.")
+        require(normalized != ownerTerm.normalizedHeadword) { "املای جایگزین نمی‌تواند با سرمدخل یکسان باشد." }
+        val spellingOwner = dao.allSpellings().firstOrNull {
+            it.id != spellingId && it.normalizedSpelling == normalized
+        }
+        require(spellingOwner == null || spellingOwner.termId == current.termId) {
+            "این صورت نوشتاری قبلاً به مدخل دیگری اختصاص یافته است."
+        }
+        val headwordOwner = dao.byNormalizedHeadword(normalized)
+        require(headwordOwner == null || headwordOwner.id == current.termId) {
+            "این صورت نوشتاری، سرمدخلِ مدخل دیگری است."
+        }
+        val now = System.currentTimeMillis()
+        dao.updateSpelling(current.copy(spelling = clean, normalizedSpelling = normalized))
+        dao.insertHistory(
+            GlossaryHistoryEntity(
+                termId = current.termId,
+                action = "EDIT_SPELLING",
+                beforeJson = JSONObject().put("spelling", current.spelling).toString(),
+                afterJson = JSONObject().put("spelling", clean).toString(),
+                changedAt = now
+            )
+        )
+    }
+
+    /** Edit one meaning and its bibliographic/evidence fields while preserving status and UID. */
+    suspend fun updateMeaningDetails(
+        meaningId: Long,
+        meaning: String,
+        sourceTitle: String,
+        sourceAuthor: String,
+        sourcePage: String,
+        sourceUrl: String,
+        quote: String,
+        taziehUid: String,
+        versionUid: String,
+        roleUid: String,
+        sectionUid: String
+    ) = database.withTransaction {
+        val current = dao.meaning(meaningId) ?: error("معنی موردنظر پیدا نشد.")
+        val cleanMeaning = meaning.trim()
+        require(cleanMeaning.isNotBlank()) { "متن معنی نمی‌تواند خالی باشد." }
+        val now = System.currentTimeMillis()
+        val before = JSONObject()
+            .put("meaning", current.meaning)
+            .put("sourceTitle", current.sourceTitle)
+            .put("sourceAuthor", current.sourceAuthor)
+            .put("sourcePage", current.sourcePage)
+            .put("sourceUrl", current.sourceUrl)
+            .put("taziehUid", current.usageTaziehUid ?: "")
+            .put("versionUid", current.usageVersionUid ?: "")
+            .put("roleUid", current.usageRoleUid ?: "")
+            .put("sectionUid", current.usageSectionUid ?: "")
+            .put("quote", current.usageQuote)
+        val updated = current.copy(
+            meaning = cleanMeaning,
+            sourceTitle = sourceTitle.trim(),
+            sourceAuthor = sourceAuthor.trim(),
+            sourcePage = sourcePage.trim(),
+            sourceUrl = sourceUrl.trim(),
+            usageTaziehUid = taziehUid.trim().ifBlank { null },
+            usageVersionUid = versionUid.trim().ifBlank { null },
+            usageRoleUid = roleUid.trim().ifBlank { null },
+            usageSectionUid = sectionUid.trim().ifBlank { null },
+            usageQuote = quote.trim(),
+            updatedAt = now
+        )
+        dao.updateMeaning(updated)
+        dao.insertHistory(
+            GlossaryHistoryEntity(
+                termId = current.termId,
+                action = "EDIT_MEANING",
+                beforeJson = before.toString(),
+                afterJson = JSONObject()
+                    .put("meaning", updated.meaning)
+                    .put("sourceTitle", updated.sourceTitle)
+                    .put("sourceAuthor", updated.sourceAuthor)
+                    .put("sourcePage", updated.sourcePage)
+                    .put("sourceUrl", updated.sourceUrl)
+                    .put("taziehUid", updated.usageTaziehUid ?: "")
+                    .put("versionUid", updated.usageVersionUid ?: "")
+                    .put("roleUid", updated.usageRoleUid ?: "")
+                    .put("sectionUid", updated.usageSectionUid ?: "")
+                    .put("quote", updated.usageQuote)
+                    .toString(),
+                changedAt = now
+            )
+        )
+    }
+
 }
