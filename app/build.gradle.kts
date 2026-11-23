@@ -242,6 +242,8 @@ android {
         // update endpoint is embedded. Official Release variants remain unchanged.
         create("qa") {
             initWith(getByName("release"))
+            // The glossary library exposes Admin/Viewer flavors and Release/Debug build types.
+            matchingFallbacks += listOf("release")
             applicationIdSuffix = ".test"
             versionNameSuffix = "-TEST"
             signingConfig = signingConfigs.getByName("debug")
@@ -310,7 +312,7 @@ tasks.configureEach {
     }
 }
 
-dependencies {
+dependencies {\n    // Independent glossary data module shared by Admin and Viewer.\n    implementation(project(":glossary"))\n
     // PDF text extraction is Admin-only; Viewer APK does not package this dependency.
     add("adminImplementation", "com.tom-roush:pdfbox-android:2.0.27.0")
 
