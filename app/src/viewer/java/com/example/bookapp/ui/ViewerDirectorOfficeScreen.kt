@@ -28,6 +28,7 @@ fun ViewerDirectorOfficeScreen(
     val context = LocalContext.current
     val localView = LocalView.current
     val personalDb = remember { ViewerDirectorOfficeDatabase.personal(context) }
+    val libraryRepository = remember(contentDb) { RoomDirectorOfficeLibraryRepository(contentDb) }
     val viewerDao = remember(personalDb, policyPermissions) {
         ViewerDirectorOfficeMainPageDao(personalDb.directorDao(), policyPermissions)
     }
@@ -51,7 +52,7 @@ fun ViewerDirectorOfficeScreen(
     }
 
     DirectorOfficeSharedMainScreen(
-        libraryDb = contentDb,
+        libraryRepository = libraryRepository,
         officeDao = viewerDao,
         transactionRunner = transactionRunner,
         isAdmin = false,

@@ -222,12 +222,9 @@ fun DirectorOfficeSharedMainScreen(
     val context = LocalContext.current
     val dao = remember(officeDao) { officeDao }
     val canAccess: (String) -> Boolean = { key -> isAdmin || ViewerPermissionEngine.can(policyPermissions, key) }
-    val canViewPersonal = canAccess("director.personal.view")
     val canCreatePersonal = canAccess("director.personal.create")
     val canEditPersonal = canAccess("director.personal.edit")
-    val canDeletePersonal = canAccess("director.personal.delete")
-    val canImportSources = canAccess("director.source.import") &&
-        (canCreatePersonal || canEditPersonal) && sourceImporter != null
+    val canImportSources = canAccess("director.source.import") && sourceImporter != null
     fun canBuildMethod(method: String): Boolean = isAdmin || when (method) {
         DirectorOfficeSharedContract.ROLE_NUMBERED -> canAccess("director.personal.method.number")
         DirectorOfficeSharedContract.FULL_TEXT -> canAccess("director.personal.method.fulltext")
@@ -330,20 +327,6 @@ fun DirectorOfficeSharedMainScreen(
     }
 
     suspend fun loadPlans(reset: Boolean) {
-        if (!canViewPersonal) {
-            plans = emptyList()
-            hasMorePlans = false
-            selectedPlan = null
-            selectedVersion = null
-            planVersions = emptyList()
-            workspaceState = null
-            turns = emptyList()
-            stageCues = emptyList()
-            sources = emptyList()
-            previewText = ""
-            message = "مجوز مشاهده دفتر شخصی برای این Viewer فعال نیست."
-            return
-        }
         val offset = if (reset) 0 else plans.size
         val (loadedPage, canLoadMore) = withContext(Dispatchers.IO) {
             if (initialTaziehId != null) {
@@ -496,9 +479,7 @@ fun DirectorOfficeSharedMainScreen(
                 planTitle = chosen.title
                 roleOptions = withContext(Dispatchers.IO) { libraryRepository.rolesFor(chosen) }
                 selectedRole = roleOptions.firstOrNull()
-                val existingPlan = if (canViewPersonal) {
-                    withContext(Dispatchers.IO) { dao.plansForTazieh(chosen.uid).firstOrNull() }
-                } else null
+                val existingPlan = withContext(Dispatchers.IO) { dao.plansForTazieh(chosen.uid).firstOrNull() }
                 screenStage = if (existingPlan == null) {
                     if (canCreatePersonal) DirectorOfficeScreenStage.CREATE_OFFICE else DirectorOfficeScreenStage.SAVED_OFFICES
                 } else {
@@ -511,7 +492,7 @@ fun DirectorOfficeSharedMainScreen(
         }
     }
     LaunchedEffect(refresh) { if (refresh > 0) reload() }
-    LaunchedEffect(planSearch, canViewPersonal) {
+    LaunchedEffect(planSearch) {
         delay(250)
         loadPlans(reset = true)
     }
@@ -1050,7 +1031,7 @@ fun DirectorOfficeSharedMainScreen(
                                 }
                             },
                             trailingContent = {
-                                if (isAdmin || canDeletePersonal) IconButton(onClick = { deletePlanCandidate = plan }) {
+                                if (isAdmin || canEditPersonal) IconButton(onClick = { deletePlanCandidate = plan }) {
                                     Icon(Icons.Default.Delete, contentDescription = "حذف دفتر")
                                 }
                             }
@@ -1124,7 +1105,7 @@ fun DirectorOfficeSharedMainScreen(
                                                 expectedSourceRoles = qualityContext.second.second
                                             )
                                             showQualityDialog = true
-                                            message = if (qualityIssues.isEmpty())  "کنترل‌های دفتر بدون مورد گزارش‌شده پایان یافت؛ اطلاعات فعلی از نظر قواعد بررسی‌شده معتبر است." else "کنترل پایان یافت؛ ${qualityIssues.size} مورد نیازمند بررسی در گزارش نمایش داده می‌شود."
+                                            message = if (qualityIssues.isEmpty()) "کنترل‌های دفتر بدون مورد گزارش‌شده پایان یافت؛ دفتر آماده بررسی مرحله انتشار است." else "کنترل پایان یافت؛ ${qualityIssues.size} مورد نیازمند بررسی در گزارش نمایش داده می‌شود."
                                         } catch (e: Exception) { message = "کنترل صحت دفتر انجام نشد: ${e.message}" }
                                         finally { qualityChecking = false }
                                     }
@@ -1282,6 +1263,34 @@ fun DirectorOfficeSharedMainScreen(
                                                 }
                                             }
                                         ) { Text("ساخت نسخه جدید از نسخه انتخابی") }
+                                    }
+                                    if (isAdmin && selectedPlan != null && selectedVersion != null && selectedVersion?.status != DirectorPlanVersionEntity.STATUS_PUBLISHED) {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = !busy,
+                                            onClick = {
+                                                scope.launch {
+                                                    busy = true
+                                                    try {
+                                                        val plan = selectedPlan!!
+                                                        val version = selectedVersion!!
+                                                        transactionRunner.run {
+                                                            dao.versions(plan.id).filter { it.status == DirectorPlanVersionEntity.STATUS_PUBLISHED }.forEach {
+                                                                dao.updateVersion(it.copy(status = DirectorPlanVersionEntity.STATUS_SUPERSEDED))
+                                                            }
+                                                            dao.updateVersion(version.copy(status = DirectorPlanVersionEntity.STATUS_PUBLISHED, publishedAt = System.currentTimeMillis()))
+                                                            dao.updatePlan(plan.copy(status = DirectorPlanEntity.STATUS_PUBLISHED, updatedAt = System.currentTimeMillis()))
+                                                        }
+                                                        selectedPlan = dao.plan(plan.id)
+                                                        planVersions = dao.versions(plan.id)
+                                                        selectedVersion = dao.version(version.id)
+                                                        message = "نسخه ${version.versionNumber} منتشر شد؛ نسخه منتشرشده قبلی به حالت جایگزین‌شده رفت."
+                                                        reload()
+                                                    } catch (e: Exception) { message = "انتشار نسخه ناموفق بود: ${e.message}" }
+                                                    finally { busy = false }
+                                                }
+                                            }
+                                        ) { Text("انتشار نسخه انتخابی") }
                                     }
                                     if (turns.isEmpty() && selectedVersion != null && selectedPlan != null &&
                                         canBuildSelectedMethod && (isAdmin || canCreatePersonal || canEditPersonal)
@@ -1577,16 +1586,16 @@ fun DirectorOfficeSharedMainScreen(
                                     }
                                 }
                             }) else null,
-                            onDeleteTurn = if (workspaceState?.isReadOnly != true && selectedVersion?.status == DirectorPlanVersionEntity.STATUS_DRAFT && (isAdmin || canDeletePersonal)) {
+                            onDeleteTurn = if (workspaceState?.isReadOnly != true && selectedVersion?.status == DirectorPlanVersionEntity.STATUS_DRAFT && (isAdmin || canEditPersonal || canCreatePersonal)) {
                                 ({ deleteTurnCandidate = turn })
                             } else null,
-                            onEditCue = if (isAdmin || canEditPersonal) ({ cue ->
+                            onEditCue = { cue ->
                                 editingTurnCueId = cue.id
                                 turnCueDraft = cue.instruction
                                 turnCueType = cue.cueType
                                 showTurnCueDialog = true
-                            }) else null,
-                            onDeleteCue = if (isAdmin || canDeletePersonal) ({ cue ->
+                            },
+                            onDeleteCue = { cue ->
                                 scope.launch {
                                     try {
                                         workspaceRepository.deleteStageCue(cue.id)
@@ -1596,18 +1605,18 @@ fun DirectorOfficeSharedMainScreen(
                                         message = "حذف راهنمای صحنه انجام نشد: ${e.message}"
                                     }
                                 }
-                            }) else null,
-                            onAddCue = if (isAdmin || canCreatePersonal || canEditPersonal) ({
+                            },
+                            onAddCue = {
                                 editingTurnCueId = null
                                 turnCueDraft = ""
                                 turnCueType = DirectorStageCueEntity.CUE_OTHER
                                 showTurnCueDialog = true
-                            }) else null,
-                            onEditSegment = if (isAdmin || canEditPersonal) ({ segment ->
+                            },
+                            onEditSegment = { segment ->
                                 editingSegmentItem = segment
                                 editingSegmentDraft = segment.text
-                            }) else null,
-                            onDeleteSegment = if (isAdmin || canDeletePersonal) ({ segment -> deletingSegmentItem = segment }) else null,
+                            },
+                            onDeleteSegment = { segment -> deletingSegmentItem = segment },
                             extraContent = null,
                             afterCardContent = {
                                 if (showTurnCueDialog) {

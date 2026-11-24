@@ -60,6 +60,7 @@ fun DirectorOfficeScreen(
     onBack: () -> Unit
 ) {
     val officeDao = remember(db) { db.directorDao() }
+    val libraryRepository = remember(db) { RoomDirectorOfficeLibraryRepository(db) }
     val transactionRunner = remember(db) { RoomDirectorOfficeTransactionRunner(db) }
     val sourceImporter = remember {
         DirectorOfficeSourceImporter { context, uri, planId ->
@@ -67,7 +68,7 @@ fun DirectorOfficeScreen(
         }
     }
     DirectorOfficeSharedMainScreen(
-        libraryDb = db,
+        libraryRepository = libraryRepository,
         officeDao = officeDao,
         transactionRunner = transactionRunner,
         isAdmin = true,
