@@ -1,0 +1,36 @@
+ادغام ضروری در RehearsalScreen.kt فعلی کاربر
+
+مهم: فایل RehearsalScreen.kt داخل ZIP امروز، نسخه قدیمی‌تری از فایلی است که کاربر در ادامه گفتگو فرستاده است. بنابراین این بسته عمداً آن فایل را جایگزین نمی‌کند تا قابلیت‌های جدیدتر حذف نشوند.
+
+برای فعال شدن نقطه شروع مستقل هر بخش در نسخه جدید RehearsalScreen.kt:
+
+۱) در تابع RehearsalScreen، متغیر section و lines را قبل از تعریف revealedLines قرار دهید (اگر از قبل وجود دارند، همان‌ها را نگه دارید):
+
+    val section = sections.getOrNull(currentIndex)
+    val lines = remember(section) {
+        section?.content?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
+    }
+
+۲) تعریف فعلی revealedLines را که معمولاً شبیه این است:
+
+    var revealedLines by remember(currentIndex) { mutableStateOf(0) }
+
+با این تعریف جایگزین کنید. نام متغیر SharedPreferences را با نامی که همین حالا در فایل شما برای فایل "rehearsal_progress" استفاده شده جایگزین کنید:
+
+    var revealedLines by remember(currentIndex, section?.id) {
+        val savedStartLine = section?.let {
+            prefs.getInt("start_line_${it.id}", 1)
+        } ?: 1
+        mutableStateOf((savedStartLine - 1).coerceIn(0, lines.size))
+    }
+
+نتیجه: اگر کاربر خط ۲۰ را انتخاب کند، ۱۹ خط اول از ابتدا آشکارند و خط ۲۰ اولین خطی است که در تمرین دوباره آشکار می‌شود.
+
+۳) در دکمه «پنهان کن» یا دکمه بازنشانی آشکارسازی، اگر می‌خواهید دکمه جداگانه «از ابتدا» داشته باشید، این عملیات را اضافه کنید:
+
+    section?.let { prefs.edit().putInt("start_line_${it.id}", 1).apply() }
+    revealedLines = 0
+
+این مقدار فقط نقطه شروع همان بخش را تغییر می‌دهد و نباید شناسه آن را از learned_sections حذف کند یا وضعیت تمرین‌شده بودنش را تغییر دهد.
+
+۴) افکت خودکار پیمایش موجود در فایل جدید را نگه دارید؛ لازم نیست تغییر کند. چون revealedLines اکنون با تعداد خطوط قبل از نقطه شروع مقداردهی می‌شود، همان افکت موجود خط انتخاب‌شده را به‌عنوان خط بعدی آشکار خواهد کرد.

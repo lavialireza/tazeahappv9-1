@@ -1,0 +1,11 @@
+Stage 12 — Remaining 15 capabilities
+- Added PDF page rasterization and Persian/Arabic OCR adapter contract.
+- Added DOCX footnote and embedded image extraction to review-only artifacts.
+- Added editable source review workflow with pending/accepted states; does not mutate canonical text.
+- Added independent Tazieh version comparison by role/section and word-level diff view.
+- Added verified encyclopedia graph and read-only Viewer encyclopedia page with permission key.
+- Added glossary occurrence annotations in reader text.
+- Added performance execution snapshot JSON with SHA-256 and version consistency checks.
+- Added version pickers for archive source intake and version comparison.
+- No Room schema migration, signing, package IDs, production updater URLs, or release workflows changed.
+- Full Android Gradle build and device OCR validation remain outstanding.

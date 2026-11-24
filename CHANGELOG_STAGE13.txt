@@ -1,0 +1,7 @@
+Stage 13 - Multi-version comparison
+- Expanded archive version comparison from exactly two versions to a selectable range of 2-4 versions.
+- First selected version is the baseline; each additional version is compared independently against it.
+- Added dynamic version selectors, add/remove controls, duplicate prevention, and per-comparison result panels.
+- Preserved the existing pairwise comparison service, diff algorithm, archive data, database schema, access policies, signing, and release workflows.
+- Added unit tests for 2/3/4-version plans and invalid selections.
+- Android Gradle build/runtime verification was not available in the creation environment.

@@ -1,0 +1,8 @@
+Stage 4 - Source document intake
+- Added Admin-only DOCX/PDF source intake screen.
+- Preserves originals in app-private storage and records SHA-256.
+- DOCX structure preview is review-only; does not mutate canonical content.
+- PDF page count is recorded; PDF text extraction/OCR is explicitly deferred.
+- Added size and DOCX container validation.
+- Added entry point from Content Management.
+- No release signing, application IDs, update channels, Viewer policy, or workflows changed.

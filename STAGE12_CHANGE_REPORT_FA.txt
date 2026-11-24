@@ -1,0 +1,30 @@
+Stage 12 — فهرست تغییرات نسبت به Stage 11
+
+تعداد فایل‌های تغییرکرده/افزوده‌شده: 24
+
+ADDED: CHANGELOG_STAGE12.txt
+ADDED: STAGE12_REMAINING_15_FEATURES_FA.md
+ADDED: app/src/admin/java/com/example/bookapp/data/DocumentProcessingPipeline.kt
+MODIFIED: app/src/admin/java/com/example/bookapp/data/SourceDocumentIntake.kt
+ADDED: app/src/admin/java/com/example/bookapp/data/SourceReviewWorkflow.kt
+MODIFIED: app/src/admin/java/com/example/bookapp/ui/AdminNavGraph.kt
+MODIFIED: app/src/admin/java/com/example/bookapp/ui/screens/ArchiveSourceIntakeScreen.kt
+MODIFIED: app/src/admin/java/com/example/bookapp/ui/screens/ContentManagementScreen.kt
+ADDED: app/src/admin/java/com/example/bookapp/ui/screens/EncyclopediaGraphScreen.kt
+MODIFIED: app/src/admin/java/com/example/bookapp/ui/screens/EncyclopediaManagementScreen.kt
+MODIFIED: app/src/admin/java/com/example/bookapp/ui/screens/PerformanceManagementScreen.kt
+ADDED: app/src/admin/java/com/example/bookapp/ui/screens/VersionComparisonScreen.kt
+ADDED: app/src/main/java/com/example/bookapp/data/AiModelAdapter.kt
+ADDED: app/src/main/java/com/example/bookapp/data/ArchiveCompletionServices.kt
+MODIFIED: app/src/main/java/com/example/bookapp/data/EncyclopediaDao.kt
+MODIFIED: app/src/main/java/com/example/bookapp/data/ViewerAccessPolicy.kt
+ADDED: app/src/main/java/com/example/bookapp/data/WordLevelDiff.kt
+MODIFIED: app/src/main/java/com/example/bookapp/ui/AppNavigation.kt
+MODIFIED: app/src/main/java/com/example/bookapp/ui/screens/CompareScreen.kt
+ADDED: app/src/main/java/com/example/bookapp/ui/screens/EncyclopediaReadOnlyScreen.kt
+MODIFIED: app/src/main/java/com/example/bookapp/ui/screens/MainMenuScreen.kt
+MODIFIED: app/src/main/java/com/example/bookapp/ui/screens/TextScreen.kt
+ADDED: app/src/test/java/com/example/bookapp/data/CompletionStage12Test.kt
+ADDED: tools/stage12_audit.py
+
+فایل‌های انتشار، کلیدها، Secrets، شناسه بسته‌ها، تنظیمات signing و URLهای updater تغییر نکرده‌اند.

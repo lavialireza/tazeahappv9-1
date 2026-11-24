@@ -1,0 +1,7 @@
+Stage 5 - Tazieh Research Glossary
+- Added Room glossary term, spelling variant, multiple meaning/citation, and revision-history entities.
+- Added DAO operations, duplicate checks, and Room migration 12 -> 13.
+- Added Admin-only glossary management screen with Persian normalization, source citations, usage anchors, independent term/meaning review, and audit events.
+- Added navigation entry from Content Management.
+- Preserved existing migrations and all unrelated app/release configuration.
+- Build/Android tests were not run: this source ZIP has no Gradle wrapper and Gradle is unavailable in the execution environment.
