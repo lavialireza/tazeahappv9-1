@@ -8,6 +8,7 @@ import org.junit.Test
 class ViewerDirectorOfficeDefaultPermissionsTest {
     private val userFacingDirectorPermissions = listOf(
         "director.official.view",
+        "director.personal.view",
         "director.personal.create",
         "director.personal.method.number",
         "director.personal.method.fulltext",
@@ -56,6 +57,28 @@ class ViewerDirectorOfficeDefaultPermissionsTest {
             mapOf("director.personal.create" to true, "director.personal.method.manual" to false)
         )
         assertFalse(ViewerPermissionEngine.can(methodDisabled, "director.personal.method.manual"))
+    }
+
+    @Test
+    fun deletePermissionIsOptInByDefault() {
+        assertFalse(ViewerPermissionEngine.can(ViewerAccessPolicy.defaultPermissions(), "director.personal.delete"))
+    }
+
+    @Test
+    fun personalViewEditAndDeleteAreIndependentCapabilities() {
+        val policy = ViewerAccessPolicy.defaultPermissions().toMutableMap()
+        policy["director.personal.view"] = false
+        policy["director.personal.edit"] = false
+        policy["director.personal.delete"] = false
+        assertFalse(DirectorOfficeAccessRules.canViewPersonal(policy))
+        assertFalse(DirectorOfficeAccessRules.canEditPersonal(policy))
+        assertFalse(DirectorOfficeAccessRules.canDeletePersonal(policy))
+
+        policy["director.personal.view"] = true
+        policy["director.personal.edit"] = true
+        assertTrue(DirectorOfficeAccessRules.canViewPersonal(policy))
+        assertTrue(DirectorOfficeAccessRules.canEditPersonal(policy))
+        assertFalse(DirectorOfficeAccessRules.canDeletePersonal(policy))
     }
 
     @Test

@@ -325,25 +325,19 @@ class DirectorOfficeWorkspaceOperationsTest {
     }
 
     @Test
-    fun `admin may edit a draft version while the parent plan has a published version`() = runTest {
+    fun `legacy published parent can still receive edits in a draft version`() = runTest {
         val dao = FakeWorkspaceDao().apply {
             planRow = planRow.copy(status = DirectorPlanEntity.STATUS_PUBLISHED)
         }
         DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
-            dao = dao,
-            versionId = 20,
-            turnNumber = 1,
-            roleUid = "role-2",
-            roleTitle = "امام حسین",
-            text = "متن نسخه جدید",
-            allowPublishedPlan = true,
-            transactionRunner = DirectDirectorOfficeTransactionRunner
+            dao = dao, versionId = 20, turnNumber = 1, roleUid = "role-2",
+            roleTitle = "امام حسین", text = "متن نسخه جدید"
         )
         assertEquals(1, dao.turnRows.size)
     }
 
     @Test
-    fun `published version stays immutable even when admin allows published parent plan`() = runTest {
+    fun `published version remains immutable even under a legacy published parent`() = runTest {
         val dao = FakeWorkspaceDao().apply {
             versionRow = versionRow.copy(status = DirectorPlanVersionEntity.STATUS_PUBLISHED)
         }
@@ -355,7 +349,6 @@ class DirectorOfficeWorkspaceOperationsTest {
                 roleUid = "role-2",
                 roleTitle = "امام حسین",
                 text = "متن",
-                allowPublishedPlan = true,
                 transactionRunner = DirectDirectorOfficeTransactionRunner
             )
         }.exceptionOrNull()
@@ -500,5 +493,148 @@ class DirectorOfficeWorkspaceOperationsTest {
             historyRows.filter { it.planId == planId && (turnId == null || it.turnId == turnId) }
                 .sortedByDescending { it.changedAt }
         override suspend fun changeHistoryEntry(id: Long): DirectorChangeHistoryEntity? = historyRows.firstOrNull { it.id == id }
+    }
+
+    @Test
+    fun `blank numbered dialogue is rejected before existing turns are touched`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 8, sequenceIndex = 0, title = "محفوظ")
+        }
+        val error = runCatching {
+            DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+                dao, 20, DirectorOfficeSharedContract.ROLE_NUMBERED,
+                listOf(DirectorOfficeBuildRole("role-a", "امام حسین")),
+                listOf(DirectorOfficeBuildSection("section-a", "role-a", "۱- متن اول\\n۲-\\n۳- متن سوم"))
+            )
+        }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("متن وارد نشده"))
+        assertEquals("محفوظ", dao.turnRows.getValue(1).title)
+    }
+
+    @Test
+    fun `collective dialogue text compares after whitespace normalization and stores once`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao, 20, DirectorOfficeSharedContract.ROLE_NUMBERED,
+            listOf(DirectorOfficeBuildRole("a", "نقش اول"), DirectorOfficeBuildRole("b", "نقش دوم")),
+            listOf(
+                DirectorOfficeBuildSection("a1", "a", "۱- سلام\\nبر شما"),
+                DirectorOfficeBuildSection("b1", "b", "۱- سلام   بر شما")
+            )
+        )
+        assertEquals(1, result.insertedTurnCount)
+        assertEquals(2, dao.participantRows.size)
+        assertEquals(1, dao.segmentRows.size)
+        assertEquals("سلام\\nبر شما", dao.segmentRows.single().text)
+    }
+
+    @Test
+    fun `duplicate source section uid is rejected before any turn is written`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val error = runCatching {
+            DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+                dao, 20, DirectorOfficeSharedContract.FULL_TEXT,
+                listOf(DirectorOfficeBuildRole("a", "نقش اول")),
+                listOf(
+                    DirectorOfficeBuildSection("same", "a", "متن اول"),
+                    DirectorOfficeBuildSection("same", "a", "متن دوم")
+                )
+            )
+        }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("بیش از یک بار"))
+        assertTrue(dao.turnRows.isEmpty())
+    }
+
+    @Test
+    fun `manual role linked turn cannot create a second row with an existing number`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 4, sequenceIndex = 0, title = "نوبت اول")
+        }
+        val error = runCatching {
+            DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
+                dao, 20, 4, "role-b", "نقش دوم", "متن دوم"
+            )
+        }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("متن نقش جدید با متن نوبت"))
+        assertEquals(1, dao.turnRows.size)
+    }
+
+    @Test
+    fun `numbered builder warns when the first source turn starts after one`() = runTest {
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            FakeWorkspaceDao(), 20, DirectorOfficeSharedContract.ROLE_NUMBERED,
+            listOf(DirectorOfficeBuildRole("role-a", "نقش اول")),
+            listOf(DirectorOfficeBuildSection("section-a", "role-a", "۳- متن سوم"))
+        )
+        assertTrue(result.warnings.single().contains("۱، ۲"))
+    }
+
+    @Test
+    fun `blank selected source section is rejected as incomplete input`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val error = runCatching {
+            DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+                dao, 20, DirectorOfficeSharedContract.FULL_TEXT,
+                listOf(DirectorOfficeBuildRole("role-a", "نقش اول")),
+                listOf(DirectorOfficeBuildSection("section-a", "role-a", "   "))
+            )
+        }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("متن ندارد"))
+        assertTrue(dao.turnRows.isEmpty())
+    }
+
+    @Test
+    fun `same numbered linked role with identical text joins one collective turn`() = runTest {
+        val dao = FakeWorkspaceDao()
+        DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
+            dao, 20, 5, "role-a", "نقش اول", "متن مشترک"
+        )
+        DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
+            dao, 20, 5, "role-b", "نقش دوم", "متن   مشترک"
+        )
+        assertEquals(1, dao.turnRows.size)
+        assertEquals(2, dao.participantRows.size)
+        assertEquals(1, dao.segmentRows.size)
+        assertEquals(DirectorTurnEntity.TYPE_COLLECTIVE, dao.turnRows.values.single().turnType)
+    }
+
+    @Test
+    fun `same numbered selector role joins only when the shared text matches`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val first = DirectorOfficeSelectorEntry(
+            "key-a", "role-a", "نقش اول", "section-a", "بخش اول", "متن مشترک"
+        )
+        val second = DirectorOfficeSelectorEntry(
+            "key-b", "role-b", "نقش دوم", "section-b", "بخش دوم", "متن مشترک"
+        )
+        DirectorOfficeWorkspaceOperations.addSelectorDialogue(dao, 10, first, 6, 20)
+        DirectorOfficeWorkspaceOperations.addSelectorDialogue(dao, 10, second, 6, 20)
+        assertEquals(1, dao.turnRows.size)
+        assertEquals(2, dao.participantRows.size)
+        assertEquals(1, dao.segmentRows.size)
+        assertEquals(DirectorTurnEntity.TYPE_COLLECTIVE, dao.turnRows.values.single().turnType)
+    }
+
+    @Test
+    fun `manual duplicate number with different text is rejected without mutation`() = runTest {
+        val dao = FakeWorkspaceDao()
+        DirectorOfficeWorkspaceOperations.addTurn(dao, 10, 7, "نقش اول", "متن اول")
+        val error = runCatching {
+            DirectorOfficeWorkspaceOperations.addTurn(dao, 10, 7, "نقش دوم", "متن متفاوت")
+        }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("متن نقش جدید با متن نوبت"))
+        assertEquals(1, dao.turnRows.size)
+        assertEquals(1, dao.participantRows.size)
+    }
+
+    @Test
+    fun `manual same number and same text becomes one collective turn`() = runTest {
+        val dao = FakeWorkspaceDao()
+        DirectorOfficeWorkspaceOperations.addTurn(dao, 10, 9, "نقش اول", "متن مشترک")
+        DirectorOfficeWorkspaceOperations.addTurn(dao, 10, 9, "نقش دوم", "متن   مشترک")
+        assertEquals(1, dao.turnRows.size)
+        assertEquals(2, dao.participantRows.size)
+        assertEquals(1, dao.segmentRows.size)
+        assertEquals(DirectorTurnEntity.TYPE_COLLECTIVE, dao.turnRows.values.single().turnType)
     }
 }

@@ -7,6 +7,7 @@ import org.junit.Test
 class DirectorOfficeAccessRulesTest {
     @Test fun eachBuildMethodNeedsBothCreateAndExplicitMethodPermission() {
         val permissions = mutableMapOf(
+            "director.personal.view" to true,
             "director.personal.create" to true,
             "director.personal.method.number" to false,
             "director.personal.method.fulltext" to true,
@@ -35,6 +36,7 @@ class DirectorOfficeAccessRulesTest {
 
     @Test fun manualPersonalOfficeCreationDoesNotRequireOfficialOfficeViewPermission() {
         val permissions = mapOf(
+            "director.personal.view" to true,
             "director.personal.create" to true,
             "director.personal.method.manual" to true,
             "director.official.view" to false
@@ -50,5 +52,32 @@ class DirectorOfficeAccessRulesTest {
         )
         assertFalse(DirectorOfficeAccessRules.canPublishOfficial(permissions))
         assertFalse(DirectorOfficeAccessRules.canCopyOrExport(permissions))
+    }
+
+    @Test fun personalCapabilitiesAreIndependentAndRequirePersonalView() {
+        val createOnly = mapOf(
+            "director.personal.view" to true,
+            "director.personal.create" to true,
+            "director.personal.method.manual" to true,
+            "director.personal.edit" to false,
+            "director.personal.delete" to false
+        )
+        assertTrue(DirectorOfficeAccessRules.canCreatePersonal(createOnly, "MANUAL"))
+        assertFalse(DirectorOfficeAccessRules.canEditPersonal(createOnly))
+        assertFalse(DirectorOfficeAccessRules.canDeletePersonal(createOnly))
+
+        val editOnly = mapOf(
+            "director.personal.view" to true,
+            "director.personal.create" to false,
+            "director.personal.edit" to true,
+            "director.personal.delete" to false
+        )
+        assertFalse(DirectorOfficeAccessRules.canCreatePersonal(editOnly, "MANUAL"))
+        assertTrue(DirectorOfficeAccessRules.canEditPersonal(editOnly))
+        assertFalse(DirectorOfficeAccessRules.canDeletePersonal(editOnly))
+
+        val hidden = editOnly + ("director.personal.view" to false)
+        assertFalse(DirectorOfficeAccessRules.canViewPersonal(hidden))
+        assertFalse(DirectorOfficeAccessRules.canEditPersonal(hidden))
     }
 }

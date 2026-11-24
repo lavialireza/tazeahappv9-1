@@ -124,23 +124,36 @@ object ViewerDirectorOfficeRepository {
         }
     }
 
+    private fun requireDelete(context: Context) {
+        require(DirectorOfficeAccessRules.canDeletePersonal(ViewerAccessPolicy.getEffectivePermissions(context))) {
+            "مدیر اجازه حذف اطلاعات دفتر شخصی را برای این Viewer فعال نکرده است."
+        }
+    }
+
+    private fun requireCreateOrEdit(context: Context) {
+        val permissions = ViewerAccessPolicy.getEffectivePermissions(context)
+        require(permissions["director.personal.view"] == true &&
+            (permissions["director.personal.create"] == true || permissions["director.personal.edit"] == true)) {
+            "برای افزودن اطلاعات به دفتر، مجوز ایجاد یا ویرایش لازم است."
+        }
+    }
+
     suspend fun deletePlan(context: Context, db: ViewerDirectorOfficeDatabase, planId: Long) {
-        requireEdit(context)
+        requireDelete(context)
         val dao = db.directorDao()
         val plan = dao.plan(planId) ?: error("دفتر شخصی پیدا نشد.")
-        require(plan.uid.startsWith("personal-")) { "فقط دفتر شخصی همین Viewer قابل حذف است." }
         val version = dao.versions(planId).firstOrNull() ?: error("نسخه دفتر پیدا نشد.")
         DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
         dao.softDeletePlan(planId, System.currentTimeMillis())
     }
 
     suspend fun addTurn(context: Context, db: ViewerDirectorOfficeDatabase, planId: Long, turnNumber: Int, title: String, text: String) {
-        requireEdit(context)
+        requireCreateOrEdit(context)
         workspace(db).addTurn(planId, turnNumber, title, text)
     }
 
     suspend fun addParticipant(context: Context, db: ViewerDirectorOfficeDatabase, turnId: Long, roleUid: String, roleTitle: String, isLead: Boolean = false) {
-        requireEdit(context)
+        requireCreateOrEdit(context)
         workspace(db).addParticipant(turnId, roleUid, roleTitle, isLead)
     }
 
@@ -150,22 +163,22 @@ object ViewerDirectorOfficeRepository {
     }
 
     suspend fun removeParticipant(context: Context, db: ViewerDirectorOfficeDatabase, participantId: Long, turnId: Long) {
-        requireEdit(context)
+        requireDelete(context)
         workspace(db).removeParticipant(participantId, turnId)
     }
 
     suspend fun deleteTurn(context: Context, db: ViewerDirectorOfficeDatabase, turnId: Long) {
-        requireEdit(context)
+        requireDelete(context)
         workspace(db).deleteTurn(turnId)
     }
 
     suspend fun deleteTextSegment(context: Context, db: ViewerDirectorOfficeDatabase, segment: DirectorTextSegmentEntity) {
-        requireEdit(context)
+        requireDelete(context)
         workspace(db).deleteTextSegment(segment)
     }
 
     suspend fun deleteStageCue(context: Context, db: ViewerDirectorOfficeDatabase, cueId: Long) {
-        requireEdit(context)
+        requireDelete(context)
         workspace(db).deleteStageCue(cueId)
     }
 
@@ -185,7 +198,7 @@ object ViewerDirectorOfficeRepository {
     }
 
     suspend fun addDialogueSegment(context: Context, db: ViewerDirectorOfficeDatabase, turnId: Long, text: String) {
-        requireEdit(context)
+        requireCreateOrEdit(context)
         workspace(db).addDialogueSegment(turnId, text)
     }
 
@@ -207,7 +220,7 @@ object ViewerDirectorOfficeRepository {
         title: String,
         text: String
     ) {
-        requireEdit(context)
+        requireCreateOrEdit(context)
         require(ViewerAccessPolicy.hasPermission(context, "director.personal.method.manual")) {
             "روش دستی برای این Viewer مجاز نیست."
         }
@@ -221,7 +234,7 @@ object ViewerDirectorOfficeRepository {
         planId: Long,
         entry: DirectorOfficeSelectorEntry
     ) {
-        requireEdit(context)
+        requireCreateOrEdit(context)
         require(ViewerAccessPolicy.hasPermission(context, "director.personal.method.selector")) {
             "روش انتخاب‌گر برای این Viewer مجاز نیست."
         }
@@ -239,7 +252,7 @@ object ViewerDirectorOfficeRepository {
         blocksNextTurn: Boolean = cueType == DirectorStageCueEntity.CUE_IMMEDIATE,
         continuationRoleUid: String = ""
     ) {
-        requireEdit(context)
+        requireCreateOrEdit(context)
         workspace(db).addStageCue(planId, title, instruction, turnId, cueType, blocksNextTurn, continuationRoleUid)
     }
 }

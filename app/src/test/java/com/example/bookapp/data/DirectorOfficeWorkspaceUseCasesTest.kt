@@ -26,7 +26,7 @@ class DirectorOfficeWorkspaceUseCasesTest {
     @Test fun ignoresUnnumberedTextForNumberedMethod() {
         assertTrue(DirectorOfficeWorkspaceUseCases.parseNumberedDialogues("متن بدون شماره").isEmpty())
     }
-    @Test fun allowsEditingDraftVersionOfPublishedPlan() {
+    @Test fun allowsEditingDraftVersionOfLegacyPublishedPlan() {
         val plan = DirectorPlanEntity(
             uid = "plan", taziehUid = "tazieh", title = "مجلس",
             status = DirectorPlanEntity.STATUS_PUBLISHED,
@@ -42,7 +42,7 @@ class DirectorOfficeWorkspaceUseCasesTest {
     @Test fun rejectsEditingPublishedVersion() {
         val plan = DirectorPlanEntity(
             uid = "plan", taziehUid = "tazieh", title = "مجلس",
-            status = DirectorPlanEntity.STATUS_PUBLISHED,
+            status = DirectorPlanEntity.STATUS_DRAFT,
             createdAt = 1L, updatedAt = 1L
         )
         val published = DirectorPlanVersionEntity(

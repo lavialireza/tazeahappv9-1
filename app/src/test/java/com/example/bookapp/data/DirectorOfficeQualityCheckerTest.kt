@@ -152,4 +152,82 @@ class DirectorOfficeQualityCheckerTest {
         assertEquals(2, issues.count { it.code == "DUPLICATE_ROLE_TEXT" })
     }
 
+
+    @Test
+    fun `multiple participants must be explicitly marked as a collective turn`() {
+        val state = workspace(
+            participantRows = listOf(
+                DirectorParticipantEntity(id = 5, turnId = 3, roleUid = "role-a", roleTitle = "نقش اول"),
+                DirectorParticipantEntity(id = 6, turnId = 3, roleUid = "role-b", roleTitle = "نقش دوم")
+            )
+        )
+        val issues = DirectorOfficeQualityChecker.check(state, expectedSourceRoles = mapOf("role-a" to "نقش اول"))
+        assertTrue(issues.any { it.code == "MULTI_ROLE_NOT_COLLECTIVE" })
+    }
+
+    @Test
+    fun `collective turn with fewer than two participants is an error`() {
+        val state = workspace(
+            participantRows = listOf(
+                DirectorParticipantEntity(id = 5, turnId = 3, roleUid = "role-a", roleTitle = "نقش اول")
+            )
+        ).copy(turns = listOf(
+            DirectorTurnEntity(id = 3, versionId = 2, turnNumber = 1, sequenceIndex = 0,
+                turnType = DirectorTurnEntity.TYPE_COLLECTIVE, title = "نقش اول")
+        ))
+        val issues = DirectorOfficeQualityChecker.check(state, expectedSourceRoles = mapOf("role-a" to "نقش اول"))
+        assertTrue(issues.any { it.code == "COLLECTIVE_WITHOUT_PARTICIPANTS" })
+    }
+
+    @Test
+    fun `source section linked to another majlis is reported as an error`() {
+        val state = workspace(
+            participantRows = listOf(
+                DirectorParticipantEntity(id = 5, turnId = 3, roleUid = "role-a", roleTitle = "نقش اول")
+            ),
+            segmentsByTurn = mapOf(3L to listOf(
+                DirectorTextSegmentEntity(id = 4, turnId = 3, segmentIndex = 0, text = "متن",
+                    sourceTaziehUid = "another-tazieh")
+            ))
+        )
+        val issues = DirectorOfficeQualityChecker.check(state, expectedSourceRoles = mapOf("role-a" to "نقش اول"))
+        assertTrue(issues.any { it.code == "SOURCE_TAZIEH_MISMATCH" })
+    }
+
+    @Test
+    fun `same number in separate turn rows is always reported for manual review`() {
+        val turns = listOf(
+            DirectorTurnEntity(id = 3, versionId = 2, turnNumber = 2, sequenceIndex = 0),
+            DirectorTurnEntity(id = 7, versionId = 2, turnNumber = 2, sequenceIndex = 1)
+        )
+        val state = workspace(
+            participantRows = listOf(DirectorParticipantEntity(id = 5, turnId = 3, roleUid = "role-a", roleTitle = "نقش اول")),
+            turns = turns
+        ).copy(
+            participantsByTurn = mapOf(
+                3L to listOf(DirectorParticipantEntity(id = 5, turnId = 3, roleUid = "role-a", roleTitle = "نقش اول")),
+                7L to listOf(DirectorParticipantEntity(id = 8, turnId = 7, roleUid = "role-b", roleTitle = "نقش دوم"))
+            ),
+            textSegmentsByTurn = mapOf(
+                3L to listOf(DirectorTextSegmentEntity(id = 4, turnId = 3, segmentIndex = 0, text = "متن اول")),
+                7L to listOf(DirectorTextSegmentEntity(id = 9, turnId = 7, segmentIndex = 0, text = "متن دوم"))
+            )
+        )
+        val issues = DirectorOfficeQualityChecker.check(state, expectedSourceRoles = mapOf("role-a" to "نقش اول", "role-b" to "نقش دوم"))
+        assertEquals(2, issues.count { it.code == "DUPLICATE_TURN_NUMBER" })
+        assertEquals(2, issues.count { it.code == "COLLECTIVE_TEXT_MISMATCH" })
+    }
+
+    @Test
+    fun `missing leading turn numbers are reported as warnings`() {
+        val turns = listOf(
+            DirectorTurnEntity(id = 3, versionId = 2, turnNumber = 3, sequenceIndex = 0, title = "نوبت سوم")
+        )
+        val state = workspace(
+            participantRows = listOf(DirectorParticipantEntity(id = 5, turnId = 3, roleUid = "role-a", roleTitle = "نقش اول")),
+            turns = turns
+        )
+        val issues = DirectorOfficeQualityChecker.check(state, expectedSourceRoles = mapOf("role-a" to "نقش اول"))
+        assertTrue(issues.any { it.code == "MISSING_TURN_NUMBERS" && it.severity == DirectorOfficeQualitySeverity.WARNING })
+    }
 }

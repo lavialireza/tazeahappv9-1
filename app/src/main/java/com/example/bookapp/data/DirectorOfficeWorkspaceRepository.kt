@@ -64,7 +64,7 @@ interface DirectorOfficeWorkspaceRepository {
     )
     suspend fun addRoleLinkedTurn(
         versionId: Long, turnNumber: Int, roleUid: String, roleTitle: String,
-        text: String, sectionUid: String? = null, allowPublishedPlan: Boolean = false
+        text: String, sectionUid: String? = null
     )
 }
 
@@ -203,10 +203,10 @@ class DaoDirectorOfficeWorkspaceRepository(
 
     override suspend fun addRoleLinkedTurn(
         versionId: Long, turnNumber: Int, roleUid: String, roleTitle: String,
-        text: String, sectionUid: String?, allowPublishedPlan: Boolean
+        text: String, sectionUid: String?
     ) = DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
         dao, versionId, turnNumber, roleUid, roleTitle, text, sectionUid,
-        allowPublishedPlan, transactionRunner
+        transactionRunner
     )
 }
 

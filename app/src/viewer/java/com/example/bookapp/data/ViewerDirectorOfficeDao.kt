@@ -79,6 +79,9 @@ interface ViewerDirectorOfficeDao : DirectorOfficeMainPageDao {
     @Query("SELECT * FROM director_turn_participants WHERE turnId=:turnId ORDER BY orderIndex, id")
     override suspend fun participants(turnId: Long): List<DirectorParticipantEntity>
 
+    @Query("SELECT * FROM director_turn_participants WHERE id=:id LIMIT 1")
+    suspend fun participantById(id: Long): DirectorParticipantEntity?
+
     @Query("SELECT * FROM director_turn_participants WHERE turnId IN (:turnIds) ORDER BY turnId, orderIndex, id")
     override suspend fun participantsForTurns(turnIds: List<Long>): List<DirectorParticipantEntity>
 
@@ -96,6 +99,9 @@ interface ViewerDirectorOfficeDao : DirectorOfficeMainPageDao {
 
     @Query("SELECT * FROM director_text_segments WHERE turnId=:turnId ORDER BY segmentIndex, id")
     override suspend fun textSegments(turnId: Long): List<DirectorTextSegmentEntity>
+
+    @Query("SELECT * FROM director_text_segments WHERE id=:id LIMIT 1")
+    suspend fun textSegmentById(id: Long): DirectorTextSegmentEntity?
 
     @Query("SELECT * FROM director_text_segments WHERE turnId IN (:turnIds) ORDER BY turnId, segmentIndex, id")
     override suspend fun textSegmentsForTurns(turnIds: List<Long>): List<DirectorTextSegmentEntity>

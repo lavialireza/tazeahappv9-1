@@ -103,12 +103,14 @@ object ViewerAccessPolicy {
         "dialogues.edit" to "گفتگوها: ویرایش گفتگوی شخصی",
         "dialogues.delete" to "گفتگوها: حذف گفتگوی شخصی",
         "director.official.view" to "دفتر معین‌البکا: مشاهده دفتر رسمی منتشرشده",
+        "director.personal.view" to "دفتر شخصی: مشاهده دفتر کارگردان",
+        "director.personal.delete" to "دفتر شخصی: حذف دفتر و اجزای آن",
         "director.personal.create" to "دفتر معین‌البکا: ساخت دفتر شخصی",
         "director.personal.method.number" to "دفتر شخصی: ساخت شماره‌محور",
         "director.personal.method.fulltext" to "دفتر شخصی: ساخت با متن کامل",
         "director.personal.method.manual" to "دفتر شخصی: ساخت دستی",
         "director.personal.method.selector" to "دفتر شخصی: ساخت با انتخاب‌گر",
-        "director.personal.edit" to "دفتر شخصی: ویرایش دیالوگ و راهنمای صحنه",
+        "director.personal.edit" to "دفتر شخصی: ویرایش دیالوگ و اطلاعات دفتر",
         "director.source.import" to "دفتر معین‌البکاء: ورود فایل‌های منبع",
         "director.official.publish" to "دفتر معین‌البکا: انتشار رسمی (همیشه ممنوع در Viewer)",
         "director.copy" to "دفتر معین‌البکا: کپی (همیشه ممنوع در Viewer)",
@@ -133,11 +135,14 @@ object ViewerAccessPolicy {
         "myRole.view" to "myRole", "myRole.select" to "myRole", "myRole.remove" to "myRole",
         "myRole.rehearse" to "myRole", "myRole.pdf" to "myRole",
         "dictionary.view" to "dictionary", "dictionary.add" to "dictionary", "dictionary.edit" to "dictionary", "dictionary.delete" to "dictionary",
-        "director.personal.method.number" to "director.personal.create",
-        "director.personal.method.fulltext" to "director.personal.create",
-        "director.personal.method.manual" to "director.personal.create",
-        "director.personal.method.selector" to "director.personal.create",
-        "director.source.import" to "director.personal.create",
+        "director.personal.create" to "director.personal.view",
+        "director.personal.edit" to "director.personal.view",
+        "director.personal.delete" to "director.personal.view",
+        "director.personal.method.number" to "director.personal.view",
+        "director.personal.method.fulltext" to "director.personal.view",
+        "director.personal.method.manual" to "director.personal.view",
+        "director.personal.method.selector" to "director.personal.view",
+        "director.source.import" to "director.personal.view",
         "taziehCorrections.view" to "taziehCorrections", "taziehCorrections.add" to "taziehCorrections",
         "taziehCorrections.edit" to "taziehCorrections", "taziehCorrections.delete" to "taziehCorrections", "taziehCorrections.apply" to "taziehCorrections",
         "calendar.view" to "calendar", "calendar.suggestions" to "calendar",
@@ -184,7 +189,7 @@ object ViewerAccessPolicy {
 
     fun defaultPermissions(): Map<String, Boolean> = permissionLabels.keys.associateWith { key ->
         key !in setOf("copy", "share", "pdf", "appIntro", "ai", "ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription",
-            "director.official.publish", "director.copy", "director.export")
+             "director.personal.delete", "director.official.publish", "director.copy", "director.export")
     }
 
     fun normalizedPermissions(input: Map<String, Boolean>): Map<String, Boolean> {
@@ -254,7 +259,7 @@ object ViewerAccessPolicy {
             protectedWrites.forEach { key -> permissions[key] = false }
             // Viewer هرگز مالک انتشار رسمی، کپی یا خروجی دفتر نیست؛ حتی اگر
             // یک Policy قدیمی یا دست‌کاری‌شده این کلیدها را فعال کرده باشد.
-            setOf("director.official.publish", "director.copy", "director.export").forEach { permissions[it] = false }
+            setOf( "director.personal.delete", "director.official.publish", "director.copy", "director.export").forEach { permissions[it] = false }
             // والدها نیز باید خاموش شود؛ وگرنه والد/فرزند می‌تواند رفتار UI را
             // در نسخه‌های قدیمی‌تر به شکل ناهمسان فعال کند. مشاهده گالری/پاورقی/
             // دیکشنری/اصلاحات همچنان مجاز می‌ماند.

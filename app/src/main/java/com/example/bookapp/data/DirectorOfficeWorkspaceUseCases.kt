@@ -5,7 +5,15 @@ package com.example.bookapp.data
  * Admin و Viewer باید برای پردازش متن و قواعد پایه نوبت از همین پیاده‌سازی استفاده کنند.
  */
 object DirectorOfficeWorkspaceUseCases {
+    fun formatPersianNumber(value: Int): String = value.toString().map { digit ->
+        if (digit in '0'..'9') ('۰'.code + digit.code - '0'.code).toChar() else digit
+    }.joinToString("")
+
     /** تبدیل ارقام فارسی/عربی به لاتین؛ برای جستجو و تحلیل شماره نوبت. */
+    fun normalizeDialogueText(value: String): String =
+        value.replace("\r\n", "\n").replace('\r', '\n')
+            .trim().replace(Regex("\\s+"), " ")
+
     fun normalizeNumber(value: String): String = value.map { ch ->
         when (ch) {
             in '۰'..'۹' -> ('0'.code + (ch.code - '۰'.code)).toChar()
@@ -38,7 +46,7 @@ object DirectorOfficeWorkspaceUseCases {
         fun flush() {
             val number = currentNumber
             val text = body.toString().trim()
-            if (number != null && text.isNotBlank()) result += number to text
+            if (number != null) result += number to text
             body.setLength(0)
         }
         content.replace("\r\n", "\n").replace('\r', '\n').lines().forEach { line ->
@@ -89,7 +97,7 @@ object DirectorOfficeWorkspaceUseCases {
     fun requireDraft(plan: DirectorPlanEntity, version: DirectorPlanVersionEntity) {
         require(plan.status != DirectorPlanEntity.STATUS_ARCHIVED &&
             version.status == DirectorPlanVersionEntity.STATUS_DRAFT) {
-            "ویرایش فقط روی نسخه پیش‌نویس و دفتر فعال مجاز است. نسخه منتشرشده قابل تغییر نیست."
+            "ویرایش فقط روی نسخه پیش‌نویس و دفتر فعال مجاز است."
         }
     }
 }

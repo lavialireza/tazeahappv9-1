@@ -106,6 +106,15 @@ object DirectorOfficeQualityChecker {
         val participantsByTurn = workspace.participantsByTurn
         val segmentsByTurn = workspace.textSegmentsByTurn
 
+        workspace.selectedVersion?.let { version ->
+            if (version.planId != workspace.plan.id) {
+                issues += DirectorOfficeQualityIssue(
+                    "VERSION_PLAN_MISMATCH", DirectorOfficeQualitySeverity.ERROR,
+                    "نسخه انتخاب‌شده به دفتر فعلی تعلق ندارد."
+                )
+            }
+        }
+
         if (workspace.turns.isEmpty()) {
             issues += DirectorOfficeQualityIssue(
                 code = "EMPTY_OFFICE", severity = DirectorOfficeQualitySeverity.WARNING,
@@ -146,10 +155,46 @@ object DirectorOfficeQualityChecker {
                     "شماره نوبت باید بزرگ‌تر از صفر باشد.", turn.id, turn.turnNumber
                 )
             }
+            if (turn.turnType !in setOf(DirectorTurnEntity.TYPE_NORMAL, DirectorTurnEntity.TYPE_COLLECTIVE)) {
+                issues += DirectorOfficeQualityIssue(
+                    "INVALID_TURN_TYPE", DirectorOfficeQualitySeverity.ERROR,
+                    "نوع نوبت ${turn.turnNumber} معتبر نیست.", turn.id, turn.turnNumber
+                )
+            }
             if (participants.isEmpty()) {
                 issues += DirectorOfficeQualityIssue(
                     "NO_ROLE", DirectorOfficeQualitySeverity.WARNING,
                     "برای نوبت ${turn.turnNumber} هیچ نقشی ثبت نشده است.", turn.id, turn.turnNumber
+                )
+            }
+            if (participants.any { it.roleUid.isBlank() || it.roleTitle.isBlank() }) {
+                issues += DirectorOfficeQualityIssue(
+                    "INVALID_PARTICIPANT", DirectorOfficeQualitySeverity.ERROR,
+                    "نوبت ${turn.turnNumber} دارای نقش با شناسه یا عنوان ناقص است.", turn.id, turn.turnNumber
+                )
+            }
+            if (participants.map { it.roleUid }.distinct().size != participants.size) {
+                issues += DirectorOfficeQualityIssue(
+                    "DUPLICATE_PARTICIPANT", DirectorOfficeQualitySeverity.ERROR,
+                    "یک نقش بیش از یک بار به نوبت ${turn.turnNumber} متصل شده است.", turn.id, turn.turnNumber
+                )
+            }
+            if (participants.isNotEmpty() && participants.count { it.isLead } != 1) {
+                issues += DirectorOfficeQualityIssue(
+                    "INVALID_LEAD_ROLE", DirectorOfficeQualitySeverity.ERROR,
+                    "نوبت ${turn.turnNumber} باید دقیقاً یک نقش اصلی داشته باشد.", turn.id, turn.turnNumber
+                )
+            }
+            if (turn.turnType == DirectorTurnEntity.TYPE_COLLECTIVE && participants.size < 2) {
+                issues += DirectorOfficeQualityIssue(
+                    "COLLECTIVE_WITHOUT_PARTICIPANTS", DirectorOfficeQualitySeverity.ERROR,
+                    "نوبت ${turn.turnNumber} جمعی علامت‌گذاری شده اما کمتر از دو نقش دارد.", turn.id, turn.turnNumber
+                )
+            }
+            if (participants.size > 1 && turn.turnType != DirectorTurnEntity.TYPE_COLLECTIVE) {
+                issues += DirectorOfficeQualityIssue(
+                    "MULTI_ROLE_NOT_COLLECTIVE", DirectorOfficeQualitySeverity.ERROR,
+                    "نوبت ${turn.turnNumber} چند شرکت‌کننده دارد اما به‌عنوان نوبت جمعی ثبت نشده است.", turn.id, turn.turnNumber
                 )
             }
             currentSourceRoleUids?.let { libraryRoleUids ->
@@ -179,6 +224,18 @@ object DirectorOfficeQualityChecker {
                     turn.id, turn.turnNumber
                 )
             }
+            if (segments.any { it.segmentIndex < 0 }) {
+                issues += DirectorOfficeQualityIssue(
+                    "INVALID_SEGMENT_INDEX", DirectorOfficeQualitySeverity.ERROR,
+                    "شماره ترتیب یکی از قطعه‌های متن نوبت ${turn.turnNumber} منفی است.", turn.id, turn.turnNumber
+                )
+            }
+            if (segments.map { it.segmentIndex }.distinct().size != segments.size) {
+                issues += DirectorOfficeQualityIssue(
+                    "DUPLICATE_SEGMENT_INDEX", DirectorOfficeQualitySeverity.ERROR,
+                    "شماره ترتیب قطعه‌های متن نوبت ${turn.turnNumber} تکراری است.", turn.id, turn.turnNumber
+                )
+            }
             val orderedSegmentIndexes = segments.map { it.segmentIndex }.distinct().sorted()
             if (orderedSegmentIndexes.isNotEmpty()) {
                 val expectedIndexes = (0..orderedSegmentIndexes.last()).toSet()
@@ -193,6 +250,13 @@ object DirectorOfficeQualityChecker {
             }
 
             segments.forEach { segment ->
+                if (!segment.sourceTaziehUid.isNullOrBlank() &&
+                    segment.sourceTaziehUid != workspace.plan.taziehUid) {
+                    issues += DirectorOfficeQualityIssue(
+                        "SOURCE_TAZIEH_MISMATCH", DirectorOfficeQualitySeverity.ERROR,
+                        "منبع متن نوبت ${turn.turnNumber} متعلق به مجلس دیگری است.", turn.id, turn.turnNumber
+                    )
+                }
                 segment.sourceRoleUid?.takeIf { it.isNotBlank() }?.let { sourceRoleUid ->
                     if (participants.none { it.roleUid == sourceRoleUid }) {
                         issues += DirectorOfficeQualityIssue(
@@ -223,6 +287,79 @@ object DirectorOfficeQualityChecker {
                     }
                 }
             }
+        }
+
+        // A shared/collective number must be represented by one turn row with multiple participants,
+        // never by several independent turn rows carrying the same number.
+        workspace.turns.groupBy { it.turnNumber }.filterKeys { it > 0 }.values
+            .filter { it.size > 1 }.forEach { duplicateRows ->
+                val bodies = duplicateRows.map { duplicate ->
+                    segmentsByTurn[duplicate.id].orEmpty().sortedBy { it.segmentIndex }
+                        .joinToString("\n") { it.text }
+                        .let(DirectorOfficeWorkspaceUseCases::normalizeDialogueText)
+                }
+                duplicateRows.forEach { duplicate ->
+                    issues += DirectorOfficeQualityIssue(
+                        "DUPLICATE_TURN_NUMBER", DirectorOfficeQualitySeverity.ERROR,
+                        "شماره ${duplicate.turnNumber} در چند نوبت مستقل ثبت شده است؛ نوبت‌های جمعی باید یک نوبت مشترک با چند نقش باشند.",
+                        duplicate.id, duplicate.turnNumber
+                    )
+                }
+                if (bodies.filter { it.isNotBlank() }.distinct().size > 1) {
+                    duplicateRows.forEach { duplicate ->
+                        issues += DirectorOfficeQualityIssue(
+                            "COLLECTIVE_TEXT_MISMATCH", DirectorOfficeQualitySeverity.ERROR,
+                            "متن‌های نوبت‌های هم‌شماره ${duplicate.turnNumber} یکسان نیستند؛ این تعارض باید توسط مدیر بررسی شود.",
+                            duplicate.id, duplicate.turnNumber
+                        )
+                    }
+                }
+            }
+
+        // Gaps in sequence numbers are warnings; they do not invalidate the office.
+        val numberedTurns = workspace.turns.map { it.turnNumber }.filter { it > 0 }.distinct().sorted()
+        if (numberedTurns.isNotEmpty()) {
+            val gaps = (1 until numberedTurns.last()).filterNot { it in numberedTurns }
+            if (gaps.isNotEmpty()) {
+                issues += DirectorOfficeQualityIssue(
+                    "MISSING_TURN_NUMBERS", DirectorOfficeQualitySeverity.WARNING,
+                    "شماره‌های نوبت جاافتاده‌اند: ${gaps.joinToString("، ") { DirectorOfficeWorkspaceUseCases.formatPersianNumber(it) }}؛ این مورد هشدار است و مانع ادامه کار نیست."
+                )
+            }
+        }
+
+        val turnIdsInVersion = workspace.turns.map { it.id }.toSet()
+        workspace.stageCues.forEach { cue ->
+            if (workspace.selectedVersion?.id != cue.versionId) {
+                issues += DirectorOfficeQualityIssue(
+                    "CUE_VERSION_MISMATCH", DirectorOfficeQualitySeverity.ERROR,
+                    "راهنمای صحنه «${cue.title}» به نسخه انتخاب‌شده تعلق ندارد."
+                )
+            }
+            if (cue.title.isBlank() || cue.instruction.isBlank()) {
+                issues += DirectorOfficeQualityIssue(
+                    "INVALID_STAGE_CUE", DirectorOfficeQualitySeverity.ERROR,
+                    "یکی از راهنماهای صحنه عنوان یا توضیح ندارد."
+                )
+            }
+            if (cue.turnId != null && cue.turnId !in turnIdsInVersion) {
+                issues += DirectorOfficeQualityIssue(
+                    "CUE_TURN_MISMATCH", DirectorOfficeQualitySeverity.ERROR,
+                    "راهنمای صحنه «${cue.title}» به نوبتی خارج از نسخه متصل شده است."
+                )
+            }
+            if (cue.orderIndex < 0) {
+                issues += DirectorOfficeQualityIssue(
+                    "INVALID_CUE_ORDER", DirectorOfficeQualitySeverity.ERROR,
+                    "ترتیب یکی از راهنماهای صحنه معتبر نیست."
+                )
+            }
+        }
+        if (workspace.stageCues.groupBy { it.orderIndex }.any { it.key >= 0 && it.value.size > 1 }) {
+            issues += DirectorOfficeQualityIssue(
+                "DUPLICATE_CUE_ORDER", DirectorOfficeQualitySeverity.WARNING,
+                "ترتیب نمایش برخی راهنماهای صحنه تکراری است."
+            )
         }
 
         // The same turn number can legitimately exist for different roles in a collective scene.
