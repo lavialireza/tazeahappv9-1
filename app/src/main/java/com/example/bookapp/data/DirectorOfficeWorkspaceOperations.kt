@@ -69,6 +69,7 @@ object DirectorOfficeWorkspaceOperations {
         val orderedSections = sections.filter { it.content.isNotBlank() }
         val byNumber = linkedMapOf<Int, Long>()
         val byRole = linkedMapOf<String, Long>()
+        val buildWarnings = mutableListOf<String>()
         var insertedCount = 0
 
         data class NumberedEntry(
@@ -94,6 +95,41 @@ object DirectorOfficeWorkspaceOperations {
                 if (roleSections.isEmpty()) null else role to roleSections
             }
         } else emptyList()
+
+        if (method == DirectorOfficeSharedContract.ROLE_NUMBERED && numberedEntries.isNotEmpty()) {
+            require(numberedEntries.all { it.number > 0 }) {
+                "شماره نوبت باید بزرگ‌تر از صفر باشد؛ هیچ تغییری در دفتر ذخیره نشد."
+            }
+            // شماره در یک نقش باید یکتا باشد؛ تکرار بین بخش‌های مختلف همان نقش نیز خطاست.
+            val duplicatesInsideRole = numberedEntries
+                .groupBy { it.role.uid to it.number }
+                .filterValues { it.size > 1 }
+            if (duplicatesInsideRole.isNotEmpty()) {
+                val details = duplicatesInsideRole.entries.joinToString("؛ ") { (key, entries) ->
+                    val roleTitle = entries.first().role.title
+                    "نقش «$roleTitle»، شماره ${key.second} (${entries.size} بار)"
+                }
+                error("شماره نوبت در یک نقش تکرار شده است: $details. ابتدا متن منبع را اصلاح کنید؛ هیچ تغییری در دفتر ذخیره نشد.")
+            }
+
+            // یک شماره در چند نقش فقط زمانی نوبت جمعی است که متن همه دقیقاً یکسان باشد.
+            val mismatchedTurns = numberedEntries.groupBy { it.number }
+                .filterValues { entries -> entries.map { it.text.replace("\r\n", "\n").trim() }.distinct().size > 1 }
+            if (mismatchedTurns.isNotEmpty()) {
+                val details = mismatchedTurns.entries.sortedBy { it.key }.joinToString("؛ ") { (number, entries) ->
+                    val rolesText = entries.map { it.role.title }.distinct().joinToString("، ")
+                    "شماره $number در نقش‌های $rolesText"
+                }
+                error("متن نوبت‌های هم‌شماره یکسان نیست: $details. این موارد نوبت جمعی محسوب نمی‌شوند و باید توسط مدیر بازبینی شوند؛ هیچ تغییری در دفتر ذخیره نشد.")
+            }
+
+            val sortedNumbers = numberedEntries.map { it.number }.distinct().sorted()
+            val missing = if (sortedNumbers.size < 2) emptyList() else
+                ((sortedNumbers.first() + 1) until sortedNumbers.last()).filterNot { it in sortedNumbers }
+            if (missing.isNotEmpty()) {
+                buildWarnings += "شماره‌های جاافتاده در توالی نوبت‌ها: ${missing.joinToString("، ")}. این مورد هشدار است و مانع ساخت دفتر نمی‌شود."
+            }
+        }
 
         transactionRunner.run {
             val existingTurns = dao.turns(versionId)
@@ -137,14 +173,22 @@ object DirectorOfficeWorkspaceOperations {
                                     orderIndex = roleIndex, isLead = roleIndex == 0
                                 )
                             }
-                            numberEntriesForTurn.forEachIndexed { segmentIndex, entry ->
-                                segmentRows += DirectorTextSegmentEntity(
-                                    turnId = turnId, segmentIndex = segmentIndex, text = entry.text,
-                                    sectionUid = entry.section.uid, sourceTaziehUid = plan.taziehUid,
-                                    sourceRoleUid = entry.role.uid, sourceSectionTitle = entry.section.title,
-                                    sourceSectionUids = entry.section.uid, sourceMethod = method, sourceContentHash = ContentUid.sha256(entry.section.content)
-                                )
-                            }
+                            // متن مشترک فقط یک‌بار ذخیره می‌شود؛ همه بخش‌های منبع در فراداده نگهداری می‌شوند.
+                            val sharedText = numberEntriesForTurn.first().text.trim()
+                            val sourceSections = numberEntriesForTurn.map { it.section }.distinctBy { it.uid }
+                            val sourceRoles = numberEntriesForTurn.map { it.role }.distinctBy { it.uid }
+                            segmentRows += DirectorTextSegmentEntity(
+                                turnId = turnId,
+                                segmentIndex = 0,
+                                text = sharedText,
+                                sectionUid = sourceSections.singleOrNull()?.uid,
+                                sourceTaziehUid = plan.taziehUid,
+                                sourceRoleUid = sourceRoles.singleOrNull()?.uid,
+                                sourceSectionTitle = sourceSections.map { it.title }.filter { it.isNotBlank() }.distinct().joinToString("، "),
+                                sourceSectionUids = sourceSections.joinToString("\u001F") { it.uid },
+                                sourceMethod = method,
+                                sourceContentHash = ContentUid.sha256(sourceSections.joinToString("\n") { it.content })
+                            )
                         }
                         if (participantRows.isNotEmpty()) dao.insertParticipants(participantRows)
                         if (segmentRows.isNotEmpty()) dao.insertTextSegments(segmentRows)
@@ -184,9 +228,10 @@ object DirectorOfficeWorkspaceOperations {
                 }
                 DirectorOfficeSharedContract.MANUAL, DirectorOfficeSharedContract.SELECTOR -> Unit
             }
-            dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+            // به‌روزرسانی صرفاً زمانی دفتر برای ساخت اولیه لازم نیست؛ حذف آن اجازه می‌دهد
+            // مجوز create بدون اعطای ناخواسته مجوز edit برای تکمیل اولیه استفاده شود.
         }
-        return DirectorOfficeBuildResult(byNumber.toMap(), byRole.toMap(), insertedCount)
+        return DirectorOfficeBuildResult(byNumber.toMap(), byRole.toMap(), insertedCount, buildWarnings.toList())
     }
     /** ساخت یک نوبت متصل به نقش و بخش کتابخانه؛ داده منبع فقط خوانده می‌شود. */
     suspend fun addRoleLinkedTurn(

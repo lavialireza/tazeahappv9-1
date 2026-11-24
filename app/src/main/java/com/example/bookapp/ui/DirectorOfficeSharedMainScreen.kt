@@ -102,7 +102,8 @@ private data class BuiltOfficeScreenData(
     val selectorItems: List<DirectorSelectorItem>,
     val selectedDialogueKeys: Set<String>,
     val workspace: DirectorOfficeWorkspaceState,
-    val generatedTurnCount: Int
+    val generatedTurnCount: Int,
+    val warnings: List<String> = emptyList()
 )
 /**
  * Copies the selected majlis' already-stored library text into an empty director version.
@@ -297,18 +298,23 @@ internal fun usedDirectorDialogueKeys(
     val used = mutableSetOf<String>()
     val segments = workspace.turns.flatMap { turn -> workspace.textSegmentsByTurn[turn.id].orEmpty() }
     for (segment in segments) {
-        val sectionUid = segment.sectionUid ?: continue
-        val match = items.firstOrNull { item ->
-            item.key !in used && item.section.uid == sectionUid && item.text == segment.text
+        val sourceUids = (segment.sourceSectionUids.ifBlank { segment.sectionUid.orEmpty() })
+            .split('\u001F').filter { it.isNotBlank() }.toSet()
+        if (sourceUids.isEmpty()) continue
+        sourceUids.forEach { sectionUid ->
+            val match = items.firstOrNull { item ->
+                item.key !in used && item.section.uid == sectionUid && item.text == segment.text
+            }
+            if (match != null) used += match.key
         }
-        if (match != null) used += match.key
     }
     return used
 }
 
 /**
- * Matches saved section-backed segments to source dialogue items one-to-one.
- * Repeated identical paragraphs in one section must remain independently selectable.
+ * Matches saved section-backed segments to source dialogue items. A shared collective
+ * segment may point to several source sections, so one stored segment marks each matching
+ * role-section entry as already used without changing the source text.
  */
 internal suspend fun usedDirectorDialogueKeys(
     dao: DirectorOfficeMainPageDao,
@@ -320,11 +326,15 @@ internal suspend fun usedDirectorDialogueKeys(
     if (turns.isEmpty()) return used
     val segments = dao.textSegmentsForTurns(turns.map { it.id })
     for (segment in segments) {
-        val sectionUid = segment.sectionUid ?: continue
-        val match = items.firstOrNull { item ->
-            item.key !in used && item.section.uid == sectionUid && item.text == segment.text
+        val sourceUids = (segment.sourceSectionUids.ifBlank { segment.sectionUid.orEmpty() })
+            .split('\u001F').filter { it.isNotBlank() }.toSet()
+        if (sourceUids.isEmpty()) continue
+        sourceUids.forEach { sectionUid ->
+            val match = items.firstOrNull { item ->
+                item.key !in used && item.section.uid == sectionUid && item.text == segment.text
+            }
+            if (match != null) used += match.key
         }
-        if (match != null) used += match.key
     }
     return used
 }
@@ -549,7 +559,8 @@ fun DirectorOfficeSharedMainScreen(
                 selectorItems = selectorItems,
                 selectedDialogueKeys = selectedKeys,
                 workspace = workspace,
-                generatedTurnCount = buildResult.insertedTurnCount
+                generatedTurnCount = buildResult.insertedTurnCount,
+                warnings = buildResult.warnings
             )
         }
 
@@ -571,8 +582,10 @@ fun DirectorOfficeSharedMainScreen(
             DirectorOfficeSharedContract.MANUAL -> "دفتر خام ساخته شد؛ اکنون نوبت‌ها را از داخل همین دفتر اضافه کنید."
             else -> "دفتر خالی آماده است؛ اکنون می‌توانید نقش و دیالوگ‌ها را با انتخاب‌گر وارد کنید."
         }
-        message = resultMessage
-        return resultMessage
+        val completeMessage = if (result.warnings.isEmpty()) resultMessage
+            else resultMessage + "\n" + result.warnings.joinToString("\n")
+        message = completeMessage
+        return completeMessage
     }
 
 
@@ -2011,14 +2024,15 @@ fun DirectorOfficeSharedMainScreen(
                                     title = section.title
                                 )
                             }
-                            transactionRunner.run {
-                                DaoDirectorOfficeWorkspaceRepository(dao).buildDraftFromLibrary(
+                            val buildResult = transactionRunner.run {
+                                val built = DaoDirectorOfficeWorkspaceRepository(dao).buildDraftFromLibrary(
                                     versionId = version.id,
                                     method = selectedBuildMode,
                                     roles = roleInputs,
                                     sections = sectionInputs
                                 )
                                 dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $selectedBuildMode"))
+                                built
                             }
                             loadWorkspaceIntoScreen(plan.id, version.id)
                             selectedRole = roles.firstOrNull()
@@ -2032,12 +2046,14 @@ fun DirectorOfficeSharedMainScreen(
                             if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR) {
                                 selectedDialogueKeys = usedDirectorDialogueKeys(dao, version.id, selectorItems)
                             }
-                            message = when (selectedBuildMode) {
+                            val buildMessage = when (selectedBuildMode) {
                                 DirectorOfficeSharedContract.ROLE_NUMBERED -> "نوبت‌ها بر اساس شماره‌های داخل متن نقش‌ها ساخته شدند؛ ${turns.size} شماره دیالوگ شناسایی شد و متن همان دیالوگ‌ها ثبت شد."
                                 DirectorOfficeSharedContract.FULL_TEXT -> "متن کامل ${turns.size} نقش به‌ترتیب در دفتر قرار گرفت."
                                 DirectorOfficeSharedContract.MANUAL -> "حالت دستی فعال شد؛ متن اصلی مجلس تغییری نکرد."
                                 else -> "حالت انتخاب با معین‌البکا فعال شد؛ دیالوگ‌های انتخاب‌شده دیگر در فهرست باقی‌مانده نمایش داده نمی‌شوند."
                             }
+                            message = if (buildResult.warnings.isEmpty()) buildMessage
+                                else buildMessage + "\n" + buildResult.warnings.joinToString("\n")
                             showBuildModeDialog = false
                             showVersionManagement = true
                         } catch (e: Exception) { message = "ساخت دفتر با روش انتخابی ناموفق بود: ${e.message}" }

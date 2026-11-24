@@ -28,7 +28,16 @@ class ViewerDirectorOfficeMainPageDao(
     }
 
     override suspend fun updateVersion(value: DirectorPlanVersionEntity) {
-        requireWrite()
+        val current = delegate.version(value.id) ?: error("نسخه دفتر پیدا نشد.")
+        val isInitialBuildMetadata =
+            ViewerPermissionEngine.can(permissions, "director.personal.create") &&
+                current.status == DirectorPlanVersionEntity.STATUS_DRAFT &&
+                value.status == current.status && value.planId == current.planId &&
+                value.versionNumber == current.versionNumber && value.title == current.title &&
+                value.createdAt == current.createdAt && value.publishedAt == current.publishedAt
+        require(ViewerPermissionEngine.can(permissions, "director.personal.edit") || isInitialBuildMetadata) {
+            "برای ویرایش نسخه دفتر، مجوز ویرایش لازم است."
+        }
         require(value.status != DirectorPlanVersionEntity.STATUS_PUBLISHED) {
             "انتشار نسخه رسمی فقط از Admin امکان‌پذیر است."
         }
@@ -41,7 +50,12 @@ class ViewerDirectorOfficeMainPageDao(
     }
 
     override suspend fun updatePlan(value: DirectorPlanEntity) {
-        requireWrite()
+        val current = delegate.plan(value.id) ?: error("دفتر پیدا نشد.")
+        val timestampOnly = value.copy(updatedAt = current.updatedAt) == current
+        require(ViewerPermissionEngine.can(permissions, "director.personal.edit") ||
+            (timestampOnly && ViewerPermissionEngine.can(permissions, "director.personal.create"))) {
+            "برای ویرایش اطلاعات دفتر، مجوز ویرایش لازم است."
+        }
         delegate.updatePlan(value)
     }
 
@@ -61,7 +75,7 @@ class ViewerDirectorOfficeMainPageDao(
     }
 
     override suspend fun updateTurn(value: DirectorTurnEntity) {
-        requireAny("director.personal.edit", "director.personal.create")
+        requireAny("director.personal.edit")
         delegate.updateTurn(value)
     }
 
@@ -106,7 +120,7 @@ class ViewerDirectorOfficeMainPageDao(
     }
 
     override suspend fun updateTextSegment(value: DirectorTextSegmentEntity) {
-        requireAny("director.personal.edit", "director.personal.create")
+        requireAny("director.personal.edit")
         delegate.updateTextSegment(value)
     }
 
@@ -121,7 +135,7 @@ class ViewerDirectorOfficeMainPageDao(
     }
 
     override suspend fun updateStageCue(value: DirectorStageCueEntity) {
-        requireAny("director.personal.edit", "director.personal.create")
+        requireAny("director.personal.edit")
         delegate.updateStageCue(value)
     }
 
@@ -131,7 +145,7 @@ class ViewerDirectorOfficeMainPageDao(
     }
 
     override suspend fun insertChangeHistory(value: DirectorChangeHistoryEntity): Long {
-        requireAny("director.personal.edit", "director.personal.create")
+        requireAny("director.personal.edit")
         return delegate.insertChangeHistory(value)
     }
 }

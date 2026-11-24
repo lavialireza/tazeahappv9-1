@@ -21,7 +21,7 @@ object DirectorOfficeSharedContract {
     val buildMethods: List<DirectorOfficeBuildMethod> = listOf(
         DirectorOfficeBuildMethod(
             ROLE_NUMBERED, "شماره‌محور", "director.personal.method.number", true,
-            "انتخاب بر اساس شماره دیالوگ داخل متن هر نقش؛ دیالوگ‌های هم‌شماره در یک نوبت قرار می‌گیرند."
+            "انتخاب بر اساس شماره دیالوگ؛ شماره تکراری در یک نقش خطاست و نوبت هم‌شماره میان چند نقش فقط با متن کاملاً یکسان، جمعی ثبت می‌شود."
         ),
         DirectorOfficeBuildMethod(
             FULL_TEXT, "متن کامل", "director.personal.method.fulltext", true,
@@ -65,7 +65,9 @@ data class DirectorOfficeBuildSection(
 data class DirectorOfficeBuildResult(
     val turnIdsByNumber: Map<Int, Long>,
     val turnIdsByRole: Map<String, Long>,
-    val insertedTurnCount: Int
+    val insertedTurnCount: Int,
+    /** هشدارهای غیرمسدودکننده؛ مانند شماره‌های جاافتاده در متن نقش‌ها. */
+    val warnings: List<String> = emptyList()
 )
 
 

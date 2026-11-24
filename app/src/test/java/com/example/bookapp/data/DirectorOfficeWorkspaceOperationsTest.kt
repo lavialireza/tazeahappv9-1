@@ -64,7 +64,7 @@ class DirectorOfficeWorkspaceOperationsTest {
             ),
             sections = listOf(
                 DirectorOfficeBuildSection("sec-a", "role-a", "۱- سلام بر سپاه", 0, "بخش اول"),
-                DirectorOfficeBuildSection("sec-b", "role-b", "1- پاسخ سپاه", 0, "بخش دوم"),
+                DirectorOfficeBuildSection("sec-b", "role-b", "1- سلام بر سپاه", 0, "بخش دوم"),
                 DirectorOfficeBuildSection("sec-c", "role-a", "۲- حرکت به میدان", 1, "بخش سوم")
             )
         )
@@ -74,13 +74,62 @@ class DirectorOfficeWorkspaceOperationsTest {
         val first = dao.turnRows.values.single { it.turnNumber == 1 }
         assertEquals(DirectorTurnEntity.TYPE_COLLECTIVE, first.turnType)
         assertEquals(setOf("role-a", "role-b"), dao.participantRows.filter { it.turnId == first.id }.map { it.roleUid }.toSet())
-        assertEquals(setOf("sec-a", "sec-b"), dao.segmentRows.filter { it.turnId == first.id }.mapNotNull { it.sectionUid }.toSet())
-        val sourceSegment = dao.segmentRows.first { it.sectionUid == "sec-a" }
-        assertEquals("بخش اول", sourceSegment.sourceSectionTitle)
-        assertEquals("sec-a", sourceSegment.sourceSectionUids)
+        val sharedSegments = dao.segmentRows.filter { it.turnId == first.id }
+        assertEquals(1, sharedSegments.size)
+        val sourceSegment = sharedSegments.single()
+        assertEquals("sec-a\u001Fsec-b", sourceSegment.sourceSectionUids)
+        assertEquals("بخش اول، بخش دوم", sourceSegment.sourceSectionTitle)
+        assertEquals("سلام بر سپاه", sourceSegment.text)
+        assertEquals(null, sourceSegment.sectionUid)
+        assertEquals(null, sourceSegment.sourceRoleUid)
         assertEquals("ROLE_NUMBERED", sourceSegment.sourceMethod)
         assertTrue(sourceSegment.sourceContentHash.isNotBlank())
         assertEquals(first.id, result.turnIdsByNumber[1])
+    }
+
+    @Test
+    fun `different texts with same number are rejected before existing office data is changed`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 9, sequenceIndex = 0, title = "نوبت محفوظ")
+        }
+        val error = runCatching {
+            DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+                dao, 20, DirectorOfficeSharedContract.ROLE_NUMBERED,
+                listOf(DirectorOfficeBuildRole("a", "نقش اول"), DirectorOfficeBuildRole("b", "نقش دوم")),
+                listOf(
+                    DirectorOfficeBuildSection("a1", "a", "۱- متن نخست"),
+                    DirectorOfficeBuildSection("b1", "b", "۱- متن متفاوت")
+                )
+            )
+        }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("متن نوبت‌های هم‌شماره یکسان نیست"))
+        assertEquals("نوبت محفوظ", dao.turnRows.getValue(1).title)
+    }
+
+    @Test
+    fun `repeated number inside one role is rejected`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val error = runCatching {
+            DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+                dao, 20, DirectorOfficeSharedContract.ROLE_NUMBERED,
+                listOf(DirectorOfficeBuildRole("a", "نقش اول")),
+                listOf(DirectorOfficeBuildSection("a1", "a", "۱- متن نخست\n۲- متن دوم\n۱- تکرار"))
+            )
+        }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("شماره نوبت در یک نقش تکرار شده است"))
+        assertTrue(dao.turnRows.isEmpty())
+    }
+
+    @Test
+    fun `missing numbered turns are returned as a non blocking warning`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao, 20, DirectorOfficeSharedContract.ROLE_NUMBERED,
+            listOf(DirectorOfficeBuildRole("a", "نقش اول")),
+            listOf(DirectorOfficeBuildSection("a1", "a", "۱- متن اول\n۳- متن سوم"))
+        )
+        assertEquals(2, result.insertedTurnCount)
+        assertTrue(result.warnings.single().contains("۲"))
     }
 
     @Test
