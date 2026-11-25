@@ -202,8 +202,12 @@ object ViewerAccessPolicy {
         }
         // نسخه‌های قدیمی فقط والدها را داشتند؛ فرزندان جدید همان وضعیت والد را به ارث می‌برند.
         permissionParents.forEach { (child, parent) ->
-            if (!input.containsKey(child)) result[child] = result[parent] == true
+            if (!input.containsKey(child) && child != "director.personal.delete") {
+                result[child] = result[parent] == true
+            }
         }
+        // حذف دفتر شخصی حساس است و هرگز صرفاً با فعال‌بودن مشاهده به ارث نمی‌رسد.
+        if (!input.containsKey("director.personal.delete")) result["director.personal.delete"] = false
         return result
     }
 
@@ -259,7 +263,9 @@ object ViewerAccessPolicy {
             protectedWrites.forEach { key -> permissions[key] = false }
             // Viewer هرگز مالک انتشار رسمی، کپی یا خروجی دفتر نیست؛ حتی اگر
             // یک Policy قدیمی یا دست‌کاری‌شده این کلیدها را فعال کرده باشد.
-            setOf( "director.personal.delete", "director.official.publish", "director.copy", "director.export").forEach { permissions[it] = false }
+            // حذف دفتر شخصی، فقط داده‌های دفتر مستقل همین Viewer را تغییر می‌دهد؛
+            // این مجوز می‌تواند صریحاً توسط Admin اعطا شود. انتشار/کپی/خروجی همچنان ممنوع است.
+            setOf("director.official.publish", "director.copy", "director.export").forEach { permissions[it] = false }
             // والدها نیز باید خاموش شود؛ وگرنه والد/فرزند می‌تواند رفتار UI را
             // در نسخه‌های قدیمی‌تر به شکل ناهمسان فعال کند. مشاهده گالری/پاورقی/
             // دیکشنری/اصلاحات همچنان مجاز می‌ماند.

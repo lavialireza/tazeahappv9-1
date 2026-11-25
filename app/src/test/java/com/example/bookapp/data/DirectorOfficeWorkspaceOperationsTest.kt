@@ -28,6 +28,42 @@ class DirectorOfficeWorkspaceOperationsTest {
         assertEquals("متن نوبت", dao.segmentRows.single().text)
     }
 
+
+    @Test
+    fun `same numbered different role text is saved separately with warning`() = runTest {
+        val dao = FakeWorkspaceDao()
+        DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
+            dao, versionId = 20, turnNumber = 4, roleUid = "role-a", roleTitle = "نقش اول",
+            text = "متن اول", sectionUid = "section-a"
+        )
+        DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
+            dao, versionId = 20, turnNumber = 4, roleUid = "role-b", roleTitle = "نقش دوم",
+            text = "متن دوم", sectionUid = "section-b"
+        )
+
+        assertEquals(2, dao.turnRows.size)
+        assertTrue(dao.turnRows.values.all { it.turnNumber == 4 })
+        assertTrue(dao.turnRows.values.any { it.notes.startsWith("هشدار:") })
+        assertEquals(setOf("متن اول", "متن دوم"), dao.segmentRows.map { it.text }.toSet())
+        assertEquals(setOf("role-a", "role-b"), dao.participantRows.map { it.roleUid }.toSet())
+    }
+
+    @Test
+    fun `same numbered identical role text becomes one collective turn`() = runTest {
+        val dao = FakeWorkspaceDao()
+        DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
+            dao, versionId = 20, turnNumber = 5, roleUid = "role-a", roleTitle = "نقش اول", text = "متن مشترک"
+        )
+        DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
+            dao, versionId = 20, turnNumber = 5, roleUid = "role-b", roleTitle = "نقش دوم", text = "متن مشترک"
+        )
+
+        assertEquals(1, dao.turnRows.size)
+        assertEquals(DirectorTurnEntity.TYPE_COLLECTIVE, dao.turnRows.values.single().turnType)
+        assertEquals(1, dao.segmentRows.size)
+        assertEquals(setOf("role-a", "role-b"), dao.participantRows.map { it.roleUid }.toSet())
+    }
+
     @Test
     fun `reordering uses shared transaction boundary and normalized sequence`() = runTest {
         val dao = FakeWorkspaceDao().apply {
@@ -88,22 +124,32 @@ class DirectorOfficeWorkspaceOperationsTest {
     }
 
     @Test
-    fun `different texts with same number are rejected before existing office data is changed`() = runTest {
-        val dao = FakeWorkspaceDao().apply {
-            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 9, sequenceIndex = 0, title = "نوبت محفوظ")
-        }
-        val error = runCatching {
-            DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
-                dao, 20, DirectorOfficeSharedContract.ROLE_NUMBERED,
-                listOf(DirectorOfficeBuildRole("a", "نقش اول"), DirectorOfficeBuildRole("b", "نقش دوم")),
-                listOf(
-                    DirectorOfficeBuildSection("a1", "a", "۱- متن نخست"),
-                    DirectorOfficeBuildSection("b1", "b", "۱- متن متفاوت")
-                )
+    fun `different texts with same number are retained as separate turns with persistent warnings`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao, 20, DirectorOfficeSharedContract.ROLE_NUMBERED,
+            listOf(DirectorOfficeBuildRole("a", "نقش اول"), DirectorOfficeBuildRole("b", "نقش دوم")),
+            listOf(
+                DirectorOfficeBuildSection("a1", "a", "۱- متن نخست"),
+                DirectorOfficeBuildSection("b1", "b", "۱- متن متفاوت")
             )
-        }.exceptionOrNull()
-        assertTrue(error?.message.orEmpty().contains("متن نوبت‌های هم‌شماره یکسان نیست"))
-        assertEquals("نوبت محفوظ", dao.turnRows.getValue(1).title)
+        )
+
+        assertEquals(2, result.insertedTurnCount)
+        assertTrue(result.warnings.any { it.contains("یکسان نیست") })
+        assertEquals(2, dao.turnRows.values.count { it.turnNumber == 1 })
+        assertEquals(setOf("متن نخست", "متن متفاوت"), dao.segmentRows.map { it.text }.toSet())
+        assertTrue(dao.turnRows.values.all { it.turnType == DirectorTurnEntity.TYPE_NORMAL })
+        assertTrue(dao.turnRows.values.all { it.notes.startsWith("هشدار:") })
+    }
+
+    @Test
+    fun `numbered parser supports Persian and Arabic digit headers`() {
+        val parsed = DirectorOfficeWorkspaceUseCases.parseNumberedDialogues(
+            "دیالوگ شماره ۱: متن اول\nادامه متن\n۲- متن دوم\nنوبت ٣: متن سوم"
+        )
+        assertEquals(listOf(1, 2, 3), parsed.map { it.first })
+        assertEquals("متن اول\nادامه متن", parsed[0].second)
     }
 
     @Test

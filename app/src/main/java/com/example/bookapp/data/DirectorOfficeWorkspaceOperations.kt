@@ -47,13 +47,6 @@ object DirectorOfficeWorkspaceOperations {
         dao.textSegments(turnId).sortedWith(compareBy<DirectorTextSegmentEntity> { it.segmentIndex }.thenBy { it.id })
             .joinToString("\\n") { it.text }
 
-    private fun requireSameCollectiveText(existing: String, incoming: String, turnNumber: Int) {
-        require(existing.isNotBlank() &&
-            DirectorOfficeWorkspaceUseCases.normalizeDialogueText(existing) ==
-            DirectorOfficeWorkspaceUseCases.normalizeDialogueText(incoming)) {
-            "متن نقش جدید با متن نوبت $turnNumber یکسان نیست؛ این شماره نمی‌تواند نوبت جمعی باشد. تعارض برای بررسی مدیر متوقف شد."
-        }
-    }
 
     /**
      * ساخت مشترک دفتر بر پایه کتابخانه نقش‌ها و بخش‌ها. الگوریتم شماره‌محور و متن کامل
@@ -96,6 +89,11 @@ object DirectorOfficeWorkspaceOperations {
         val orderedRoles = roles
         val roleByUid = orderedRoles.associateBy { it.uid }
         val orderedSections = sections.filter { it.content.isNotBlank() }
+        // هش متن کامل هر بخش فقط یک‌بار محاسبه می‌شود. قبلاً برای تک‌تک دیالوگ‌های
+        // یک بخش، کل متن بلند همان بخش دوباره join و SHA-256 می‌شد و ساخت را کند می‌کرد.
+        val sectionHashByUid = if (method == DirectorOfficeSharedContract.ROLE_NUMBERED) {
+            orderedSections.associate { it.uid to ContentUid.sha256(it.content) }
+        } else emptyMap()
         val byNumber = linkedMapOf<Int, Long>()
         val byRole = linkedMapOf<String, Long>()
         val buildWarnings = mutableListOf<String>()
@@ -144,15 +142,13 @@ object DirectorOfficeWorkspaceOperations {
                 error("شماره نوبت در یک نقش تکرار شده است: $details. ابتدا متن منبع را اصلاح کنید؛ هیچ تغییری در دفتر ذخیره نشد.")
             }
 
-            // یک شماره در چند نقش فقط زمانی نوبت جمعی است که متن همه دقیقاً یکسان باشد.
+            // اختلاف متن بین نقش‌های هم‌شماره مانع ساخت نیست: هر نقش به‌صورت
+            // نوبت مستقل با همان شماره ذخیره می‌شود و هشدار پایدار برای اصلاح ثبت می‌گردد.
             val mismatchedTurns = numberedEntries.groupBy { it.number }
                 .filterValues { entries -> entries.map { DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.text) }.distinct().size > 1 }
-            if (mismatchedTurns.isNotEmpty()) {
-                val details = mismatchedTurns.entries.sortedBy { it.key }.joinToString("؛ ") { (number, entries) ->
-                    val rolesText = entries.map { it.role.title }.distinct().joinToString("، ")
-                    "شماره $number در نقش‌های $rolesText"
-                }
-                error("متن نوبت‌های هم‌شماره یکسان نیست: $details. این موارد نوبت جمعی محسوب نمی‌شوند و باید توسط مدیر بازبینی شوند؛ هیچ تغییری در دفتر ذخیره نشد.")
+            mismatchedTurns.toSortedMap().forEach { (number, entries) ->
+                val rolesText = entries.map { it.role.title }.distinct().joinToString("، ")
+                buildWarnings += "هشدار شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(number)}: متن این شماره در نقش‌های $rolesText یکسان نیست؛ نوبت‌ها جداگانه ثبت شده‌اند و باید در دفتر بررسی و اصلاح شوند."
             }
 
             val sortedNumbers = numberedEntries.map { it.number }.distinct().sorted()
@@ -182,49 +178,76 @@ object DirectorOfficeWorkspaceOperations {
             when (method) {
                 DirectorOfficeSharedContract.ROLE_NUMBERED -> {
                     if (numberedEntries.isNotEmpty()) {
-                        val groups = numberedEntries.groupBy { it.number }.toSortedMap().entries.toList()
-                        val turnRows = groups.mapIndexed { sequence, (number, numberEntries) ->
-                            val distinctRoles = numberEntries.map { it.role }.distinctBy { it.uid }
+                        data class PreparedNumberedTurn(
+                            val number: Int,
+                            val entries: List<NumberedEntry>,
+                            val isCollective: Boolean,
+                            val warning: String? = null
+                        )
+
+                        val preparedTurns = numberedEntries.groupBy { it.number }.toSortedMap().flatMap { (number, entries) ->
+                            val distinctTexts = entries.map { DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.text) }.distinct()
+                            if (distinctTexts.size == 1) {
+                                listOf(PreparedNumberedTurn(number, entries, entries.map { it.role.uid }.distinct().size > 1))
+                            } else {
+                                // متن‌های متفاوت با شماره یکسان را در یک کارت ادغام نمی‌کنیم.
+                                // برای هر نقش یک ردیف مستقل با همان شماره می‌سازیم تا متن‌ها حفظ شوند.
+                                entries.map { entry ->
+                                    PreparedNumberedTurn(
+                                        number = number,
+                                        entries = listOf(entry),
+                                        isCollective = false,
+                                        warning = "هشدار: متن شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(number)} با متن همین شماره در نقش‌های دیگر یکسان نیست؛ نیازمند بررسی و اصلاح کارگردان است."
+                                    )
+                                }
+                            }
+                        }
+
+                        val turnRows = preparedTurns.mapIndexed { sequence, prepared ->
+                            val distinctRoles = prepared.entries.map { it.role }.distinctBy { it.uid }
                             DirectorTurnEntity(
                                 versionId = versionId,
-                                turnNumber = number,
+                                turnNumber = prepared.number,
                                 sequenceIndex = sequence,
-                                turnType = if (distinctRoles.size > 1) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
-                                title = if (distinctRoles.size > 1) distinctRoles.joinToString("، ") { it.title } else distinctRoles.first().title
+                                turnType = if (prepared.isCollective) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
+                                title = if (prepared.isCollective) distinctRoles.joinToString("، ") { it.title } else distinctRoles.first().title,
+                                notes = prepared.warning.orEmpty()
                             )
                         }
                         val turnIds = dao.insertTurns(turnRows)
                         val participantRows = mutableListOf<DirectorParticipantEntity>()
                         val segmentRows = mutableListOf<DirectorTextSegmentEntity>()
-                        groups.forEachIndexed { index, (number, numberEntriesForTurn) ->
+                        preparedTurns.forEachIndexed { index, prepared ->
                             val turnId = turnIds[index]
-                            byNumber[number] = turnId
-                            numberEntriesForTurn.map { it.role }.distinctBy { it.uid }.forEachIndexed { roleIndex, role ->
+                            if (prepared.number !in byNumber) byNumber[prepared.number] = turnId
+                            prepared.entries.map { it.role }.distinctBy { it.uid }.forEachIndexed { roleIndex, role ->
                                 participantRows += DirectorParticipantEntity(
                                     turnId = turnId, roleUid = role.uid, roleTitle = role.title,
                                     orderIndex = roleIndex, isLead = roleIndex == 0
                                 )
                             }
-                            // متن مشترک فقط یک‌بار ذخیره می‌شود؛ همه بخش‌های منبع در فراداده نگهداری می‌شوند.
-                            val sharedText = numberEntriesForTurn.first().text.trim()
-                            val sourceSections = numberEntriesForTurn.map { it.section }.distinctBy { it.uid }
-                            val sourceRoles = numberEntriesForTurn.map { it.role }.distinctBy { it.uid }
+                            // در نوبت جمعی متن یک‌بار ذخیره می‌شود؛ در تعارض هر متن در نوبت مستقل خودش می‌ماند.
+                            val firstEntry = prepared.entries.first()
+                            val sourceSections = prepared.entries.map { it.section }.distinctBy { it.uid }
+                            val sourceRoles = prepared.entries.map { it.role }.distinctBy { it.uid }
                             segmentRows += DirectorTextSegmentEntity(
                                 turnId = turnId,
                                 segmentIndex = 0,
-                                text = sharedText,
+                                text = firstEntry.text.trim(),
                                 sectionUid = sourceSections.singleOrNull()?.uid,
                                 sourceTaziehUid = plan.taziehUid,
                                 sourceRoleUid = sourceRoles.singleOrNull()?.uid,
                                 sourceSectionTitle = sourceSections.map { it.title }.filter { it.isNotBlank() }.distinct().joinToString("، "),
                                 sourceSectionUids = sourceSections.joinToString("\u001F") { it.uid },
                                 sourceMethod = method,
-                                sourceContentHash = ContentUid.sha256(sourceSections.joinToString("\n") { it.content })
+                                sourceContentHash = if (sourceSections.size == 1) {
+                                    sectionHashByUid[sourceSections.single().uid].orEmpty()
+                                } else ContentUid.sha256(sourceSections.joinToString("\n") { it.content })
                             )
                         }
                         if (participantRows.isNotEmpty()) dao.insertParticipants(participantRows)
                         if (segmentRows.isNotEmpty()) dao.insertTextSegments(segmentRows)
-                        insertedCount = groups.size
+                        insertedCount = preparedTurns.size
                     }
                 }
                 DirectorOfficeSharedContract.FULL_TEXT -> {
@@ -285,15 +308,25 @@ object DirectorOfficeWorkspaceOperations {
         require(plan.status != DirectorPlanEntity.STATUS_ARCHIVED) { "دفتر بایگانی‌شده قابل ویرایش نیست." }
         transactionRunner.run {
             val existingTurns = dao.turns(versionId)
-            val sameNumberTurn = existingTurns.firstOrNull { it.turnNumber == turnNumber }
-            if (sameNumberTurn != null) {
-                requireSameCollectiveText(sharedTurnText(dao, sameNumberTurn.id), text, turnNumber)
-                addParticipant(dao, sameNumberTurn.id, roleUid.trim(), roleTitle.trim(), false)
+            val sameNumberTurns = existingTurns.filter { it.turnNumber == turnNumber }
+            val normalizedIncoming = DirectorOfficeWorkspaceUseCases.normalizeDialogueText(text)
+            val matchingTurn = sameNumberTurns.firstOrNull { turn ->
+                DirectorOfficeWorkspaceUseCases.normalizeDialogueText(sharedTurnText(dao, turn.id)) == normalizedIncoming
+            }
+            require(sameNumberTurns.none { turn -> dao.participants(turn.id).any { it.roleUid == roleUid.trim() } }) {
+                "این نقش قبلاً برای شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(turnNumber)} ثبت شده است."
+            }
+            if (matchingTurn != null) {
+                addParticipant(dao, matchingTurn.id, roleUid.trim(), roleTitle.trim(), false)
                 return@run
             }
             val nextIndex = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(existingTurns)
+            val conflictNote = if (sameNumberTurns.isNotEmpty())
+                "هشدار: متن این نوبت با متن شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(turnNumber)} در نقش‌های دیگر یکسان نیست؛ این متن جداگانه حفظ شده و باید توسط کارگردان بررسی و اصلاح شود."
+            else ""
             val turnId = dao.insertTurn(DirectorTurnEntity(
-                versionId = versionId, turnNumber = turnNumber, sequenceIndex = nextIndex, title = roleTitle.trim()
+                versionId = versionId, turnNumber = turnNumber, sequenceIndex = nextIndex,
+                title = roleTitle.trim(), notes = conflictNote
             ))
             dao.insertParticipant(DirectorParticipantEntity(
                 turnId = turnId, roleUid = roleUid.trim(), roleTitle = roleTitle.trim(), isLead = true
@@ -328,13 +361,27 @@ object DirectorOfficeWorkspaceOperations {
         require(value.turnNumber > 0 && value.title.isNotBlank()) { "شماره و عنوان نوبت معتبر نیست." }
         val current = dao.turn(value.id) ?: error("نوبت دفتر پیدا نشد.")
         val (plan, _) = requireEditableTurn(dao, current.id)
-        require(dao.turns(current.versionId).none { it.id != current.id && it.turnNumber == value.turnNumber }) {
-            "شماره ${value.turnNumber} قبلاً به نوبت دیگری اختصاص یافته است؛ برای نوبت جمعی باید نقش‌ها در یک نوبت مشترک باشند."
-        }
         require(value.versionId == current.versionId && value.sequenceIndex == current.sequenceIndex) {
             "شناسه نسخه و جایگاه نوبت از فرم ویرایش قابل تغییر نیست."
         }
-        dao.updateTurn(value)
+        val sameNumberTurns = dao.turns(current.versionId).filter { it.id != current.id && it.turnNumber == value.turnNumber }
+        val currentRoleUids = dao.participants(current.id).map { it.roleUid }.toSet()
+        var repeatedRole: DirectorParticipantEntity? = null
+        for (otherTurn in sameNumberTurns) {
+            repeatedRole = dao.participants(otherTurn.id).firstOrNull { it.roleUid in currentRoleUids }
+            if (repeatedRole != null) break
+        }
+        require(repeatedRole == null) {
+            "شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(value.turnNumber)} برای نقش «${repeatedRole?.roleTitle.orEmpty()}» قبلاً ثبت شده است."
+        }
+        val currentText = DirectorOfficeWorkspaceUseCases.normalizeDialogueText(sharedTurnText(dao, current.id))
+        val hasTextConflict = sameNumberTurns.any { other ->
+            DirectorOfficeWorkspaceUseCases.normalizeDialogueText(sharedTurnText(dao, other.id)) != currentText
+        }
+        val warning = if (hasTextConflict)
+            "هشدار: متن این نوبت با متن شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(value.turnNumber)} در نقش‌های دیگر یکسان نیست؛ این متن جداگانه حفظ شده و باید توسط کارگردان بررسی و اصلاح شود."
+        else value.notes
+        dao.updateTurn(value.copy(notes = warning))
         val version = dao.version(value.versionId) ?: error("نسخه دفتر پیدا نشد.")
         if (current.turnNumber != value.turnNumber) {
             recordHistory(dao, plan, version, current.id, "TURN", "turnNumber", "UPDATE",
@@ -403,18 +450,28 @@ object DirectorOfficeWorkspaceOperations {
         val nextSequence = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(currentTurns)
         val nextNumber = requestedTurnNumber ?: DirectorOfficeWorkspaceUseCases.nextTurnNumber(currentTurns)
         require(nextNumber > 0) { "شماره نوبت باید بزرگ‌تر از صفر باشد." }
-        val existingSameNumber = currentTurns.firstOrNull { it.turnNumber == nextNumber }
-        if (existingSameNumber != null) {
-            requireSameCollectiveText(sharedTurnText(dao, existingSameNumber.id), entry.text, nextNumber)
-            addParticipant(dao, existingSameNumber.id, entry.roleUid.trim(), entry.roleTitle.trim(), false)
+        val sameNumberTurns = currentTurns.filter { it.turnNumber == nextNumber }
+        val normalizedIncoming = DirectorOfficeWorkspaceUseCases.normalizeDialogueText(entry.text)
+        val matchingTurn = sameNumberTurns.firstOrNull { turn ->
+            DirectorOfficeWorkspaceUseCases.normalizeDialogueText(sharedTurnText(dao, turn.id)) == normalizedIncoming
+        }
+        require(sameNumberTurns.none { turn -> dao.participants(turn.id).any { it.roleUid == entry.roleUid.trim() } }) {
+            "این نقش قبلاً برای شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(nextNumber)} ثبت شده است."
+        }
+        if (matchingTurn != null) {
+            addParticipant(dao, matchingTurn.id, entry.roleUid.trim(), entry.roleTitle.trim(), false)
             return
         }
         val title = entry.roleTitle.trim()
+        val conflictNote = if (sameNumberTurns.isNotEmpty())
+            "هشدار: متن این نوبت با متن شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(nextNumber)} در نقش‌های دیگر یکسان نیست؛ این متن جداگانه حفظ شده و باید توسط کارگردان بررسی و اصلاح شود."
+        else ""
         val turnId = dao.insertTurn(DirectorTurnEntity(
             versionId = version.id,
             turnNumber = nextNumber,
             sequenceIndex = nextSequence,
             title = title,
+            notes = conflictNote,
             continuityGroupUid = entry.key
         ))
         dao.insertParticipant(DirectorParticipantEntity(
@@ -487,23 +544,27 @@ object DirectorOfficeWorkspaceOperations {
         val version = dao.versionsForPlan(planId).firstOrNull { it.status == DirectorPlanVersionEntity.STATUS_DRAFT } ?: error("نسخه پیش‌نویس دفتر پیدا نشد.")
         DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
         val existingTurns = dao.turns(version.id)
-        val sameNumberTurn = existingTurns.firstOrNull { it.turnNumber == turnNumber }
-        if (sameNumberTurn != null) {
-            val currentText = sharedTurnText(dao, sameNumberTurn.id)
-            requireSameCollectiveText(currentText, text, turnNumber)
-            val currentParticipants = dao.participants(sameNumberTurn.id)
-            require(currentParticipants.none {
-                DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.roleTitle) ==
-                    DirectorOfficeWorkspaceUseCases.normalizeDialogueText(title)
-            }) { "این نقش قبلاً در نوبت $turnNumber حضور دارد." }
+        val sameNumberTurns = existingTurns.filter { it.turnNumber == turnNumber }
+        val normalizedIncoming = DirectorOfficeWorkspaceUseCases.normalizeDialogueText(text)
+        val matchingTurn = sameNumberTurns.firstOrNull { turn ->
+            DirectorOfficeWorkspaceUseCases.normalizeDialogueText(sharedTurnText(dao, turn.id)) == normalizedIncoming
+        }
+        require(sameNumberTurns.none { turn -> dao.participants(turn.id).any {
+            DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.roleTitle) ==
+                DirectorOfficeWorkspaceUseCases.normalizeDialogueText(title)
+        } }) { "این نقش قبلاً برای شماره $turnNumber ثبت شده است." }
+        if (matchingTurn != null) {
             addParticipant(
-                dao, sameNumberTurn.id,
+                dao, matchingTurn.id,
                 "personal-role-" + java.util.UUID.randomUUID(), title.trim(), false
             )
             return
         }
         val nextIndex = DirectorOfficeWorkspaceUseCases.nextSequenceIndex(existingTurns)
-        val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = turnNumber, sequenceIndex = nextIndex, title = title.trim()))
+        val conflictNote = if (sameNumberTurns.isNotEmpty())
+            "هشدار: متن این نوبت با متن شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(turnNumber)} در نقش‌های دیگر یکسان نیست؛ این متن جداگانه حفظ شده و باید توسط کارگردان بررسی و اصلاح شود."
+        else ""
+        val turnId = dao.insertTurn(DirectorTurnEntity(versionId = version.id, turnNumber = turnNumber, sequenceIndex = nextIndex, title = title.trim(), notes = conflictNote))
         dao.insertParticipant(DirectorParticipantEntity(turnId = turnId, roleUid = "personal-role-" + java.util.UUID.randomUUID(), roleTitle = title.trim(), isLead = true))
         dao.insertTextSegment(DirectorTextSegmentEntity(turnId = turnId, segmentIndex = 0, text = text.trim()))
         dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))

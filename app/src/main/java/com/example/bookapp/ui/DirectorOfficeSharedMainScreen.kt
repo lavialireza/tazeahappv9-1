@@ -407,12 +407,16 @@ fun DirectorOfficeSharedMainScreen(
             dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $method"))
 
 
-            val selectorItems = sections.flatMap { section ->
-                val role = roleById[section.roleId] ?: return@flatMap emptyList()
-                DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part ->
-                    DirectorSelectorItem("${section.uid}:$index", section, role, part)
+            // ساخت فهرست انتخاب‌گر فقط در همان روش لازم است؛ قبلاً برای هر روش
+            // تمام متن مجلس دوباره به پاراگراف‌ها شکسته می‌شد و ساخت دفتر را کند می‌کرد.
+            val selectorItems = if (method == DirectorOfficeSharedContract.SELECTOR) {
+                sections.flatMap { section ->
+                    val role = roleById[section.roleId] ?: return@flatMap emptyList()
+                    DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part ->
+                        DirectorSelectorItem("${section.uid}:$index", section, role, part)
+                    }
                 }
-            }
+            } else emptyList()
             // فقط یک Snapshot نهایی گرفته می‌شود و همان داده برای پیش‌نمایش و انتخاب‌گر استفاده می‌شود.
             val workspace = workspaceRepository.loadWorkspace(plan.id, version.id)
             val selectedKeys = if (method == DirectorOfficeSharedContract.SELECTOR) {
@@ -851,7 +855,7 @@ fun DirectorOfficeSharedMainScreen(
                                         when (selectedBuildMode) {
                                             DirectorOfficeSharedContract.ROLE_NUMBERED -> {
                                                 Text("تشخیص نوبت‌های شماره‌دار از متن", fontWeight = FontWeight.Bold)
-                                                Text("برنامه متن نقش‌های همین مجلس را بررسی می‌کند و دیالوگ‌های دارای شماره را به نوبت تبدیل می‌کند. دیالوگ‌های هم‌شماره در یک نوبت گروهی قرار می‌گیرند.", style = MaterialTheme.typography.bodySmall)
+                                                Text("برنامه متن نقش‌های همین مجلس را بررسی می‌کند و دیالوگ‌های دارای شماره را به نوبت تبدیل می‌کند. نوبت‌های هم‌شماره با متن یکسان به‌صورت جمعی ثبت می‌شوند؛ اگر متن‌ها متفاوت باشند، جداگانه ذخیره و برای اصلاح در دفتر هشدار داده می‌شوند.", style = MaterialTheme.typography.bodySmall)
                                             }
                                             DirectorOfficeSharedContract.FULL_TEXT -> {
                                                 Text("ساخت از متن کامل", fontWeight = FontWeight.Bold)
@@ -1106,7 +1110,19 @@ fun DirectorOfficeSharedMainScreen(
                                     Text("دفتر معین‌البکاء", fontWeight = FontWeight.Bold)
                                     Text(if (selectedVersion?.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "نسخه منتشرشده — فقط خواندنی" else "در حال تکمیل · پیش‌نویس", style = MaterialTheme.typography.bodySmall)
                                 }
-                                Text("${turns.size} نوبت", fontWeight = FontWeight.SemiBold)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("${turns.size} نوبت", fontWeight = FontWeight.SemiBold)
+                                    if (isAdmin || canDeletePersonal) {
+                                        TextButton(
+                                            enabled = !busy,
+                                            onClick = { selectedPlan?.let { deletePlanCandidate = it } }
+                                        ) {
+                                            Icon(Icons.Default.Delete, contentDescription = "حذف دفتر")
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("حذف دفتر")
+                                        }
+                                    }
+                                }
                             }
                             Text("فهرست نوبت‌ها", fontWeight = FontWeight.SemiBold)
                             OutlinedButton(
@@ -1628,6 +1644,19 @@ fun DirectorOfficeSharedMainScreen(
                             onDeleteSegment = if (isAdmin || canDeletePersonal) ({ segment -> deletingSegmentItem = segment }) else null,
                             extraContent = null,
                             afterCardContent = {
+                                if (turn.notes.startsWith("هشدار:")) {
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                                    ) {
+                                        Text(
+                                            turn.notes,
+                                            modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
                                 if (showTurnCueDialog) {
                                     DirectorOfficeStageCueEditorDialog(
                                         title = if (editingTurnCueId == null) "ثبت راهنمای صحنه — نوبت ${turn.turnNumber}" else "ویرایش راهنمای صحنه — نوبت ${turn.turnNumber}",

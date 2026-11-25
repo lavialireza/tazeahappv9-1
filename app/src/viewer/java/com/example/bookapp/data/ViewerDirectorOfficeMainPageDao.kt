@@ -138,9 +138,6 @@ class ViewerDirectorOfficeMainPageDao(
         requireAny("director.personal.create", "director.personal.edit")
         requireWritableVersion(value.versionId)
         require(value.turnNumber > 0 && value.title.isNotBlank()) { "شماره و عنوان نوبت معتبر نیست." }
-        require(delegate.turns(value.versionId).none { it.turnNumber == value.turnNumber }) {
-            "شماره نوبت در این نسخه تکراری است؛ نقش‌های هم‌نوبت باید در یک نوبت مشترک قرار گیرند."
-        }
         return delegate.insertTurn(value)
     }
 
@@ -153,12 +150,9 @@ class ViewerDirectorOfficeMainPageDao(
         require(versionIds.size <= 1) { "ساخت گروهی نوبت‌ها باید فقط برای یک نسخه انجام شود." }
         versionIds.singleOrNull()?.let { versionId ->
             requireWritableVersion(versionId)
-            val existingNumbers = delegate.turns(versionId).map { it.turnNumber }.toSet()
-            val incomingNumbers = values.map { it.turnNumber }
-            require(incomingNumbers.distinct().size == incomingNumbers.size &&
-                incomingNumbers.none { it in existingNumbers }) {
-                "شماره نوبت در نسخه تکراری است؛ نوبت‌های هم‌شماره باید به‌صورت یک نوبت مشترک ساخته شوند."
-            }
+            // شماره نوبت شناسه سراسری گفتار است، نه کلید یکتا در نسخه.
+            // متن‌های یکسان در عملیات مشترک ادغام می‌شوند؛ متن‌های متفاوت با همان
+            // شماره باید جداگانه ذخیره شوند تا کارگردان در دفتر اصلاحشان کند.
         }
         return delegate.insertTurns(values)
     }
@@ -169,9 +163,7 @@ class ViewerDirectorOfficeMainPageDao(
             value.turnNumber > 0 && value.title.isNotBlank()) {
             "شناسه نسخه، جایگاه، شماره یا عنوان نوبت معتبر نیست."
         }
-        require(delegate.turns(current.versionId).none { it.id != current.id && it.turnNumber == value.turnNumber }) {
-            "شماره نوبت در نسخه تکراری است."
-        }
+        // شماره تکراری بین نقش‌ها مجاز است؛ کنترل تکرار همان نقش در منطق مشترک انجام می‌شود.
         val collectiveMarkerOnly = ViewerPermissionEngine.can(permissions, "director.personal.create") &&
             value.copy(turnType = current.turnType) == current &&
             value.turnType == DirectorTurnEntity.TYPE_COLLECTIVE
