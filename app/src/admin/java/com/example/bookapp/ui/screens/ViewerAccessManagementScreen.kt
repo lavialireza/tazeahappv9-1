@@ -227,12 +227,14 @@ private fun DirectorOfficePermissionEditor(
 ) {
     val rows = listOf(
         "director.official.view" to "مشاهده دفتر رسمی منتشرشده",
+        "director.personal.view" to "مشاهده دفتر شخصی کارگردان",
         "director.personal.create" to "ساخت دفتر شخصی",
         "director.personal.method.number" to "ساخت شماره‌محور",
         "director.personal.method.fulltext" to "ساخت با متن کامل",
         "director.personal.method.manual" to "ساخت به روش دستی",
         "director.personal.method.selector" to "استفاده از انتخاب‌گر",
         "director.personal.edit" to "ویرایش دفتر شخصی",
+        "director.personal.delete" to "حذف دفتر شخصی و اجزای آن",
         "director.source.import" to "ورود فایل‌های منبع به دفتر"
     )
     Card(Modifier.fillMaxWidth()) {
