@@ -189,7 +189,7 @@ object ViewerAccessPolicy {
 
     fun defaultPermissions(): Map<String, Boolean> = permissionLabels.keys.associateWith { key ->
         key !in setOf("copy", "share", "pdf", "appIntro", "ai", "ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription",
-             "director.personal.delete", "director.official.publish", "director.copy", "director.export")
+             "director.official.publish", "director.copy", "director.export")
     }
 
     fun normalizedPermissions(input: Map<String, Boolean>): Map<String, Boolean> {
@@ -206,8 +206,7 @@ object ViewerAccessPolicy {
                 result[child] = result[parent] == true
             }
         }
-        // حذف دفتر شخصی حساس است و هرگز صرفاً با فعال‌بودن مشاهده به ارث نمی‌رسد.
-        if (!input.containsKey("director.personal.delete")) result["director.personal.delete"] = false
+        // مجوز حذف دفتر شخصی به‌صورت پیش‌فرض فعال است؛ مقدار صریح مدیر (true/false) حفظ می‌شود.
         return result
     }
 

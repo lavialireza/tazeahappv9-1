@@ -60,14 +60,20 @@ class ViewerDirectorOfficeDefaultPermissionsTest {
     }
 
     @Test
-    fun deletePermissionIsOptInByDefault() {
-        assertFalse(ViewerPermissionEngine.can(ViewerAccessPolicy.defaultPermissions(), "director.personal.delete"))
-        val legacyPolicy = ViewerAccessPolicy.normalizedPermissions(mapOf("director.personal.view" to true))
-        assertFalse("Delete must not be inherited from view in older policies", ViewerPermissionEngine.can(legacyPolicy, "director.personal.delete"))
+    fun deletePermissionIsEnabledByDefaultAndCanBeDisabledExplicitly() {
+        assertTrue(ViewerPermissionEngine.can(ViewerAccessPolicy.defaultPermissions(), "director.personal.delete"))
+        val defaultedLegacyPolicy = ViewerAccessPolicy.normalizedPermissions(mapOf("director.personal.view" to true))
+        assertTrue("An omitted delete key must use the current enabled default", ViewerPermissionEngine.can(defaultedLegacyPolicy, "director.personal.delete"))
+
+        val disabled = ViewerAccessPolicy.normalizedPermissions(mapOf(
+            "director.personal.view" to true,
+            "director.personal.delete" to false
+        ))
+        assertFalse("Admin must still be able to disable delete", ViewerPermissionEngine.can(disabled, "director.personal.delete"))
     }
 
     @Test
-    fun adminCanExplicitlyGrantDeleteWithoutGrantingAdminOnlyCapabilities() {
+    fun explicitDeleteGrantDoesNotGrantAdminOnlyCapabilities() {
         val granted = ViewerAccessPolicy.normalizedPermissions(mapOf(
             "director.personal.view" to true,
             "director.personal.delete" to true
