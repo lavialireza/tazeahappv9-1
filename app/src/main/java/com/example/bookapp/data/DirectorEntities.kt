@@ -118,6 +118,7 @@ data class DirectorTextSegmentEntity(
     /** Optional link to an existing library section; no existing content is copied or changed. */
     val sectionUid: String? = null,
     val sourceFileId: Long? = null,
+    /** شماره صفحه در فایل واردشده؛ در sourceMethod=SELECTOR به‌ترتیب offset شروع و پایان متن اصلی است. */
     val sourcePageStart: Int? = null,
     val sourcePageEnd: Int? = null,
     /** Automatic provenance from the local library; the source section itself is never modified. */

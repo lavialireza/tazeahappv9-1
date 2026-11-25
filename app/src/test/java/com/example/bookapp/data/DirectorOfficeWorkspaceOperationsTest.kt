@@ -244,7 +244,9 @@ class DirectorOfficeWorkspaceOperationsTest {
             entry = DirectorOfficeSelectorEntry(
                 key = "section-8:0", roleUid = "role-8", roleTitle = "حضرت زینب",
                 sectionUid = "section-8", sectionTitle = "خطاب", text = "متن انتخاب‌شده",
-                sourceContentHash = ContentUid.sha256("متن کامل بخش خطاب")
+                sourceContentHash = ContentUid.sha256("متن کامل بخش خطاب"),
+                sourceTextStartOffset = 4,
+                sourceTextEndOffset = 17
             )
         )
 
@@ -257,6 +259,8 @@ class DirectorOfficeWorkspaceOperationsTest {
         assertEquals("role-8", dao.segmentRows.single().sourceRoleUid)
         assertEquals("خطاب", dao.segmentRows.single().sourceSectionTitle)
         assertEquals(ContentUid.sha256("متن کامل بخش خطاب"), dao.segmentRows.single().sourceContentHash)
+        assertEquals(4, dao.segmentRows.single().sourcePageStart)
+        assertEquals(17, dao.segmentRows.single().sourcePageEnd)
     }
 
     @Test

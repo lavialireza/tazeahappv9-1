@@ -437,6 +437,11 @@ object DirectorOfficeWorkspaceOperations {
             entry.sectionUid.isNotBlank() && entry.text.isNotBlank()) {
             "گزینه انتخاب‌شده برای ساخت نوبت معتبر نیست."
         }
+        require((entry.sourceTextStartOffset == null && entry.sourceTextEndOffset == null) ||
+            (entry.sourceTextStartOffset != null && entry.sourceTextEndOffset != null &&
+                entry.sourceTextStartOffset >= 0 && entry.sourceTextEndOffset > entry.sourceTextStartOffset)) {
+            "بازه انتخاب‌شده از متن معتبر نیست."
+        }
         val plan = dao.plan(planId) ?: error("دفتر پیدا نشد.")
         val version = if (requestedVersionId != null) {
             dao.version(requestedVersionId) ?: error("نسخه انتخاب‌شده پیدا نشد.")
@@ -460,6 +465,31 @@ object DirectorOfficeWorkspaceOperations {
         }
         if (matchingTurn != null) {
             addParticipant(dao, matchingTurn.id, entry.roleUid.trim(), entry.roleTitle.trim(), false)
+            // متن نوبت جمعی فقط یک‌بار ذخیره می‌شود. برای انتخاب بازه‌ای، قطعه خالی
+            // صرفاً منشأ و offset نقش دوم را نگه می‌دارد؛ برای ورودی قدیمیِ کامل، پیوندها ادغام می‌شوند.
+            val existingSegments = dao.textSegments(matchingTurn.id)
+            if (entry.sourceTextStartOffset != null && entry.sourceTextEndOffset != null) {
+                dao.insertTextSegment(DirectorTextSegmentEntity(
+                    turnId = matchingTurn.id,
+                    segmentIndex = (existingSegments.maxOfOrNull { it.segmentIndex } ?: -1) + 1,
+                    text = "",
+                    sectionUid = entry.sectionUid,
+                    sourceTaziehUid = plan.taziehUid,
+                    sourceRoleUid = entry.roleUid.trim(),
+                    sourceSectionTitle = entry.sectionTitle,
+                    sourceSectionUids = entry.sectionUid,
+                    sourceMethod = DirectorOfficeSharedContract.SELECTOR,
+                    sourceContentHash = entry.sourceContentHash,
+                    sourcePageStart = entry.sourceTextStartOffset,
+                    sourcePageEnd = entry.sourceTextEndOffset
+                ))
+            } else {
+                existingSegments.firstOrNull()?.let { first ->
+                    val linkedSources = (first.sourceSectionUids.ifBlank { first.sectionUid.orEmpty() }
+                        .split('\u001F') + entry.sectionUid).filter { it.isNotBlank() }.distinct().joinToString("\u001F")
+                    dao.updateTextSegment(first.copy(sourceSectionUids = linkedSources))
+                }
+            }
             return
         }
         val title = entry.roleTitle.trim()
@@ -482,7 +512,9 @@ object DirectorOfficeWorkspaceOperations {
             sourceTaziehUid = plan.taziehUid, sourceRoleUid = entry.roleUid.trim(),
             sourceSectionTitle = entry.sectionTitle, sourceSectionUids = entry.sectionUid,
             sourceMethod = DirectorOfficeSharedContract.SELECTOR,
-            sourceContentHash = entry.sourceContentHash.ifBlank { ContentUid.sha256(entry.text.trim()) }
+            sourceContentHash = entry.sourceContentHash.ifBlank { ContentUid.sha256(entry.text.trim()) },
+            sourcePageStart = entry.sourceTextStartOffset,
+            sourcePageEnd = entry.sourceTextEndOffset
         ))
         dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
     }
@@ -583,7 +615,8 @@ object DirectorOfficeWorkspaceOperations {
             val sourceUids = mergedSourceSectionUids(current)
             val sourceTitles = mergedSourceTitle(current)
             val sourceRoles = current.mapNotNull { it.sourceRoleUid }.distinct()
-            val originalHash = if (current.size == 1) first.sourceContentHash else ""
+            val originalHash = if (current.size == 1 || first.sourceMethod == DirectorOfficeSharedContract.SELECTOR)
+                first.sourceContentHash else ""
             dao.updateTextSegment(first.copy(
                 segmentIndex = 0,
                 text = text.trim(),
@@ -591,10 +624,14 @@ object DirectorOfficeWorkspaceOperations {
                 sourceRoleUid = sourceRoles.singleOrNull(),
                 sourceSectionTitle = sourceTitles,
                 sourceSectionUids = sourceUids,
-                sourceMethod = if (current.size == 1) first.sourceMethod else "MERGED_EDIT",
+                sourceMethod = if (current.all { it.sourceMethod == DirectorOfficeSharedContract.SELECTOR })
+                    DirectorOfficeSharedContract.SELECTOR
+                else if (current.size == 1) first.sourceMethod else "MERGED_EDIT",
                 sourceContentHash = originalHash
             ))
-            current.drop(1).forEach { dao.deleteTextSegment(it.id) }
+            current.drop(1)
+                .filterNot { it.text.isBlank() && it.sourceMethod == DirectorOfficeSharedContract.SELECTOR && it.sourcePageStart != null && it.sourcePageEnd != null }
+                .forEach { dao.deleteTextSegment(it.id) }
         }
         val after = dao.textSegments(turnId).sortedBy { it.segmentIndex }
         recordHistory(dao, plan, version, turnId, "DIALOGUE", "segments", "UPDATE",

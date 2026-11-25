@@ -29,6 +29,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.example.bookapp.data.*
 import com.example.bookapp.ui.theme.FontChoiceLabels
@@ -83,8 +85,72 @@ internal data class DirectorSelectorItem(
     val key: String,
     val section: SectionEntity,
     val role: RoleEntity,
+    /** متن کامل و تغییرناپذیر بخش منبع؛ انتخاب‌ها با offset به همین متن متصل‌اند. */
     val text: String
 )
+
+private data class DirectorSelectorRangeItem(
+    val source: DirectorSelectorItem,
+    val start: Int,
+    val end: Int,
+    val text: String
+)
+
+private data class DirectorSelectorRangeSelection(
+    val source: DirectorSelectorItem,
+    val start: Int,
+    val end: Int
+)
+
+/** بخش‌های مصرف‌نشده متن هر نقش را با حفظ offset دقیق متن اصلی برمی‌گرداند. */
+private fun availableDirectorSelectorRanges(
+    workspace: DirectorOfficeWorkspaceState?,
+    items: List<DirectorSelectorItem>,
+    roleUid: String?
+): List<DirectorSelectorRangeItem> {
+    if (roleUid.isNullOrBlank()) return emptyList()
+    val usedSegments = workspace?.textSegmentsByTurn?.values.orEmpty().flatten()
+    return items.asSequence().filter { it.role.uid == roleUid }.flatMap { item ->
+        val ranges = mutableListOf<IntRange>()
+        val related = usedSegments.filter { segment ->
+            segment.sourceMethod == DirectorOfficeSharedContract.SELECTOR &&
+                (segment.sectionUid == item.section.uid ||
+                    item.section.uid in segment.sourceSectionUids.split('\u001F'))
+        }
+        var legacySearchFrom = 0
+        related.forEach { segment ->
+            val start = segment.sourcePageStart
+            val end = segment.sourcePageEnd
+            if (start != null && end != null && start >= 0 && end > start && end <= item.text.length) {
+                ranges += start until end
+            } else {
+                // سازگاری با نوبت‌های انتخاب‌گری که در نسخه‌های قبلی به‌صورت یک دیالوگ کامل ذخیره شده‌اند.
+                val found = item.text.indexOf(segment.text, legacySearchFrom)
+                if (found >= 0 && segment.text.isNotBlank()) {
+                    ranges += found until (found + segment.text.length)
+                    legacySearchFrom = found + segment.text.length
+                }
+            }
+        }
+        val merged = ranges.sortedBy { it.first }.fold(mutableListOf<IntRange>()) { acc, range ->
+            val last = acc.lastOrNull()
+            if (last == null || range.first > last.last + 1) acc += range
+            else acc[acc.lastIndex] = last.first..maxOf(last.last, range.last)
+            acc
+        }
+        val result = mutableListOf<DirectorSelectorRangeItem>()
+        var cursor = 0
+        merged.forEach { used ->
+            if (cursor < used.first) {
+                val endExclusive = used.first.coerceAtMost(item.text.length)
+                if (endExclusive > cursor) result += DirectorSelectorRangeItem(item, cursor, endExclusive, item.text.substring(cursor, endExclusive))
+            }
+            cursor = maxOf(cursor, used.last + 1)
+        }
+        if (cursor < item.text.length) result += DirectorSelectorRangeItem(item, cursor, item.text.length, item.text.substring(cursor))
+        result.asSequence().filter { it.text.isNotBlank() }
+    }.toList()
+}
 
 
 private data class BuiltOfficeScreenData(
@@ -271,6 +337,9 @@ fun DirectorOfficeSharedMainScreen(
     var editingTurnRoleMenuExpanded by remember { mutableStateOf(false) }
     var turnNumber by remember { mutableStateOf("1") }
     var turnText by remember { mutableStateOf("") }
+    var selectorRangeEditor by remember { mutableStateOf<DirectorSelectorRangeItem?>(null) }
+    var selectorRangeTextValue by remember { mutableStateOf(TextFieldValue("")) }
+    var selectorRangeSelection by remember { mutableStateOf<DirectorSelectorRangeSelection?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     var stageCues by remember { mutableStateOf(emptyList<DirectorStageCueEntity>()) }
     var showBuildModeDialog by remember { mutableStateOf(false) }
@@ -410,11 +479,9 @@ fun DirectorOfficeSharedMainScreen(
             // ساخت فهرست انتخاب‌گر فقط در همان روش لازم است؛ قبلاً برای هر روش
             // تمام متن مجلس دوباره به پاراگراف‌ها شکسته می‌شد و ساخت دفتر را کند می‌کرد.
             val selectorItems = if (method == DirectorOfficeSharedContract.SELECTOR) {
-                sections.flatMap { section ->
-                    val role = roleById[section.roleId] ?: return@flatMap emptyList()
-                    DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part ->
-                        DirectorSelectorItem("${section.uid}:$index", section, role, part)
-                    }
+                sections.mapNotNull { section ->
+                    val role = roleById[section.roleId] ?: return@mapNotNull null
+                    DirectorSelectorItem(section.uid, section, role, section.content)
                 }
             } else emptyList()
             // فقط یک Snapshot نهایی گرفته می‌شود و همان داده برای پیش‌نمایش و انتخاب‌گر استفاده می‌شود.
@@ -529,11 +596,9 @@ fun DirectorOfficeSharedMainScreen(
                     val sections = libraryRepository.sectionsForRoles(roles.map { it.id })
                         .filter { it.content.isNotBlank() }
                         .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
-                    val items = sections.flatMap { section ->
-                        val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
-                        DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part ->
-                            DirectorSelectorItem("${section.uid}:$index", section, role, part)
-                        }
+                    val items = sections.mapNotNull { section ->
+                        val role = roles.firstOrNull { it.id == section.roleId } ?: return@mapNotNull null
+                        DirectorSelectorItem(section.uid, section, role, section.content)
                     }
                     val currentSnapshot = workspaceState?.takeIf { it.selectedVersion?.id == version.id }
                     val alreadyUsed = currentSnapshot?.let { usedDirectorDialogueKeys(it, items) }
@@ -1433,47 +1498,26 @@ fun DirectorOfficeSharedMainScreen(
                                 roleOptions.forEach { role -> DropdownMenuItem(text = { Text(role.title) }, onClick = { selectorRole = role; selectorRoleMenu = false }) }
                             }
                         }
-                        OutlinedTextField(selectorTurnNumber, { selectorTurnNumber = it.filter(Char::isDigit).take(6) }, label = { Text("شماره نوبت بعدی") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        val availableDialogues = selectorItems.filter { it.role.uid == selectorRole?.uid && it.key !in selectedDialogueKeys }
-                        Text("دیالوگ‌های باقی‌مانده: ${availableDialogues.size}", style = MaterialTheme.typography.labelMedium)
+                        val availableDialogues = availableDirectorSelectorRanges(workspaceState, selectorItems, selectorRole?.uid)
+                        Text("بخش‌های باقی‌مانده متن: ${availableDialogues.size}", style = MaterialTheme.typography.labelMedium)
                         if (availableDialogues.isEmpty()) {
-                            Text("برای این نقش دیالوگ انتخاب‌نشده‌ای باقی نمانده است یا متن نقش بارگذاری نشده است.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("متن انتخاب‌نشده‌ای برای این نقش باقی نمانده است.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Column(Modifier.fillMaxWidth().heightIn(max = 340.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            availableDialogues.forEach { entry ->
+                            availableDialogues.forEach { range ->
                                 Card(Modifier.fillMaxWidth().clickable(enabled = !busy) {
-                                    scope.launch {
-                                        busy = true
-                                        try {
-                                            val version = selectedVersion!!
-                                            val number = selectorTurnNumber.toIntOrNull()
-                                                ?: ((dao.turns(version.id).maxOfOrNull { it.turnNumber } ?: 0) + 1)
-                                            workspaceRepository.addSelectorDialogue(
-                                                planId = selectedPlan!!.id,
-                                                entry = DirectorOfficeSelectorEntry(
-                                                    key = entry.key,
-                                                    roleUid = entry.role.uid,
-                                                    roleTitle = entry.role.title,
-                                                    sectionUid = entry.section.uid,
-                                                    sectionTitle = entry.section.title,
-                                                    text = entry.text,
-                                                    sourceContentHash = ContentUid.sha256(entry.section.content)
-                                                ),
-                                                turnNumber = number,
-                                                versionId = version.id
-                                            )
-                                            selectedDialogueKeys = selectedDialogueKeys + entry.key
-                                            selectorTurnNumber = (number + 1).toString()
-                                            loadWorkspaceIntoScreen(selectedPlan!!.id, version.id)
-                                            message = "دیالوگ نقش «${entry.role.title}» در نوبت $number ثبت شد."
-                                        } catch (e: Exception) { message = "ثبت دیالوگ ناموفق بود: ${e.message}" }
-                                        finally { busy = false }
-                                    }
+                                    selectedRole = range.source.role
+                                    turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                                    turnText = ""
+                                    selectorRangeEditor = range
+                                    selectorRangeTextValue = TextFieldValue(range.text, selection = TextRange(0, 0))
+                                    selectorRangeSelection = null
+                                    showAddTurnDialog = true
                                 }) {
                                     Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                                        Text("${entry.role.title} • ${entry.section.title}", fontWeight = FontWeight.SemiBold)
-                                        Text(entry.text, style = MaterialTheme.typography.bodySmall)
-                                        Text("انتخاب و ثبت در دفتر", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                                        Text("${range.source.role.title} • ${range.source.section.title}", fontWeight = FontWeight.SemiBold)
+                                        Text(range.text, style = MaterialTheme.typography.bodySmall)
+                                        Text("انتخاب ابتدا و انتها و ثبت به‌عنوان نوبت", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                                     }
                                 }
                             }
@@ -1797,6 +1841,9 @@ fun DirectorOfficeSharedMainScreen(
                             selectedRole = selectedRole?.let { old -> roleOptions.firstOrNull { it.uid == old.uid } } ?: roleOptions.firstOrNull()
                             turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
                             turnText = ""
+                            selectorRangeEditor = null
+                            selectorRangeSelection = null
+                            selectorRangeTextValue = TextFieldValue("")
                             showAddTurnDialog = true
                         }
                     ) {
@@ -1928,9 +1975,9 @@ fun DirectorOfficeSharedMainScreen(
                             selectorRole = roles.firstOrNull()
                             selectorTurnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
                             selectedDialogueKeys = emptySet()
-                            selectorItems = sections.flatMap { section ->
-                                val role = roles.firstOrNull { it.id == section.roleId } ?: return@flatMap emptyList()
-                                DirectorOfficeWorkspaceUseCases.splitDialogues(section.content).mapIndexed { index, part -> DirectorSelectorItem("${section.uid}:$index", section, role, part) }
+                            selectorItems = sections.mapNotNull { section ->
+                                val role = roles.firstOrNull { it.id == section.roleId } ?: return@mapNotNull null
+                                DirectorSelectorItem(section.uid, section, role, section.content)
                             }
                             if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR) {
                                 selectedDialogueKeys = usedDirectorDialogueKeys(dao, version.id, selectorItems)
@@ -2102,7 +2149,10 @@ fun DirectorOfficeSharedMainScreen(
             onDismissRequest = { if (!busy) showAddTurnDialog = false },
             title = { Text("افزودن نوبت به ${selectedPlan?.title.orEmpty()}") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
                         OutlinedTextField(
                             value = selectedRole?.title ?: "انتخاب نقش",
@@ -2113,41 +2163,152 @@ fun DirectorOfficeSharedMainScreen(
                             enabled = roleOptions.isNotEmpty()
                         )
                         ExposedDropdownMenu(expanded = roleMenuExpanded, onDismissRequest = { roleMenuExpanded = false }) {
-                            roleOptions.forEach { role -> DropdownMenuItem(text = { Text(role.title) }, onClick = { selectedRole = role; roleMenuExpanded = false }) }
+                            roleOptions.forEach { role ->
+                                DropdownMenuItem(text = { Text(role.title) }, onClick = {
+                                    selectedRole = role
+                                    roleMenuExpanded = false
+                                    selectorRangeEditor = null
+                                    selectorRangeSelection = null
+                                    selectorRangeTextValue = TextFieldValue("")
+                                    turnText = ""
+                                    turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                                })
+                            }
                         }
                     }
-                    DirectorOfficeTurnInputFields(
-                        number = turnNumber,
-                        onNumberChange = { turnNumber = it },
-                        text = turnText,
-                        onTextChange = { turnText = it },
-                        textLabel = "متن نوبت",
-                        textMinHeight = 130,
-                        textMaxHeight = 240
+                    OutlinedTextField(
+                        value = turnNumber,
+                        onValueChange = { turnNumber = it.filter(Char::isDigit).take(6) },
+                        label = { Text("شماره نوبت (پیشنهادی و قابل ویرایش)") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true
                     )
+                    if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR) {
+                        Text("متن‌های باقی‌مانده نقش ${selectedRole?.title.orEmpty()}", fontWeight = FontWeight.SemiBold)
+                        Text("یک بخش را باز کنید، سپس ابتدا و انتهای قسمت موردنظر را از متن انتخاب کنید. قسمت‌های ثبت‌شده دیگر در انتخاب‌های بعدی نمایش داده نمی‌شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val availableRanges = availableDirectorSelectorRanges(workspaceState, selectorItems, selectedRole?.uid)
+                        if (availableRanges.isEmpty()) {
+                            Text("متن انتخاب‌نشده‌ای برای این نقش باقی نمانده است.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            Column(Modifier.fillMaxWidth().heightIn(max = 190.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                availableRanges.forEachIndexed { index, range ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) {
+                                            selectorRangeEditor = range
+                                            selectorRangeTextValue = TextFieldValue(range.text, selection = TextRange(0, 0))
+                                            selectorRangeSelection = null
+                                        },
+                                        colors = CardDefaults.cardColors(containerColor = if (selectorRangeEditor == range) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)
+                                    ) {
+                                        Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                                            Text("بخش ${index + 1} • ${range.source.section.title}", fontWeight = FontWeight.SemiBold)
+                                            Text(range.text, style = MaterialTheme.typography.bodySmall, maxLines = 4)
+                                            Text("برای انتخاب ابتدا و انتها لمس کنید", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        selectorRangeEditor?.let { range ->
+                            Text("متن منبع؛ برای انتخاب، روی متن نگه دارید و ابتدا و انتها را مشخص کنید:", style = MaterialTheme.typography.labelMedium)
+                            OutlinedTextField(
+                                value = selectorRangeTextValue,
+                                onValueChange = { selectorRangeTextValue = it },
+                                readOnly = true,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp, max = 250.dp),
+                                textStyle = MaterialTheme.typography.bodyMedium,
+                                label = { Text(range.source.section.title) }
+                            )
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = selectorRangeTextValue.selection.min < selectorRangeTextValue.selection.max,
+                                onClick = {
+                                    val rawStart = selectorRangeTextValue.selection.min.coerceIn(0, range.text.length)
+                                    val rawEnd = selectorRangeTextValue.selection.max.coerceIn(0, range.text.length)
+                                    var start = rawStart
+                                    var end = rawEnd
+                                    while (start < end && range.text[start].isWhitespace()) start++
+                                    while (end > start && range.text[end - 1].isWhitespace()) end--
+                                    if (end > start) {
+                                        turnText = range.text.substring(start, end)
+                                        selectorRangeSelection = DirectorSelectorRangeSelection(
+                                            source = range.source,
+                                            start = range.start + start,
+                                            end = range.start + end
+                                        )
+                                    }
+                                }
+                            ) { Text("ثبت قسمت انتخاب‌شده به‌عنوان متن نوبت") }
+                        }
+                        DirectorOfficeDialogueTextField(
+                            value = turnText,
+                            onValueChange = { turnText = it },
+                            label = "متن نوبت انتخاب‌شده (قابل ویرایش)",
+                            minHeight = 110,
+                            maxHeight = 220
+                        )
+                    } else {
+                        DirectorOfficeTurnInputFields(
+                            number = turnNumber,
+                            onNumberChange = { turnNumber = it },
+                            text = turnText,
+                            onTextChange = { turnText = it },
+                            textLabel = "متن نوبت",
+                            textMinHeight = 130,
+                            textMaxHeight = 240
+                        )
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
-                    enabled = !busy && selectedRole != null && (turnNumber.toIntOrNull() ?: 0) > 0 && turnText.isNotBlank(),
+                    enabled = !busy && selectedRole != null && (turnNumber.toIntOrNull() ?: 0) > 0 && turnText.isNotBlank() &&
+                        (selectedBuildMode != DirectorOfficeSharedContract.SELECTOR || selectorRangeSelection != null),
                     onClick = {
                         scope.launch {
                             busy = true
                             try {
                                 val version = selectedVersion ?: error("نسخه پیش‌نویس پیدا نشد.")
                                 val role = selectedRole ?: error("نقش انتخاب نشده است.")
-                                workspaceRepository.addRoleLinkedTurn(
-                                    versionId = version.id,
-                                    turnNumber = turnNumber.toInt(),
-                                    roleUid = role.uid,
-                                    roleTitle = role.title,
-                                    text = turnText.trim()
-                                )
+                                val number = turnNumber.toInt()
+                                if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR) {
+                                    val selectedRange = selectorRangeSelection ?: error("ابتدا بخشی از متن نقش را انتخاب کنید.")
+                                    val source = selectedRange.source
+                                    require(source.role.uid == role.uid) { "نقش متن انتخاب‌شده با نقش نوبت یکسان نیست." }
+                                    workspaceRepository.addSelectorDialogue(
+                                        planId = selectedPlan!!.id,
+                                        entry = DirectorOfficeSelectorEntry(
+                                            key = "${source.section.uid}:${selectedRange.start}:${selectedRange.end}",
+                                            roleUid = role.uid,
+                                            roleTitle = role.title,
+                                            sectionUid = source.section.uid,
+                                            sectionTitle = source.section.title,
+                                            text = turnText.trim(),
+                                            sourceContentHash = ContentUid.sha256(source.section.content),
+                                            sourceTextStartOffset = selectedRange.start,
+                                            sourceTextEndOffset = selectedRange.end
+                                        ),
+                                        turnNumber = number,
+                                        versionId = version.id
+                                    )
+                                } else {
+                                    workspaceRepository.addRoleLinkedTurn(
+                                        versionId = version.id,
+                                        turnNumber = number,
+                                        roleUid = role.uid,
+                                        roleTitle = role.title,
+                                        text = turnText.trim()
+                                    )
+                                }
                                 loadWorkspaceIntoScreen(selectedPlan!!.id, version.id)
-                                turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                                turnNumber = (number + 1).toString()
                                 turnText = ""
+                                selectorRangeEditor = null
+                                selectorRangeSelection = null
+                                selectorRangeTextValue = TextFieldValue("")
                                 showAddTurnDialog = false
-                                message = "نوبت جدید به انتهای دفتر اضافه و ذخیره شد."
+                                message = if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR)
+                                    "قسمت انتخاب‌شده از نقش «${role.title}» در نوبت $number ثبت شد؛ این قسمت از انتخاب‌های بعدی کنار گذاشته شد."
+                                else "نوبت جدید به انتهای دفتر اضافه و ذخیره شد."
                             } catch (e: Exception) { message = "افزودن نوبت ناموفق بود: ${e.message}" }
                             finally { busy = false }
                         }

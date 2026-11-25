@@ -33,7 +33,7 @@ object DirectorOfficeSharedContract {
         ),
         DirectorOfficeBuildMethod(
             SELECTOR, "انتخاب‌گر", "director.personal.method.selector", true,
-            "انتخاب با معین‌البکا؛ نقش و سپس دیالوگ موردنظر را برای هر نوبت انتخاب می‌کنید."
+            "انتخاب با معین‌البکا؛ نقش را تعیین می‌کنید و با انتخاب ابتدا و انتهای متن، هر قسمت را به یک نوبت اختصاص می‌دهید؛ قسمت‌های ثبت‌شده دوباره پیشنهاد نمی‌شوند."
         )
     )
 
@@ -79,6 +79,9 @@ data class DirectorOfficeSelectorEntry(
     val sectionUid: String,
     val sectionTitle: String,
     val text: String,
-    /** هش متن اصلی بخش برای کنترل یکپارچگی و ردیابی تغییرات منبع. */
-    val sourceContentHash: String = ""
+    /** هش متن کامل بخش اصلی برای ردیابی منبع؛ متن کتابخانه هرگز تغییر نمی‌کند. */
+    val sourceContentHash: String = "",
+    /** بازه انتخاب‌شده در متن کامل بخش؛ انتهای بازه exclusive است. */
+    val sourceTextStartOffset: Int? = null,
+    val sourceTextEndOffset: Int? = null
 )
