@@ -26,6 +26,15 @@ class DirectorOfficeWorkspaceUseCasesTest {
     @Test fun ignoresUnnumberedTextForNumberedMethod() {
         assertTrue(DirectorOfficeWorkspaceUseCases.parseNumberedDialogues("متن بدون شماره").isEmpty())
     }
+
+    @Test fun parsesDialogueNumberLabelsWithExplicitNumberWord() {
+        assertEquals(
+            listOf(1 to "متن اول", 2 to "متن دوم", 3 to "متن سوم"),
+            DirectorOfficeWorkspaceUseCases.parseNumberedDialogues(
+                "دیالوگ شماره ۱: متن اول\nشماره دیالوگ ۲- متن دوم\nنوبت شماره ۳: متن سوم"
+            )
+        )
+    }
     @Test fun allowsEditingDraftVersionOfLegacyPublishedPlan() {
         val plan = DirectorPlanEntity(
             uid = "plan", taziehUid = "tazieh", title = "مجلس",

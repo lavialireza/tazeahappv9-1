@@ -920,21 +920,19 @@ fun DirectorOfficeSharedMainScreen(
                                                     version = newVersion,
                                                     method = selectedBuildMode
                                                 )
-                                                val createdRoles = withContext(Dispatchers.IO) { libraryRepository.rolesFor(target) }
-                                                roleOptions = createdRoles
-                                                selectedRole = createdRoles.firstOrNull()
+                                                // buildNewOfficeWithMethod نقش‌ها و Snapshot نهایی را قبلاً در IO بارگذاری و اعمال کرده است؛
+                                                // از خواندن دوباره همان داده‌ها و اجرای مجدد پرس‌وجوهای سنگین جلوگیری می‌کنیم.
                                                 selectedPlan = newPlan
                                                 selectedVersion = newVersion
                                                 planVersions = listOf(newVersion)
                                                 sources = emptyList()
-                                                loadWorkspaceIntoScreen(newPlanId, newVersionId)
-                                                loadPlans(reset = true)
+                                                plans = listOf(newPlan) + plans.filterNot { it.id == newPlanId }
                                                 showVersionManagement = false
                                                 showVersionsDialog = false
                                                 screenStage = DirectorOfficeScreenStage.SELECTED_OFFICE
                                                 turnNumber = "1"
                                                 turnText = ""
-                                                message = "دفتر «${newPlan.title}» به‌صورت پیش‌نویس خام ساخته شد. اکنون می‌توانید نوبت اول را اضافه کنید. $buildSummary"
+                                                message = "دفتر «${newPlan.title}» با روش انتخاب‌شده ساخته شد. $buildSummary"
                                             } catch (e: Exception) {
                                                 createdPlanId?.let { runCatching { dao.softDeletePlan(it, System.currentTimeMillis()) } }
                                                 message = "ساخت دفتر ناموفق بود: ${e.message ?: "خطای نامشخص"}"
@@ -1031,7 +1029,7 @@ fun DirectorOfficeSharedMainScreen(
                                         if (chosenVersion != null && selectedBuildMode !in setOf(DirectorOfficeSharedContract.SELECTOR, DirectorOfficeSharedContract.MANUAL) &&
                                             (isAdmin || canCreatePersonal || canEditPersonal) && !hasStoredDialogue && targetTazieh != null) {
                                             val imported = withContext(Dispatchers.IO) {
-                                                libraryRepository.importExistingText(dao, transactionRunner, chosenVersion.id, targetTazieh.id)
+                                                libraryRepository.importExistingText(dao, transactionRunner, chosenVersion.id, targetTazieh.id, selectedBuildMode)
                                             }
                                             if (imported.sectionCount > 0) {
                                                 loadedWorkspace = withContext(Dispatchers.IO) {
@@ -1081,7 +1079,20 @@ fun DirectorOfficeSharedMainScreen(
                                 Spacer(Modifier.width(4.dp))
                                 Text("بازگشت به فهرست دفاتر")
                             }
-                            Text(selectedPlan?.title ?: "دفتر معین‌البکاء", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(selectedPlan?.title ?: "دفتر معین‌البکاء", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                if (isAdmin || canDeletePersonal) {
+                                    TextButton(onClick = { selectedPlan?.let { deletePlanCandidate = it } }) {
+                                        Icon(Icons.Default.Delete, contentDescription = null)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("حذف دفتر")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1295,17 +1306,24 @@ fun DirectorOfficeSharedMainScreen(
                                                     try {
                                                         val plan = selectedPlan!!
                                                         val version = selectedVersion!!
-                                                        val tazieh = libraryRepository.taziehByUid(plan.taziehUid)
-                                                        if (tazieh == null) {
+                                                        val importResult = withContext(Dispatchers.IO) {
+                                                            val tazieh = libraryRepository.taziehByUid(plan.taziehUid)
+                                                                ?: return@withContext null
+                                                            val result = libraryRepository.importExistingText(
+                                                                dao, transactionRunner, version.id, tazieh.id, selectedBuildMode
+                                                            )
+                                                            val workspace = workspaceRepository.loadWorkspace(plan.id, version.id)
+                                                            result to workspace
+                                                        }
+                                                        if (importResult == null) {
                                                             message = "مجلس مرتبط با این دفتر در کتابخانه پیدا نشد."
                                                         } else {
-                                                            val result = libraryRepository.importExistingText(dao, transactionRunner, version.id, tazieh.id)
-                                                            turns = dao.turns(version.id)
-                                                            previewText = buildDirectorVersionPreview(dao, version.id)
+                                                            applyWorkspaceToScreen(importResult.second)
+                                                            val result = importResult.first
                                                             message = if (result.sectionCount > 0) {
                                                                 "${result.sectionCount} بخش از متن‌های داخلی ${result.roleCount} نقش در ${result.turnCount} نوبت به دفتر منتقل شد."
                                                             } else {
-                                                                "در نقش‌های این مجلس متن ذخیره‌شده‌ای برای انتقال پیدا نشد."
+                                                                "دیالوگ شماره‌داری برای انتقال پیدا نشد؛ متن کامل نقش‌ها وارد نشد. شماره‌گذاری متن منبع را بررسی کنید."
                                                             }
                                                             refresh++
                                                         }
@@ -2136,7 +2154,7 @@ fun DirectorOfficeSharedMainScreen(
             title = { Text("حذف دفتر معین‌البکا") },
             text = { Text("دفتر «${candidate.title}» از فهرست فعال خارج می‌شود. فایل‌های منبع و متن اصلی مجلس حذف نمی‌شوند. ادامه می‌دهید؟") },
             confirmButton = {
-                TextButton(enabled = isAdmin || canEditPersonal, onClick = {
+                TextButton(enabled = isAdmin || canDeletePersonal, onClick = {
                     scope.launch {
                         try {
                             dao.softDeletePlan(candidate.id, System.currentTimeMillis())

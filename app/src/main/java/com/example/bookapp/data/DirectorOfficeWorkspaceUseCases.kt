@@ -39,7 +39,10 @@ object DirectorOfficeWorkspaceUseCases {
      */
     fun parseNumberedDialogues(content: String): List<Pair<Int, String>> {
         if (content.isBlank()) return emptyList()
-        val heading = Regex("^\\s*(?:(?:دیالوگ|نوبت|شماره)\\s*)?([0-9۰-۹٠-٩]{1,6})(?:\\s*[-–—ـ.)،:：]\\s*|\\s+|$)(.*)$")
+        val heading = Regex(
+            "^\\s*(?:(?:دیالوگ|نوبت)\\s*(?:شماره\\s*)?|شماره\\s*(?:دیالوگ\\s*)?)?" +
+                "([0-9۰-۹٠-٩]{1,6})(?:\\s*[-–—ـ.)،:：]\\s*|\\s+|$)(.*)$"
+        )
         val result = mutableListOf<Pair<Int, String>>()
         var currentNumber: Int? = null
         val body = StringBuilder()
