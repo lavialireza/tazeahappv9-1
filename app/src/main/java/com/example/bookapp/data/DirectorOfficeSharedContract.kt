@@ -21,7 +21,7 @@ object DirectorOfficeSharedContract {
     val buildMethods: List<DirectorOfficeBuildMethod> = listOf(
         DirectorOfficeBuildMethod(
             ROLE_NUMBERED, "شماره‌محور", "director.personal.method.number", true,
-            "انتخاب بر اساس شماره دیالوگ؛ شماره تکراری در یک نقش خطاست و نوبت هم‌شماره میان چند نقش فقط با متن کاملاً یکسان، جمعی ثبت می‌شود."
+            "تشخیص نوبت‌ها بر اساس شماره دیالوگ؛ متن‌های هم‌شماره و یکسان به‌صورت جمعی ثبت می‌شوند و متن‌های متفاوت جداگانه با هشدار برای بازبینی حفظ می‌شوند؛ تکرار شماره در یک نقش همچنان نیازمند اصلاح است."
         ),
         DirectorOfficeBuildMethod(
             FULL_TEXT, "متن کامل", "director.personal.method.fulltext", true,

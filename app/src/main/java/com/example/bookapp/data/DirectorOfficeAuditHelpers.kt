@@ -289,8 +289,8 @@ object DirectorOfficeQualityChecker {
             }
         }
 
-        // A shared/collective number must be represented by one turn row with multiple participants,
-        // never by several independent turn rows carrying the same number.
+        // شماره همسان با متن متفاوت می‌تواند در چند ردیف مستقل باقی بماند؛
+        // این وضعیت هشدار بازبینی است و نباید مانع بازشدن یا ویرایش دفتر شود.
         workspace.turns.groupBy { it.turnNumber }.filterKeys { it > 0 }.values
             .filter { it.size > 1 }.forEach { duplicateRows ->
                 val bodies = duplicateRows.map { duplicate ->
@@ -300,15 +300,15 @@ object DirectorOfficeQualityChecker {
                 }
                 duplicateRows.forEach { duplicate ->
                     issues += DirectorOfficeQualityIssue(
-                        "DUPLICATE_TURN_NUMBER", DirectorOfficeQualitySeverity.ERROR,
-                        "شماره ${duplicate.turnNumber} در چند نوبت مستقل ثبت شده است؛ نوبت‌های جمعی باید یک نوبت مشترک با چند نقش باشند.",
+                        "DUPLICATE_TURN_NUMBER", DirectorOfficeQualitySeverity.WARNING,
+                        "شماره ${duplicate.turnNumber} در چند نوبت مستقل ثبت شده است؛ اگر متن‌ها متفاوت‌اند جداگانه حفظ می‌شوند و اگر یکسان‌اند بهتر است به نوبت جمعی تبدیل شوند.",
                         duplicate.id, duplicate.turnNumber
                     )
                 }
                 if (bodies.filter { it.isNotBlank() }.distinct().size > 1) {
                     duplicateRows.forEach { duplicate ->
                         issues += DirectorOfficeQualityIssue(
-                            "COLLECTIVE_TEXT_MISMATCH", DirectorOfficeQualitySeverity.ERROR,
+                            "COLLECTIVE_TEXT_MISMATCH", DirectorOfficeQualitySeverity.WARNING,
                             "متن‌های نوبت‌های هم‌شماره ${duplicate.turnNumber} یکسان نیستند؛ این تعارض باید توسط مدیر بررسی شود.",
                             duplicate.id, duplicate.turnNumber
                         )

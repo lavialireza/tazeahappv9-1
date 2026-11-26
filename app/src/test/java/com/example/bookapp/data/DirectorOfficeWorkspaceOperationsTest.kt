@@ -31,6 +31,26 @@ class DirectorOfficeWorkspaceOperationsTest {
     }
 
     @Test
+    fun `inserting at an occupied number is allowed even when the same role already owns that number`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 50, sequenceIndex = 0, title = "نوبت قبلی")
+            turnRows[2] = DirectorTurnEntity(id = 2, versionId = 20, turnNumber = 51, sequenceIndex = 1, title = "نوبت بعدی")
+            participantRows += DirectorParticipantEntity(id = 1, turnId = 1, roleUid = "role-a", roleTitle = "امام حسین")
+            participantRows += DirectorParticipantEntity(id = 2, turnId = 2, roleUid = "role-b", roleTitle = "حضرت زینب")
+        }
+
+        DirectorOfficeWorkspaceOperations.insertTurnAtNumber(
+            dao = dao, planId = 10, versionId = 20, turnNumber = 50,
+            roleUid = "role-a", roleTitle = "امام حسین", text = "نوبت جاافتاده"
+        )
+
+        val ordered = dao.turnRows.values.sortedBy { it.sequenceIndex }
+        assertEquals(listOf(50, 51, 52), ordered.map { it.turnNumber })
+        assertEquals(listOf("نوبت جاافتاده", "نوبت قبلی", "نوبت بعدی"), ordered.map { it.title })
+        assertEquals(2, dao.participantRows.count { it.roleUid == "role-a" })
+    }
+
+    @Test
     fun `role linked turn creation uses shared operation and keeps section link`() = runTest {
         val dao = FakeWorkspaceDao()
         DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(

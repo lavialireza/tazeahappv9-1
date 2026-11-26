@@ -214,8 +214,8 @@ class DirectorOfficeQualityCheckerTest {
             )
         )
         val issues = DirectorOfficeQualityChecker.check(state, expectedSourceRoles = mapOf("role-a" to "نقش اول", "role-b" to "نقش دوم"))
-        assertEquals(2, issues.count { it.code == "DUPLICATE_TURN_NUMBER" })
-        assertEquals(2, issues.count { it.code == "COLLECTIVE_TEXT_MISMATCH" })
+        assertEquals(2, issues.count { it.code == "DUPLICATE_TURN_NUMBER" && it.severity == DirectorOfficeQualitySeverity.WARNING })
+        assertEquals(2, issues.count { it.code == "COLLECTIVE_TEXT_MISMATCH" && it.severity == DirectorOfficeQualitySeverity.WARNING })
     }
 
     @Test

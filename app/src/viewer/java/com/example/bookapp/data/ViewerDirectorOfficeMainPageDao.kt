@@ -167,7 +167,9 @@ class ViewerDirectorOfficeMainPageDao(
         val collectiveMarkerOnly = ViewerPermissionEngine.can(permissions, "director.personal.create") &&
             value.copy(turnType = current.turnType) == current &&
             value.turnType == DirectorTurnEntity.TYPE_COLLECTIVE
-        require(ViewerPermissionEngine.can(permissions, "director.personal.edit") || collectiveMarkerOnly) {
+        val numberShiftForInsertion = ViewerPermissionEngine.can(permissions, "director.personal.create") &&
+            value.copy(turnNumber = current.turnNumber) == current
+        require(ViewerPermissionEngine.can(permissions, "director.personal.edit") || collectiveMarkerOnly || numberShiftForInsertion) {
             "برای ویرایش نوبت دفتر، مجوز ویرایش لازم است."
         }
         delegate.updateTurn(value)
@@ -180,7 +182,9 @@ class ViewerDirectorOfficeMainPageDao(
     }
 
     override suspend fun moveTurn(turnId: Long, sequenceIndex: Int) {
-        requireEdit()
+        // درج نوبت میان نوبت‌ها بخشی از عملیات ایجاد است و برای جابه‌جایی
+        // داخلی sequenceIndex نباید مجوز مستقل ویرایش لازم داشته باشد.
+        requireAny("director.personal.create", "director.personal.edit")
         requireWritableTurn(turnId)
         // شاخص منفی فقط برای جابه‌جایی موقت داخل تراکنش استفاده می‌شود تا
         // قید یکتای (versionId, sequenceIndex) هنگام درج میان نوبت‌ها برخورد نکند.

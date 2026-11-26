@@ -207,14 +207,12 @@ class RoomDirectorOfficeLibraryRepository(
             "شماره یا متن یکی از دیالوگ‌ها ناقص است؛ ورود اطلاعات متوقف شد."
         }
 
+        // شماره همسان با متن متفاوت خطای توقف نیست: هر متن به‌صورت نوبت مستقل
+        // با همان شماره ذخیره می‌شود و هشدار پایدار برای بازبینی مدیر ثبت می‌گردد.
         val conflictingNumbers = entries.groupBy { it.turnNumber }
             .filterValues { group ->
                 group.map { DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.text) }.distinct().size > 1
-            }
-        require(conflictingNumbers.isEmpty()) {
-            val details = conflictingNumbers.keys.sorted().joinToString("، ")
-            "متن دیالوگ‌های شماره $details یکسان نیست؛ برای جلوگیری از ساخت نوبت اشتباه، ورود اطلاعات متوقف شد."
-        }
+            }.keys
 
         transactionRunner.run {
             val existingTurns = dao.turns(versionId)
@@ -226,43 +224,52 @@ class RoomDirectorOfficeLibraryRepository(
             existingSegments.forEach { dao.deleteTextSegment(it.id) }
             existingTurns.forEach { dao.deleteTurn(it.id) }
 
-            val groups = entries.groupBy { it.turnNumber }.toSortedMap()
-            groups.entries.forEachIndexed { sequence, (number, group) ->
-                val distinctRoles = group.map { it.role }.distinctBy { it.uid }
-                val turnId = dao.insertTurn(DirectorTurnEntity(
-                    versionId = versionId,
-                    turnNumber = number,
-                    sequenceIndex = sequence,
-                    turnType = if (distinctRoles.size > 1) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
-                    title = if (distinctRoles.size > 1) distinctRoles.joinToString("، ") { it.title } else distinctRoles.first().title,
-                    notes = ""
-                ))
-                distinctRoles.forEachIndexed { index, role ->
-                    dao.insertParticipant(DirectorParticipantEntity(
-                        turnId = turnId, roleUid = role.uid, roleTitle = role.title,
-                        orderIndex = index, isLead = index == 0
+            var sequence = 0
+            entries.groupBy { it.turnNumber }.toSortedMap().forEach { (number, sameNumberEntries) ->
+                val textGroups = sameNumberEntries.groupBy {
+                    DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.text)
+                }.values
+                textGroups.forEach { group ->
+                    val distinctRoles = group.map { it.role }.distinctBy { it.uid }
+                    val hasMismatch = number in conflictingNumbers
+                    val warning = if (hasMismatch)
+                        "هشدار: متن این نوبت با متن نوبت‌های هم‌شماره یکسان نیست؛ متن‌ها جداگانه حفظ شده‌اند و نیازمند بازبینی معین‌البکاء هستند."
+                    else ""
+                    val turnId = dao.insertTurn(DirectorTurnEntity(
+                        versionId = versionId,
+                        turnNumber = number,
+                        sequenceIndex = sequence++,
+                        turnType = if (distinctRoles.size > 1) DirectorTurnEntity.TYPE_COLLECTIVE else DirectorTurnEntity.TYPE_NORMAL,
+                        title = if (distinctRoles.size > 1) distinctRoles.joinToString("، ") { it.title } else distinctRoles.first().title,
+                        notes = warning
+                    ))
+                    distinctRoles.forEachIndexed { index, role ->
+                        dao.insertParticipant(DirectorParticipantEntity(
+                            turnId = turnId, roleUid = role.uid, roleTitle = role.title,
+                            orderIndex = index, isLead = index == 0
+                        ))
+                    }
+                    val sourceSections = group.map { it.section }.distinctBy { it.uid }
+                    val sourceRoles = group.map { it.role }.distinctBy { it.uid }
+                    dao.insertTextSegment(DirectorTextSegmentEntity(
+                        turnId = turnId,
+                        segmentIndex = 0,
+                        text = group.first().text,
+                        sectionUid = sourceSections.singleOrNull()?.uid,
+                        sourceTaziehUid = tazieh.uid,
+                        sourceRoleUid = sourceRoles.singleOrNull()?.uid,
+                        sourceSectionTitle = sourceSections.map { it.title }.filter { it.isNotBlank() }.distinct().joinToString("، "),
+                        sourceSectionUids = sourceSections.joinToString("\u001F") { it.uid },
+                        sourceMethod = "LIBRARY_IMPORT",
+                        sourceContentHash = ContentUid.sha256(group.joinToString("\n") { it.text })
                     ))
                 }
-                val sourceSections = group.map { it.section }.distinctBy { it.uid }
-                val sourceRoles = group.map { it.role }.distinctBy { it.uid }
-                dao.insertTextSegment(DirectorTextSegmentEntity(
-                    turnId = turnId,
-                    segmentIndex = 0,
-                    text = group.first().text,
-                    sectionUid = sourceSections.singleOrNull()?.uid,
-                    sourceTaziehUid = tazieh.uid,
-                    sourceRoleUid = sourceRoles.singleOrNull()?.uid,
-                    sourceSectionTitle = sourceSections.map { it.title }.filter { it.isNotBlank() }.distinct().joinToString("، "),
-                    sourceSectionUids = sourceSections.joinToString("\u001F") { it.uid },
-                    sourceMethod = "LIBRARY_IMPORT",
-                    sourceContentHash = ContentUid.sha256(group.joinToString("\n") { it.text })
-                ))
             }
         }
         return DirectorLibraryImportResult(
             roleCount = roles.size,
             sectionCount = entries.map { it.section.uid }.distinct().size,
-            turnCount = entries.map { it.turnNumber }.distinct().size,
+            turnCount = entries.groupBy { it.turnNumber }.values.sumOf { sameNumber -> sameNumber.map { DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.text) }.distinct().size },
             usedDialogueOrder = bestEntries.isNotEmpty()
         )
     }

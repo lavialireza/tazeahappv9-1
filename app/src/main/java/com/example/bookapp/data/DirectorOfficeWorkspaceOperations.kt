@@ -371,16 +371,18 @@ object DirectorOfficeWorkspaceOperations {
             repeatedRole = dao.participants(otherTurn.id).firstOrNull { it.roleUid in currentRoleUids }
             if (repeatedRole != null) break
         }
-        require(repeatedRole == null) {
-            "شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(value.turnNumber)} برای نقش «${repeatedRole?.roleTitle.orEmpty()}» قبلاً ثبت شده است."
-        }
+        // امکان ثبت موقت شماره اصلاحی حتی در صورت برخورد با شماره‌ای دیگر لازم است؛
+        // معین‌البکاء می‌تواند نوبت‌های متعارض را یکی‌یکی اصلاح کند. کنترل کیفیت
+        // همچنان تکرار همان نقش/شماره را به‌عنوان خطای قابل پیگیری گزارش می‌کند.
         val currentText = DirectorOfficeWorkspaceUseCases.normalizeDialogueText(sharedTurnText(dao, current.id))
         val hasTextConflict = sameNumberTurns.any { other ->
             DirectorOfficeWorkspaceUseCases.normalizeDialogueText(sharedTurnText(dao, other.id)) != currentText
         }
-        val warning = if (hasTextConflict)
-            "هشدار: متن این نوبت با متن شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(value.turnNumber)} در نقش‌های دیگر یکسان نیست؛ این متن جداگانه حفظ شده و باید توسط کارگردان بررسی و اصلاح شود."
-        else value.notes
+        val warning = when {
+            repeatedRole != null -> "هشدار: شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(value.turnNumber)} برای نقش «${repeatedRole?.roleTitle.orEmpty()}» نیز ثبت شده است؛ شماره‌ها را بازبینی و اصلاح کنید."
+            hasTextConflict -> "هشدار: متن این نوبت با متن شماره ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(value.turnNumber)} در نقش‌های دیگر یکسان نیست؛ این متن جداگانه حفظ شده و باید توسط کارگردان بررسی و اصلاح شود."
+            else -> value.notes
+        }
         dao.updateTurn(value.copy(notes = warning))
         val version = dao.version(value.versionId) ?: error("نسخه دفتر پیدا نشد.")
         if (current.turnNumber != value.turnNumber) {
@@ -686,9 +688,8 @@ object DirectorOfficeWorkspaceOperations {
         require(version.planId == planId) { "نسخه انتخاب‌شده متعلق به این دفتر نیست." }
         DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
         val current = dao.turns(versionId).sortedWith(compareBy<DirectorTurnEntity> { it.sequenceIndex }.thenBy { it.id })
-        require(current.none { turn ->
-            turn.turnNumber == turnNumber && dao.participants(turn.id).any { it.roleUid == roleUid }
-        }) { "این نقش قبلاً در شماره انتخاب‌شده ثبت شده است." }
+        // در درج میانی، نوبت موجودِ همین شماره نیز به شماره بعد منتقل می‌شود؛
+        // بنابراین وجود همان نقش در شماره مقصد نباید مانع درج شود.
         require(selectorEntry == null || (
             selectorEntry.roleUid == roleUid && selectorEntry.roleTitle == roleTitle &&
                 selectorEntry.text.trim() == text.trim()
