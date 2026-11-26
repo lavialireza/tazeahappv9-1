@@ -40,6 +40,10 @@ interface DirectorOfficeWorkspaceRepository {
         sections: List<DirectorOfficeBuildSection>
     ): DirectorOfficeBuildResult
     suspend fun addTurn(planId: Long, turnNumber: Int, title: String, text: String)
+    suspend fun insertTurnAtNumber(
+        planId: Long, versionId: Long, turnNumber: Int, roleUid: String, roleTitle: String,
+        text: String, selectorEntry: DirectorOfficeSelectorEntry? = null
+    )
     suspend fun updateTurn(value: DirectorTurnEntity)
     suspend fun replaceTurnText(turnId: Long, text: String)
     suspend fun updateTextSegment(value: DirectorTextSegmentEntity)
@@ -134,6 +138,13 @@ class DaoDirectorOfficeWorkspaceRepository(
 
     override suspend fun addTurn(planId: Long, turnNumber: Int, title: String, text: String) =
         transactionRunner.run { DirectorOfficeWorkspaceOperations.addTurn(dao, planId, turnNumber, title, text) }
+
+    override suspend fun insertTurnAtNumber(
+        planId: Long, versionId: Long, turnNumber: Int, roleUid: String, roleTitle: String,
+        text: String, selectorEntry: DirectorOfficeSelectorEntry?
+    ) = DirectorOfficeWorkspaceOperations.insertTurnAtNumber(
+        dao, planId, versionId, turnNumber, roleUid, roleTitle, text, selectorEntry, transactionRunner
+    )
 
     override suspend fun updateTurn(value: DirectorTurnEntity) = transactionRunner.run {
         DirectorOfficeWorkspaceOperations.updateTurn(dao, value)

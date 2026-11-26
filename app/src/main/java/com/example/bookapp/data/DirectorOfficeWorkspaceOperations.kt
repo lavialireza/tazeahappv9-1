@@ -661,6 +661,95 @@ object DirectorOfficeWorkspaceOperations {
         }
     }
 
+
+    /**
+     * درج واقعی یک نوبت در شماره میانی: همه شماره‌های >= شماره مقصد یک واحد افزایش
+     * می‌یابند و نوبت تازه در همان جایگاه توالی قرار می‌گیرد. شناسه‌ها و پیوندهای نوبت‌های
+     * موجود دست‌نخورده می‌مانند.
+     */
+    suspend fun insertTurnAtNumber(
+        dao: DirectorOfficeWorkspaceDao,
+        planId: Long,
+        versionId: Long,
+        turnNumber: Int,
+        roleUid: String,
+        roleTitle: String,
+        text: String,
+        selectorEntry: DirectorOfficeSelectorEntry? = null,
+        transactionRunner: DirectorOfficeTransactionRunner = DirectDirectorOfficeTransactionRunner
+    ) {
+        require(turnNumber > 0 && roleUid.isNotBlank() && roleTitle.isNotBlank() && text.isNotBlank()) {
+            "شماره، نقش و متن نوبت باید معتبر باشند."
+        }
+        val plan = dao.plan(planId) ?: error("دفتر پیدا نشد.")
+        val version = dao.version(versionId) ?: error("نسخه دفتر پیدا نشد.")
+        require(version.planId == planId) { "نسخه انتخاب‌شده متعلق به این دفتر نیست." }
+        DirectorOfficeWorkspaceUseCases.requireDraft(plan, version)
+        val current = dao.turns(versionId).sortedWith(compareBy<DirectorTurnEntity> { it.sequenceIndex }.thenBy { it.id })
+        require(current.none { turn ->
+            turn.turnNumber == turnNumber && dao.participants(turn.id).any { it.roleUid == roleUid }
+        }) { "این نقش قبلاً در شماره انتخاب‌شده ثبت شده است." }
+        require(selectorEntry == null || (
+            selectorEntry.roleUid == roleUid && selectorEntry.roleTitle == roleTitle &&
+                selectorEntry.text.trim() == text.trim()
+        )) { "اطلاعات متن انتخاب‌شده با نقش یا متن نوبت هماهنگ نیست." }
+
+        transactionRunner.run {
+            val insertionIndex = current.indexOfFirst { it.turnNumber >= turnNumber }
+                .let { if (it < 0) current.size else it }
+
+            // ابتدا شماره‌ها به‌روزرسانی می‌شوند؛ شماره در دیتابیس یکتا نیست و
+            // بنابراین این تغییر هیچ تعارضی با نوبت‌های جمعی/هم‌شماره ایجاد نمی‌کند.
+            current.filter { it.turnNumber >= turnNumber }
+                .sortedByDescending { it.turnNumber }
+                .forEach { dao.updateTurn(it.copy(turnNumber = it.turnNumber + 1)) }
+
+            val maxSequence = current.maxOfOrNull { it.sequenceIndex } ?: -1
+            val newTurnId = dao.insertTurn(DirectorTurnEntity(
+                versionId = versionId,
+                turnNumber = turnNumber,
+                sequenceIndex = maxSequence + 1,
+                title = roleTitle.trim(),
+                continuityGroupUid = selectorEntry?.key.orEmpty()
+            ))
+            dao.insertParticipant(DirectorParticipantEntity(
+                turnId = newTurnId,
+                roleUid = roleUid.trim(),
+                roleTitle = roleTitle.trim(),
+                isLead = true
+            ))
+            if (selectorEntry != null) {
+                dao.insertTextSegment(DirectorTextSegmentEntity(
+                    turnId = newTurnId, segmentIndex = 0, text = text.trim(),
+                    sectionUid = selectorEntry.sectionUid,
+                    sourceTaziehUid = plan.taziehUid,
+                    sourceRoleUid = selectorEntry.roleUid,
+                    sourceSectionTitle = selectorEntry.sectionTitle,
+                    sourceSectionUids = selectorEntry.sectionUid,
+                    sourceMethod = DirectorOfficeSharedContract.SELECTOR,
+                    sourceContentHash = selectorEntry.sourceContentHash,
+                    sourcePageStart = selectorEntry.sourceTextStartOffset,
+                    sourcePageEnd = selectorEntry.sourceTextEndOffset
+                ))
+            } else {
+                dao.insertTextSegment(DirectorTextSegmentEntity(
+                    turnId = newTurnId, segmentIndex = 0, text = text.trim(),
+                    sectionUid = null
+                ))
+            }
+
+            val ordered = current.toMutableList().apply {
+                add(insertionIndex, DirectorTurnEntity(
+                    id = newTurnId, versionId = versionId, turnNumber = turnNumber,
+                    sequenceIndex = maxSequence + 1, title = roleTitle.trim()
+                ))
+            }
+            ordered.forEachIndexed { index, turn -> dao.moveTurn(turn.id, -200000 - index) }
+            ordered.forEachIndexed { index, turn -> dao.moveTurn(turn.id, index) }
+            dao.updatePlan(plan.copy(updatedAt = System.currentTimeMillis()))
+        }
+    }
+
     suspend fun addParticipant(dao: DirectorOfficeWorkspaceDao, turnId: Long, roleUid: String, roleTitle: String, isLead: Boolean = false) {
         require(roleUid.isNotBlank() && roleTitle.isNotBlank()) { "نقش معتبر نیست." }
         val (plan, version) = requireEditableTurn(dao, turnId)

@@ -182,7 +182,8 @@ class ViewerDirectorOfficeMainPageDao(
     override suspend fun moveTurn(turnId: Long, sequenceIndex: Int) {
         requireEdit()
         requireWritableTurn(turnId)
-        require(sequenceIndex >= 0) { "جایگاه نوبت معتبر نیست." }
+        // شاخص منفی فقط برای جابه‌جایی موقت داخل تراکنش استفاده می‌شود تا
+        // قید یکتای (versionId, sequenceIndex) هنگام درج میان نوبت‌ها برخورد نکند.
         delegate.moveTurn(turnId, sequenceIndex)
     }
 

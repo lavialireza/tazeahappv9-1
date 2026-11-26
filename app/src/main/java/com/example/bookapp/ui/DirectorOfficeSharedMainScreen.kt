@@ -329,6 +329,7 @@ fun DirectorOfficeSharedMainScreen(
     var roleMenuExpanded by remember { mutableStateOf(false) }
     var deletePlanCandidate by remember { mutableStateOf<DirectorPlanEntity?>(null) }
     var showAddTurnDialog by remember { mutableStateOf(false) }
+    var insertTurnMode by remember { mutableStateOf(false) }
     var deleteTurnCandidate by remember { mutableStateOf<DirectorTurnEntity?>(null) }
     var editingTurnCandidate by remember { mutableStateOf<DirectorTurnEntity?>(null) }
     var editingTurnRole by remember { mutableStateOf<RoleEntity?>(null) }
@@ -541,7 +542,7 @@ fun DirectorOfficeSharedMainScreen(
                 sources = withContext(Dispatchers.IO) { dao.sourceFiles(current.id) }
                 loadWorkspaceIntoScreen(current.id, selectedVersion?.id)
                 val currentVersion = selectedVersion
-                selectedBuildMode = currentVersion?.changeNotes
+                selectedBuildMode = currentVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.substringBefore("|")
                     ?.substringAfter("روش تکمیل دفتر: ", "")
                     ?.takeIf { it in DirectorOfficeSharedContract.methodCodes }
                     ?: DirectorOfficeSharedContract.ROLE_NUMBERED
@@ -1088,7 +1089,7 @@ fun DirectorOfficeSharedMainScreen(
                                         sources = prepared.third.second
                                         var loadedWorkspace = prepared.third.first
                                         val chosenVersion = loadedWorkspace.selectedVersion
-                                        selectedBuildMode = chosenVersion?.changeNotes
+                                        selectedBuildMode = chosenVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.substringBefore("|")
                                             ?.substringAfter("روش تکمیل دفتر: ", "")
                                             ?.takeIf { code -> code in DirectorOfficeSharedContract.methodCodes }
                                             ?: DirectorOfficeSharedContract.ROLE_NUMBERED
@@ -1174,6 +1175,16 @@ fun DirectorOfficeSharedMainScreen(
                                 Column(Modifier.weight(1f)) {
                                     Text("دفتر معین‌البکاء", fontWeight = FontWeight.Bold)
                                     Text(if (selectedVersion?.status == DirectorPlanVersionEntity.STATUS_PUBLISHED) "نسخه منتشرشده — فقط خواندنی" else "در حال تکمیل · پیش‌نویس", style = MaterialTheme.typography.bodySmall)
+                                    val savedMethodCode = selectedVersion?.changeNotes
+                                        ?.substringAfter("روش تکمیل دفتر: ", "")
+                                        ?.substringBefore("|")
+                                        ?.trim()
+                                    val savedMethodLabel = savedMethodCode?.let { DirectorOfficeSharedContract.method(it)?.label }
+                                    Text(
+                                        "روش ساخت دفتر: ${savedMethodLabel ?: "روش ساخت ثبت نشده"}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("${turns.size} نوبت", fontWeight = FontWeight.SemiBold)
@@ -1320,7 +1331,7 @@ fun DirectorOfficeSharedMainScreen(
                                             modifier = Modifier.fillMaxWidth(),
                                             enabled = !busy,
                                             onClick = {
-                                                selectedBuildMode = selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")
+                                                selectedBuildMode = selectedVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.substringBefore("|")
                                                     ?.takeIf { it in DirectorOfficeSharedContract.methodCodes && canBuildMethod(it) }
                                                     ?: DirectorOfficeSharedContract.methodCodes.firstOrNull { canBuildMethod(it) }
                                                     ?: DirectorOfficeSharedContract.ROLE_NUMBERED
@@ -1345,7 +1356,10 @@ fun DirectorOfficeSharedMainScreen(
                                                             val id = dao.insertVersion(DirectorPlanVersionEntity(
                                                                 planId = plan.id, versionNumber = newNumber,
                                                                 title = "نسخه $newNumber", status = DirectorPlanVersionEntity.STATUS_DRAFT,
-                                                                changeNotes = "رونوشت از نسخه ${sourceVersion.versionNumber}", createdAt = now
+                                                                changeNotes = sourceVersion.changeNotes.substringAfter("روش تکمیل دفتر: ", "").substringBefore("|")
+                                                                    .takeIf { it in DirectorOfficeSharedContract.methodCodes }
+                                                                    ?.let { "روش تکمیل دفتر: $it|رونوشت از نسخه ${sourceVersion.versionNumber}" }
+                                                                    ?: "رونوشت از نسخه ${sourceVersion.versionNumber}", createdAt = now
                                                             ))
                                                             val turnMap = mutableMapOf<Long, Long>()
                                                             dao.turns(sourceVersion.id).forEach { oldTurn ->
@@ -1512,6 +1526,7 @@ fun DirectorOfficeSharedMainScreen(
                                     selectorRangeEditor = range
                                     selectorRangeTextValue = TextFieldValue(range.text, selection = TextRange(0, 0))
                                     selectorRangeSelection = null
+                                    insertTurnMode = false
                                     showAddTurnDialog = true
                                 }) {
                                     Column(Modifier.fillMaxWidth().padding(10.dp)) {
@@ -1844,6 +1859,7 @@ fun DirectorOfficeSharedMainScreen(
                             selectorRangeEditor = null
                             selectorRangeSelection = null
                             selectorRangeTextValue = TextFieldValue("")
+                            insertTurnMode = false
                             showAddTurnDialog = true
                         }
                     ) {
@@ -1881,7 +1897,7 @@ fun DirectorOfficeSharedMainScreen(
                                 showVersionsDialog = false
                                 showVersionManagement = false
                                 selectedVersion = version
-                                version.changeNotes.substringAfter("روش تکمیل دفتر: ", "")
+                                version.changeNotes.substringAfter("روش تکمیل دفتر: ", "").substringBefore("|")
                                     .takeIf { it in DirectorOfficeSharedContract.methodCodes }
                                     ?.let { selectedBuildMode = it }
                                 scope.launch { loadWorkspaceIntoScreen(selectedPlan!!.id, version.id) }
@@ -2147,12 +2163,29 @@ fun DirectorOfficeSharedMainScreen(
     if (showAddTurnDialog) {
         AlertDialog(
             onDismissRequest = { if (!busy) showAddTurnDialog = false },
-            title = { Text("افزودن نوبت به ${selectedPlan?.title.orEmpty()}") },
+            title = { Text(if (insertTurnMode) "درج نوبت در میان نوبت‌ها" else "افزودن نوبت به ${selectedPlan?.title.orEmpty()}") },
             text = {
                 Column(
                     modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    TextButton(
+                        enabled = !busy,
+                        onClick = {
+                            insertTurnMode = !insertTurnMode
+                            turnNumber = if (insertTurnMode) "1"
+                                else ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                        }
+                    ) {
+                        Text(if (insertTurnMode) "تغییر به افزودن در انتهای دفتر" else "درج نوبت در میان نوبت‌های ثبت‌شده")
+                    }
+                    if (insertTurnMode) {
+                        Text(
+                            "شماره‌ای را وارد کنید که نوبت جدید باید در آن قرار بگیرد. شماره نوبت‌های موجود از این شماره به بعد یک واحد افزایش می‌یابد و ترتیب قبلی حفظ می‌شود.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     ExposedDropdownMenuBox(expanded = roleMenuExpanded, onExpandedChange = { roleMenuExpanded = !roleMenuExpanded }) {
                         OutlinedTextField(
                             value = selectedRole?.title ?: "انتخاب نقش",
@@ -2270,23 +2303,36 @@ fun DirectorOfficeSharedMainScreen(
                                 val version = selectedVersion ?: error("نسخه پیش‌نویس پیدا نشد.")
                                 val role = selectedRole ?: error("نقش انتخاب نشده است.")
                                 val number = turnNumber.toInt()
-                                if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR) {
+                                val selectorEntry = if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR) {
                                     val selectedRange = selectorRangeSelection ?: error("ابتدا بخشی از متن نقش را انتخاب کنید.")
                                     val source = selectedRange.source
                                     require(source.role.uid == role.uid) { "نقش متن انتخاب‌شده با نقش نوبت یکسان نیست." }
+                                    DirectorOfficeSelectorEntry(
+                                        key = "${source.section.uid}:${selectedRange.start}:${selectedRange.end}",
+                                        roleUid = role.uid,
+                                        roleTitle = role.title,
+                                        sectionUid = source.section.uid,
+                                        sectionTitle = source.section.title,
+                                        text = turnText.trim(),
+                                        sourceContentHash = ContentUid.sha256(source.section.content),
+                                        sourceTextStartOffset = selectedRange.start,
+                                        sourceTextEndOffset = selectedRange.end
+                                    )
+                                } else null
+                                if (insertTurnMode) {
+                                    workspaceRepository.insertTurnAtNumber(
+                                        planId = selectedPlan!!.id,
+                                        versionId = version.id,
+                                        turnNumber = number,
+                                        roleUid = role.uid,
+                                        roleTitle = role.title,
+                                        text = turnText.trim(),
+                                        selectorEntry = selectorEntry
+                                    )
+                                } else if (selectorEntry != null) {
                                     workspaceRepository.addSelectorDialogue(
                                         planId = selectedPlan!!.id,
-                                        entry = DirectorOfficeSelectorEntry(
-                                            key = "${source.section.uid}:${selectedRange.start}:${selectedRange.end}",
-                                            roleUid = role.uid,
-                                            roleTitle = role.title,
-                                            sectionUid = source.section.uid,
-                                            sectionTitle = source.section.title,
-                                            text = turnText.trim(),
-                                            sourceContentHash = ContentUid.sha256(source.section.content),
-                                            sourceTextStartOffset = selectedRange.start,
-                                            sourceTextEndOffset = selectedRange.end
-                                        ),
+                                        entry = selectorEntry,
                                         turnNumber = number,
                                         versionId = version.id
                                     )
@@ -2306,9 +2352,12 @@ fun DirectorOfficeSharedMainScreen(
                                 selectorRangeSelection = null
                                 selectorRangeTextValue = TextFieldValue("")
                                 showAddTurnDialog = false
-                                message = if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR)
-                                    "قسمت انتخاب‌شده از نقش «${role.title}» در نوبت $number ثبت شد؛ این قسمت از انتخاب‌های بعدی کنار گذاشته شد."
-                                else "نوبت جدید به انتهای دفتر اضافه و ذخیره شد."
+                                message = when {
+                                    insertTurnMode -> "نوبت جدید در جایگاه $number درج شد؛ شماره نوبت‌های بعدی یک واحد افزایش یافت و ترتیب قبلی حفظ شد."
+                                    selectedBuildMode == DirectorOfficeSharedContract.SELECTOR -> "قسمت انتخاب‌شده از نقش «${role.title}» در نوبت $number ثبت شد؛ این قسمت از انتخاب‌های بعدی کنار گذاشته شد."
+                                    else -> "نوبت جدید به انتهای دفتر اضافه و ذخیره شد."
+                                }
+                                insertTurnMode = false
                             } catch (e: Exception) { message = "افزودن نوبت ناموفق بود: ${e.message}" }
                             finally { busy = false }
                         }

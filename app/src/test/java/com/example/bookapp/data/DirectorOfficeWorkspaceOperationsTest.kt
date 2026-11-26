@@ -7,6 +7,30 @@ import org.junit.Test
 
 class DirectorOfficeWorkspaceOperationsTest {
     @Test
+    fun `inserting a turn at an existing number shifts later numbers and preserves order`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 49, sequenceIndex = 0, title = "قبلی")
+            turnRows[2] = DirectorTurnEntity(id = 2, versionId = 20, turnNumber = 50, sequenceIndex = 1, title = "پنجاه")
+            turnRows[3] = DirectorTurnEntity(id = 3, versionId = 20, turnNumber = 51, sequenceIndex = 2, title = "پنجاه و یک")
+            participantRows += DirectorParticipantEntity(id = 1, turnId = 1, roleUid = "r1", roleTitle = "نقش ۱")
+            participantRows += DirectorParticipantEntity(id = 2, turnId = 2, roleUid = "r2", roleTitle = "نقش ۲")
+            participantRows += DirectorParticipantEntity(id = 3, turnId = 3, roleUid = "r3", roleTitle = "نقش ۳")
+        }
+
+        DirectorOfficeWorkspaceOperations.insertTurnAtNumber(
+            dao = dao, planId = 10, versionId = 20, turnNumber = 50,
+            roleUid = "new-role", roleTitle = "نقش جدید", text = "متن جاافتاده"
+        )
+
+        val ordered = dao.turnRows.values.sortedBy { it.sequenceIndex }
+        assertEquals(listOf(49, 50, 51, 52), ordered.map { it.turnNumber })
+        assertEquals(listOf("قبلی", "نقش جدید", "پنجاه", "پنجاه و یک"), ordered.map { it.title })
+        assertEquals(4, ordered.size)
+        assertEquals("متن جاافتاده", dao.segmentRows.single { it.turnId == ordered[1].id }.text)
+        assertEquals("نقش ۲", dao.participantRows.single { it.turnId == 2L }.roleTitle)
+    }
+
+    @Test
     fun `role linked turn creation uses shared operation and keeps section link`() = runTest {
         val dao = FakeWorkspaceDao()
         DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
