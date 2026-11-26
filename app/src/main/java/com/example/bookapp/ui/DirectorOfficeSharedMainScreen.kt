@@ -325,6 +325,10 @@ fun DirectorOfficeSharedMainScreen(
     var selectedTazieh by remember { mutableStateOf<TaziehEntity?>(null) }
     var taziehMenuExpanded by remember { mutableStateOf(false) }
     var roleOptions by remember { mutableStateOf(emptyList<RoleEntity>()) }
+    var buildSectionOptions by remember { mutableStateOf(emptyList<SectionEntity>()) }
+    var selectorSectionPriorities by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var excludedBuildRoleUids by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var expandedPrioritySectionUid by remember { mutableStateOf<String?>(null) }
     var selectedRole by remember { mutableStateOf<RoleEntity?>(null) }
     var roleMenuExpanded by remember { mutableStateOf(false) }
     var deletePlanCandidate by remember { mutableStateOf<DirectorPlanEntity?>(null) }
@@ -452,20 +456,43 @@ fun DirectorOfficeSharedMainScreen(
     suspend fun buildNewOfficeWithMethod(
         plan: DirectorPlanEntity,
         version: DirectorPlanVersionEntity,
-        method: String
+        method: String,
+        selectedSectionPriorities: Map<String, Int?> = emptyMap(),
+        excludedRoleUids: Set<String> = emptySet()
     ): String {
         // خواندن کتابخانه، ساخت نوبت‌ها و تهیه Snapshot خارج از رشته اصلی رابط انجام می‌شود.
         val result = withContext(Dispatchers.IO) {
             val tazieh = libraryRepository.taziehByUid(plan.taziehUid)
                 ?: throw IllegalStateException("مجلس مرتبط با این دفتر در کتابخانه پیدا نشد.")
-            val roles = libraryRepository.rolesFor(tazieh)
+            val allRoles = libraryRepository.rolesFor(tazieh)
+            val roles = if (method == DirectorOfficeSharedContract.SELECTOR)
+                allRoles.filterNot { it.uid in excludedRoleUids }
+            else allRoles
+            require(roles.isNotEmpty()) { "حداقل یک نقش باید برای ورود به دفتر انتخاب شود." }
             val roleById = roles.associateBy { it.id }
-            val sections = libraryRepository.sectionsForRoles(roles.map { it.id })
-                .filter { it.content.isNotBlank() && roleById.containsKey(it.roleId) }
-                .sortedWith(
+            val allSections = libraryRepository.sectionsForRoles(allRoles.map { it.id })
+                .filter { it.content.isNotBlank() }
+            val sections = if (method == DirectorOfficeSharedContract.SELECTOR) {
+                val roleUidByIdAll = allRoles.associate { it.id to it.uid }
+                val selected = allSections.filter { section ->
+                    val roleUid = roleUidByIdAll[section.roleId]
+                    roleUid != null && roleUid !in excludedRoleUids && selectedSectionPriorities[section.uid] != null
+                }.sortedWith(
                     compareBy<SectionEntity> { section -> roleById[section.roleId]?.orderIndex ?: Int.MAX_VALUE }
+                        .thenBy { section -> selectedSectionPriorities[section.uid] ?: Int.MAX_VALUE }
                         .thenBy { it.orderIndex }.thenBy { it.id }
                 )
+                val includedRoleUids = roles.map { it.uid }.toSet()
+                val rolesWithoutSections = roles.filter { role ->
+                    role.uid in includedRoleUids && selected.none { section -> roleUidByIdAll[section.roleId] == role.uid }
+                }
+                require(rolesWithoutSections.isEmpty()) {
+                    "برای نقش‌های ${rolesWithoutSections.joinToString("، ") { it.title }} هیچ بخشی برای ورود انتخاب نشده است. برای کنار گذاشتن کامل، خود نقش را غیرفعال کنید."
+                }
+                selected
+            } else allSections.filter { roleById.containsKey(it.roleId) }
+                .sortedWith(compareBy<SectionEntity> { section -> roleById[section.roleId]?.orderIndex ?: Int.MAX_VALUE }
+                    .thenBy { it.orderIndex }.thenBy { it.id })
             val roleInputs = roles.map { DirectorOfficeBuildRole(uid = it.uid, title = it.title, orderIndex = it.orderIndex) }
             val roleUidById = roles.associate { it.id to it.uid }
             val sectionInputs = sections.mapNotNull { section ->
@@ -474,11 +501,17 @@ fun DirectorOfficeSharedMainScreen(
             }
 
             val buildResult = workspaceRepository.buildDraftFromLibrary(version.id, method, roleInputs, sectionInputs)
-            dao.updateVersion(version.copy(changeNotes = "روش تکمیل دفتر: $method"))
+            val buildConfigurationNote = if (method == DirectorOfficeSharedContract.SELECTOR) {
+                val sectionRules = selectedSectionPriorities.entries.sortedBy { it.key }
+                    .joinToString(",") { (uid, priority) -> "$uid=${priority ?: -1}" }
+                val excludedRoles = excludedRoleUids.sorted().joinToString(",")
+                "روش تکمیل دفتر: $method | اولویت‌بندی بخش‌ها: $sectionRules | نقش‌های کنارگذاشته‌شده: $excludedRoles"
+            } else "روش تکمیل دفتر: $method"
+            dao.updateVersion(version.copy(changeNotes = buildConfigurationNote))
 
 
-            // ساخت فهرست انتخاب‌گر فقط در همان روش لازم است؛ قبلاً برای هر روش
-            // تمام متن مجلس دوباره به پاراگراف‌ها شکسته می‌شد و ساخت دفتر را کند می‌کرد.
+            // متن بخش‌های اولویت‌دار برای انتخاب‌گر تکمیلی نگه داشته می‌شود؛
+            // بخش‌های کنارگذاشته‌شده در این فهرست حضور ندارند.
             val selectorItems = if (method == DirectorOfficeSharedContract.SELECTOR) {
                 sections.mapNotNull { section ->
                     val role = roleById[section.roleId] ?: return@mapNotNull null
@@ -520,7 +553,9 @@ fun DirectorOfficeSharedMainScreen(
                 "متن کامل ${result.generatedTurnCount} نقش به ترتیب وارد دفتر شد."
             else "برای نقش‌های این مجلس متن قابل انتقال پیدا نشد؛ دفتر خالی ذخیره شد و می‌توانید نوبت‌ها را بعداً اضافه کنید."
             DirectorOfficeSharedContract.MANUAL -> "دفتر خام ساخته شد؛ اکنون نوبت‌ها را از داخل همین دفتر اضافه کنید."
-            else -> "دفتر خالی آماده است؛ اکنون می‌توانید نقش و دیالوگ‌ها را با انتخاب‌گر وارد کنید."
+            else -> if (result.generatedTurnCount > 0)
+                "${result.generatedTurnCount} نوبت از بخش‌های انتخاب‌شده و بر اساس شماره‌های متن ساخته شد. بخش‌های بدون شماره همچنان از انتخاب‌گر دستی قابل تکمیل‌اند."
+            else "دفتر و انتخاب‌های نقش‌ها و بخش‌ها ذخیره شد؛ بخش‌های انتخاب‌شده را می‌توانید با انتخاب‌گر به نوبت تبدیل کنید."
         }
         val completeMessage = if (result.warnings.isEmpty()) resultMessage
             else resultMessage + "\n" + result.warnings.joinToString("\n")
@@ -566,7 +601,20 @@ fun DirectorOfficeSharedMainScreen(
             if (chosen != null) {
                 selectedTazieh = chosen
                 planTitle = chosen.title
-                roleOptions = withContext(Dispatchers.IO) { libraryRepository.rolesFor(chosen) }
+                val loadedBuildSource = withContext(Dispatchers.IO) {
+                    val loadedRoles = libraryRepository.rolesFor(chosen)
+                    val loadedSections = libraryRepository.sectionsForRoles(loadedRoles.map { it.id })
+                        .filter { it.content.isNotBlank() }
+                        .sortedWith(compareBy<SectionEntity> { section -> loadedRoles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }
+                            .thenBy { it.orderIndex }.thenBy { it.id })
+                    loadedRoles to loadedSections
+                }
+                roleOptions = loadedBuildSource.first
+                buildSectionOptions = loadedBuildSource.second
+                selectorSectionPriorities = loadedBuildSource.second.groupBy { it.roleId }.values.flatMap { roleSections ->
+                    roleSections.map { section -> section.uid to if (roleSections.size == 1) 1 else 0 }
+                }.toMap()
+                excludedBuildRoleUids = emptySet()
                 selectedRole = roleOptions.firstOrNull()
                 val existingPlan = if (canViewPersonal) {
                     withContext(Dispatchers.IO) { dao.plansForTazieh(chosen.uid).firstOrNull() }
@@ -587,7 +635,7 @@ fun DirectorOfficeSharedMainScreen(
         delay(250)
         loadPlans(reset = true)
     }
-    LaunchedEffect(selectedVersion?.id, selectedBuildMode, roleOptions, selectedPlan?.id, workspaceState?.selectedVersion?.id) {
+    LaunchedEffect(selectedVersion?.id, selectedBuildMode, roleOptions, selectedPlan?.id, workspaceState?.selectedVersion?.id, selectorSectionPriorities) {
         val version = selectedVersion
         val plan = selectedPlan
         val roles = roleOptions
@@ -595,7 +643,7 @@ fun DirectorOfficeSharedMainScreen(
             try {
                 val selectorData = withContext(Dispatchers.IO) {
                     val sections = libraryRepository.sectionsForRoles(roles.map { it.id })
-                        .filter { it.content.isNotBlank() }
+                        .filter { it.content.isNotBlank() && (selectorSectionPriorities.isEmpty() || (selectorSectionPriorities[it.uid] ?: -1) > 0) }
                         .sortedWith(compareBy<SectionEntity> { section -> roles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
                     val items = sections.mapNotNull { section ->
                         val role = roles.firstOrNull { it.id == section.roleId } ?: return@mapNotNull null
@@ -871,14 +919,28 @@ fun DirectorOfficeSharedMainScreen(
                                                     selectedTazieh = option
                                                     if (planTitle.isBlank()) planTitle = option.title
                                                     roleOptions = emptyList()
+                                                    buildSectionOptions = emptyList()
+                                                    selectorSectionPriorities = emptyMap()
+                                                    excludedBuildRoleUids = emptySet()
                                                     selectedRole = null
                                                     selectorRole = null
                                                     taziehMenuExpanded = false
                                                     scope.launch {
-                                                        val loadedRoles = withContext(Dispatchers.IO) { libraryRepository.rolesFor(option) }
-                                                        roleOptions = loadedRoles
-                                                        selectedRole = loadedRoles.firstOrNull()
-                                                        selectorRole = loadedRoles.firstOrNull()
+                                                        val loaded = withContext(Dispatchers.IO) {
+                                                            val loadedRoles = libraryRepository.rolesFor(option)
+                                                            val loadedSections = libraryRepository.sectionsForRoles(loadedRoles.map { it.id })
+                                                                .filter { it.content.isNotBlank() }
+                                                                .sortedWith(compareBy<SectionEntity> { section -> loadedRoles.firstOrNull { it.id == section.roleId }?.orderIndex ?: Int.MAX_VALUE }
+                                                                    .thenBy { it.orderIndex }.thenBy { it.id })
+                                                            loadedRoles to loadedSections
+                                                        }
+                                                        roleOptions = loaded.first
+                                                        buildSectionOptions = loaded.second
+                                                        selectorSectionPriorities = loaded.second.groupBy { it.roleId }.values.flatMap { roleSections ->
+                                                            roleSections.mapIndexed { index, section -> section.uid to if (roleSections.size == 1) 1 else 0 }
+                                                        }.toMap()
+                                                        selectedRole = loaded.first.firstOrNull()
+                                                        selectorRole = loaded.first.firstOrNull()
                                                     }
                                                 }
                                             )
@@ -914,7 +976,7 @@ fun DirectorOfficeSharedMainScreen(
                                         DirectorOfficeSharedContract.ROLE_NUMBERED -> "تشخیص نوبت‌های شماره‌دار از متن"
                                         DirectorOfficeSharedContract.MANUAL -> "ساخت دستی نوبت‌ها"
                                         DirectorOfficeSharedContract.FULL_TEXT -> "ساخت از متن کامل"
-                                        else -> "ساخت با انتخاب‌گر"
+                                        else -> "ساخت با انتخاب معین‌البکاء و اولویت‌بندی بخش‌ها"
                                     }
                                     Row(
                                         modifier = Modifier.fillMaxWidth().clickable(enabled = canBuildMethod(method.code)) { selectedBuildMode = method.code },
@@ -948,15 +1010,99 @@ fun DirectorOfficeSharedMainScreen(
                                                 Text("در این مرحله فقط دفتر و نسخه پیش‌نویس ساخته می‌شود. پس از ذخیره، وارد صفحه تکمیل دفتر می‌شوید و هر تعداد نوبت لازم است از همان صفحه اضافه می‌کنید.", style = MaterialTheme.typography.bodySmall)
                                             }
                                             else -> {
-                                                Text("ساخت با انتخاب‌گر", fontWeight = FontWeight.Bold)
-                                                Text("پس از ذخیره دفتر، نقش و دیالوگ‌های موردنظر را از کتابخانه انتخاب می‌کنید. در صفحه دفتر فقط فهرست دیالوگ‌های باقی‌مانده نمایش داده می‌شود.", style = MaterialTheme.typography.bodySmall)
+                                                Text("ساخت با انتخاب معین‌البکاء و اولویت‌بندی بخش‌ها", fontWeight = FontWeight.Bold)
+                                                Text("تمام نقش‌ها و بخش‌های واقعی مجلس نمایش داده می‌شوند. برای هر نقش، ترتیب بخش‌ها را تعیین کنید یا یک بخش را از دفتر کنار بگذارید. می‌توانید یک یا چند نقش را نیز به‌طور کامل خارج کنید. نوبت‌های شماره‌دار از بخش‌های انتخاب‌شده استخراج می‌شوند و متن اصلی کتابخانه تغییر نمی‌کند.", style = MaterialTheme.typography.bodySmall)
                                             }
                                         }
                                     }
                                 }
+                                if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR && selectedTazieh != null) {
+                                    Divider()
+                                    Text("تعیین وضعیت نقش‌ها و اولویت بخش‌ها", fontWeight = FontWeight.Bold)
+                                    Text("برای کنار گذاشتن کامل یک نقش، تیک کنار نام آن را بردارید. برای هر نقش فعال، تمام بخش‌ها باید اولویت بگیرند یا «وارد دفتر نشود» شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    roleOptions.forEach { role ->
+                                        val roleSections = buildSectionOptions.filter { it.roleId == role.id }
+                                        val roleExcluded = role.uid in excludedBuildRoleUids
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = if (roleExcluded) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Checkbox(
+                                                        checked = !roleExcluded,
+                                                        onCheckedChange = { checked ->
+                                                            excludedBuildRoleUids = if (checked) excludedBuildRoleUids - role.uid else excludedBuildRoleUids + role.uid
+                                                        }
+                                                    )
+                                                    Column(Modifier.weight(1f)) {
+                                                        Text(role.title, fontWeight = FontWeight.SemiBold)
+                                                        Text(if (roleExcluded) "این نقش به‌طور کامل وارد دفتر نمی‌شود" else "${roleSections.size} بخش شناسایی شده", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                }
+                                                if (!roleExcluded) {
+                                                    roleSections.forEach { section ->
+                                                        val currentPriority = selectorSectionPriorities[section.uid] ?: 0
+                                                        val usedPriorities = roleSections.filter { it.uid != section.uid }
+                                                            .mapNotNull { selectorSectionPriorities[it.uid] }
+                                                            .filter { it > 0 }.toSet()
+                                                        val menuOpen = expandedPrioritySectionUid == section.uid
+                                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                            Column(Modifier.weight(1f)) {
+                                                                Text(section.title.ifBlank { "بخش بدون عنوان" }, fontWeight = FontWeight.Medium)
+                                                                Text("${section.content.length} نویسه", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                            }
+                                                            Box {
+                                                                OutlinedButton(onClick = { expandedPrioritySectionUid = if (menuOpen) null else section.uid }) {
+                                                                    Text(when {
+                                                                        currentPriority == -1 -> "وارد دفتر نشود"
+                                                                        currentPriority > 0 -> "اولویت $currentPriority"
+                                                                        else -> "تعیین اولویت"
+                                                                    })
+                                                                }
+                                                                DropdownMenu(expanded = menuOpen, onDismissRequest = { expandedPrioritySectionUid = null }) {
+                                                                    (1..roleSections.size).filter { it !in usedPriorities || it == currentPriority }.forEach { priority ->
+                                                                        DropdownMenuItem(
+                                                                            text = { Text("اولویت $priority") },
+                                                                            onClick = {
+                                                                                selectorSectionPriorities = selectorSectionPriorities + (section.uid to priority)
+                                                                                expandedPrioritySectionUid = null
+                                                                            }
+                                                                        )
+                                                                    }
+                                                                    DropdownMenuItem(
+                                                                        text = { Text("وارد دفتر نشود") },
+                                                                        onClick = {
+                                                                            selectorSectionPriorities = selectorSectionPriorities + (section.uid to -1)
+                                                                            expandedPrioritySectionUid = null
+                                                                        }
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    val incompleteRoles = roleOptions.filter { role ->
+                                        role.uid !in excludedBuildRoleUids && buildSectionOptions.filter { it.roleId == role.id }.let { roleSections ->
+                                            roleSections.isEmpty() || roleSections.any { (selectorSectionPriorities[it.uid] ?: 0) == 0 } || roleSections.none { (selectorSectionPriorities[it.uid] ?: 0) > 0 }
+                                        }
+                                    }
+                                    Text(
+                                        if (incompleteRoles.isEmpty()) "همه نقش‌های انتخاب‌شده و بخش‌های آن‌ها تعیین تکلیف شده‌اند."
+                                        else "نیازمند تکمیل: ${incompleteRoles.joinToString("، ") { it.title }}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (incompleteRoles.isEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                    )
+                                }
                                 Button(
                                     modifier = Modifier.fillMaxWidth(),
-                                    enabled = canCreatePersonal && canBuildMethod(selectedBuildMode) && selectedTazieh != null && planTitle.isNotBlank() && !busy,
+                                    enabled = canCreatePersonal && canBuildMethod(selectedBuildMode) && selectedTazieh != null && planTitle.isNotBlank() && !busy && (selectedBuildMode != DirectorOfficeSharedContract.SELECTOR || (roleOptions.isNotEmpty() && roleOptions.any { it.uid !in excludedBuildRoleUids } && roleOptions.filter { it.uid !in excludedBuildRoleUids }.all { role ->
+                                        val rs = buildSectionOptions.filter { it.roleId == role.id }
+                                        rs.isNotEmpty() && rs.all { (selectorSectionPriorities[it.uid] ?: 0) != 0 } && rs.any { (selectorSectionPriorities[it.uid] ?: 0) > 0 }
+                                    })),
                                     onClick = {
                                         scope.launch {
                                             busy = true
@@ -1004,7 +1150,9 @@ fun DirectorOfficeSharedMainScreen(
                                                 val buildSummary = buildNewOfficeWithMethod(
                                                     plan = newPlan,
                                                     version = newVersion,
-                                                    method = selectedBuildMode
+                                                    method = selectedBuildMode,
+                                                    selectedSectionPriorities = selectorSectionPriorities.mapValues { (_, value) -> value.takeIf { it > 0 } },
+                                                    excludedRoleUids = excludedBuildRoleUids
                                                 )
                                                 // buildNewOfficeWithMethod نقش‌ها و Snapshot نهایی را قبلاً در IO بارگذاری و اعمال کرده است؛
                                                 // از خواندن دوباره همان داده‌ها و اجرای مجدد پرس‌وجوهای سنگین جلوگیری می‌کنیم.
@@ -1045,6 +1193,10 @@ fun DirectorOfficeSharedMainScreen(
                                 onClick = {
                                     selectedTazieh = null
                                     planTitle = ""
+                                    buildSectionOptions = emptyList()
+                                    selectorSectionPriorities = emptyMap()
+                                    excludedBuildRoleUids = emptySet()
+                                    expandedPrioritySectionUid = null
                                     planSearch = ""
                                     selectedRole = null
                                     roleOptions = emptyList()
@@ -1084,6 +1236,9 @@ fun DirectorOfficeSharedMainScreen(
                                 scope.launch {
                                     busy = true
                                     try {
+                                        selectorSectionPriorities = emptyMap()
+                                        excludedBuildRoleUids = emptySet()
+                                        buildSectionOptions = emptyList()
                                         message = null
                                         val prepared = withContext(Dispatchers.IO) {
                                             coroutineScope {
@@ -1110,7 +1265,7 @@ fun DirectorOfficeSharedMainScreen(
                                             ?.takeIf { code -> code in DirectorOfficeSharedContract.methodCodes }
                                             ?: DirectorOfficeSharedContract.ROLE_NUMBERED
 
-                                        // روش انتخاب‌گر عمداً دفتر خالی می‌سازد؛ آن را با ورود خودکار همه متن‌ها خنثی نکن.
+                                        // روش انتخاب معین‌البکاء با تنظیمات ذخیره‌شده ساخته می‌شود؛ از بازسازی خودکار متن‌های کنارگذاشته‌شده جلوگیری کن.
                                         val hasStoredDialogue = loadedWorkspace.textSegmentsByTurn.values.any { rows -> rows.any { it.text.isNotBlank() } }
                                         if (chosenVersion != null && selectedBuildMode !in setOf(DirectorOfficeSharedContract.SELECTOR, DirectorOfficeSharedContract.MANUAL) &&
                                             (isAdmin || canCreatePersonal || canEditPersonal) && !hasStoredDialogue && targetTazieh != null) {

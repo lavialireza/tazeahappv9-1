@@ -415,7 +415,7 @@ class DirectorOfficeWorkspaceOperationsTest {
     }
 
     @Test
-    fun `selector builder clears current turns but does not create turns`() = runTest {
+    fun `selector builder leaves unnumbered source available for manual selection`() = runTest {
         val dao = FakeWorkspaceDao().apply {
             turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 5, sequenceIndex = 0, title = "پاک شود")
         }
@@ -426,6 +426,21 @@ class DirectorOfficeWorkspaceOperationsTest {
         )
         assertTrue(dao.turnRows.isEmpty())
         assertEquals(0, result.insertedTurnCount)
+    }
+
+    @Test
+    fun `selector builder imports numbered turns from selected sections`() = runTest {
+        val dao = FakeWorkspaceDao()
+        val result = DirectorOfficeWorkspaceOperations.buildDraftFromLibrary(
+            dao, 20, DirectorOfficeSharedContract.SELECTOR,
+            listOf(DirectorOfficeBuildRole("role-a", "امام حسین", 0)),
+            listOf(DirectorOfficeBuildSection("sec-a", "role-a", "۱- ورود امام\n۲- مناجات امام", 0, "ورودی و مناجات"))
+        )
+
+        assertEquals(2, result.insertedTurnCount)
+        assertEquals(listOf(1, 2), dao.turnRows.values.sortedBy { it.sequenceIndex }.map { it.turnNumber })
+        assertEquals(setOf("SELECTOR"), dao.segmentRows.map { it.sourceMethod }.toSet())
+        assertEquals(setOf("ورود امام", "مناجات امام"), dao.segmentRows.map { it.text }.toSet())
     }
 
     @Test

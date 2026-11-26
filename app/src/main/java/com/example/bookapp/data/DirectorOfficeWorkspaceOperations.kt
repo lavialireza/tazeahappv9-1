@@ -51,8 +51,8 @@ object DirectorOfficeWorkspaceOperations {
     /**
      * ساخت مشترک دفتر بر پایه کتابخانه نقش‌ها و بخش‌ها. الگوریتم شماره‌محور و متن کامل
      * در Admin و Viewer دقیقاً یکی است؛ DAO تعیین می‌کند داده در کدام دیتابیس مستقل ذخیره شود.
-     * MANUAL اطلاعات موجود را پاک نمی‌کند؛ SELECTOR فقط نوبت‌های فعلی را خالی می‌کند تا
-     * کاربر آن‌ها را انتخاب کند.
+     * MANUAL اطلاعات موجود را پاک نمی‌کند؛ SELECTOR بخش‌های اولویت‌دار معین‌البکاء را
+     * با استخراج شماره‌های موجود می‌سازد و متن‌های بدون شماره را برای انتخاب دستی باقی می‌گذارد.
      */
     suspend fun buildDraftFromLibrary(
         dao: DirectorOfficeWorkspaceDao,
@@ -91,7 +91,7 @@ object DirectorOfficeWorkspaceOperations {
         val orderedSections = sections.filter { it.content.isNotBlank() }
         // هش متن کامل هر بخش فقط یک‌بار محاسبه می‌شود. قبلاً برای تک‌تک دیالوگ‌های
         // یک بخش، کل متن بلند همان بخش دوباره join و SHA-256 می‌شد و ساخت را کند می‌کرد.
-        val sectionHashByUid = if (method == DirectorOfficeSharedContract.ROLE_NUMBERED) {
+        val sectionHashByUid = if (method in setOf(DirectorOfficeSharedContract.ROLE_NUMBERED, DirectorOfficeSharedContract.SELECTOR)) {
             orderedSections.associate { it.uid to ContentUid.sha256(it.content) }
         } else emptyMap()
         val byNumber = linkedMapOf<Int, Long>()
@@ -107,7 +107,7 @@ object DirectorOfficeWorkspaceOperations {
         )
 
         // تمام داده‌های قابل پردازش پیش از پاک‌سازی نسخه آماده می‌شوند.
-        val numberedEntries = if (method == DirectorOfficeSharedContract.ROLE_NUMBERED) {
+        val numberedEntries = if (method in setOf(DirectorOfficeSharedContract.ROLE_NUMBERED, DirectorOfficeSharedContract.SELECTOR)) {
             orderedSections.flatMap { section ->
                 val role = roleByUid[section.roleUid] ?: return@flatMap emptyList()
                 DirectorOfficeWorkspaceUseCases.parseNumberedDialogues(section.content).map { (number, text) ->
@@ -123,7 +123,7 @@ object DirectorOfficeWorkspaceOperations {
             }
         } else emptyList()
 
-        if (method == DirectorOfficeSharedContract.ROLE_NUMBERED && numberedEntries.isNotEmpty()) {
+        if (method in setOf(DirectorOfficeSharedContract.ROLE_NUMBERED, DirectorOfficeSharedContract.SELECTOR) && numberedEntries.isNotEmpty()) {
             require(numberedEntries.all { it.number > 0 }) {
                 "شماره نوبت باید بزرگ‌تر از صفر باشد؛ هیچ تغییری در دفتر ذخیره نشد."
             }
@@ -164,7 +164,7 @@ object DirectorOfficeWorkspaceOperations {
 
             // اگر روش انتخابی در متن فعلی چیزی پیدا نکند، دفتر تازه به‌صورت پیش‌نویس خالی
             // ذخیره می‌شود؛ اما هنگام بازسازی، اطلاعات قبلی هرگز بی‌صدا پاک نمی‌شوند.
-            if (method == DirectorOfficeSharedContract.ROLE_NUMBERED && numberedEntries.isEmpty() && existingTurns.isNotEmpty()) {
+            if (method in setOf(DirectorOfficeSharedContract.ROLE_NUMBERED, DirectorOfficeSharedContract.SELECTOR) && numberedEntries.isEmpty() && existingTurns.isNotEmpty()) {
                 error("در متن این مجلس نوبت شماره‌دار پیدا نشد؛ نوبت‌های قبلی حفظ شدند و تغییری در دفتر اعمال نشد.")
             }
             if (method == DirectorOfficeSharedContract.FULL_TEXT && fullTextRoleGroups.isEmpty() && existingTurns.isNotEmpty()) {
@@ -176,7 +176,7 @@ object DirectorOfficeWorkspaceOperations {
             }
 
             when (method) {
-                DirectorOfficeSharedContract.ROLE_NUMBERED -> {
+                DirectorOfficeSharedContract.ROLE_NUMBERED, DirectorOfficeSharedContract.SELECTOR -> {
                     if (numberedEntries.isNotEmpty()) {
                         data class PreparedNumberedTurn(
                             val number: Int,
@@ -281,7 +281,7 @@ object DirectorOfficeWorkspaceOperations {
                         insertedCount = fullTextRoleGroups.size
                     }
                 }
-                DirectorOfficeSharedContract.MANUAL, DirectorOfficeSharedContract.SELECTOR -> Unit
+                DirectorOfficeSharedContract.MANUAL -> Unit
             }
             // به‌روزرسانی صرفاً زمانی دفتر برای ساخت اولیه لازم نیست؛ حذف آن اجازه می‌دهد
             // مجوز create بدون اعطای ناخواسته مجوز edit برای تکمیل اولیه استفاده شود.
