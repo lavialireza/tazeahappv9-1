@@ -743,6 +743,22 @@ fun DirectorOfficeSharedMainScreen(
             IconButton(onClick = { showOfficeSettingsDialog = true }) {
                 Icon(Icons.Default.Settings, contentDescription = "تنظیمات دفتر")
             }
+            IconButton(
+                enabled = selectedVersion?.status == DirectorPlanVersionEntity.STATUS_DRAFT &&
+                    (isAdmin || canCreatePersonal || canEditPersonal) && roleOptions.isNotEmpty() && !busy,
+                onClick = {
+                    selectedRole = selectedRole?.let { old -> roleOptions.firstOrNull { it.uid == old.uid } } ?: roleOptions.firstOrNull()
+                    turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                    turnText = ""
+                    selectorRangeEditor = null
+                    selectorRangeSelection = null
+                    selectorRangeTextValue = TextFieldValue("")
+                    insertTurnMode = false
+                    showAddTurnDialog = true
+                }
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "افزودن نوبت جدید")
+            }
             IconButton(onClick = {
                 if (showTurnSearchField) {
                     showTurnSearchField = false
@@ -2169,20 +2185,46 @@ fun DirectorOfficeSharedMainScreen(
                     modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    TextButton(
-                        enabled = !busy,
-                        onClick = {
-                            val nextMode = !insertTurnMode
-                            insertTurnMode = nextMode
-                            if (!nextMode) {
-                                turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
-                            }
-                        }
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !busy) {
+                                val nextMode = !insertTurnMode
+                                insertTurnMode = nextMode
+                                if (!nextMode) {
+                                    turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                                }
+                            },
+                        shape = MaterialTheme.shapes.medium,
+                        color = if (insertTurnMode) MaterialTheme.colorScheme.tertiaryContainer
+                            else MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = if (insertTurnMode) MaterialTheme.colorScheme.onTertiaryContainer
+                            else MaterialTheme.colorScheme.onSecondaryContainer,
+                        tonalElevation = 2.dp
                     ) {
-                        Text(
-                            if (insertTurnMode) "حالت درج میان نوبت‌ها فعال است؛ بازگشت به افزودن در انتهای دفتر"
-                            else "فعال‌کردن درج نوبت در میان نوبت‌های ثبت‌شده"
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                if (insertTurnMode) Icons.Default.PlayArrow else Icons.Default.Add,
+                                contentDescription = null
+                            )
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    if (insertTurnMode) "درج میان نوبت‌ها فعال است"
+                                    else "درج نوبت در میان نوبت‌های ثبت‌شده",
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    if (insertTurnMode) "برای بازگشت به افزودن در انتهای دفتر، اینجا را لمس کنید."
+                                    else "برای افزودن نوبت در شماره دلخواه و جابه‌جایی خودکار نوبت‌های بعدی، اینجا را لمس کنید.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Switch(checked = insertTurnMode, onCheckedChange = null, enabled = !busy)
+                        }
                     }
                     if (insertTurnMode) {
                         Text(
