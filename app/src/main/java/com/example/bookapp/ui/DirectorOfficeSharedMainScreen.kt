@@ -2172,16 +2172,21 @@ fun DirectorOfficeSharedMainScreen(
                     TextButton(
                         enabled = !busy,
                         onClick = {
-                            insertTurnMode = !insertTurnMode
-                            turnNumber = if (insertTurnMode) "1"
-                                else ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                            val nextMode = !insertTurnMode
+                            insertTurnMode = nextMode
+                            if (!nextMode) {
+                                turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                            }
                         }
                     ) {
-                        Text(if (insertTurnMode) "تغییر به افزودن در انتهای دفتر" else "درج نوبت در میان نوبت‌های ثبت‌شده")
+                        Text(
+                            if (insertTurnMode) "حالت درج میان نوبت‌ها فعال است؛ بازگشت به افزودن در انتهای دفتر"
+                            else "فعال‌کردن درج نوبت در میان نوبت‌های ثبت‌شده"
+                        )
                     }
                     if (insertTurnMode) {
                         Text(
-                            "شماره‌ای را وارد کنید که نوبت جدید باید در آن قرار بگیرد. شماره نوبت‌های موجود از این شماره به بعد یک واحد افزایش می‌یابد و ترتیب قبلی حفظ می‌شود.",
+                            "حالت درج فعال است. شماره مقصد را وارد کنید؛ حتی اگر آن شماره قبلاً وجود داشته باشد، نوبت جدید در همان جایگاه قرار می‌گیرد و همه نوبت‌های آن شماره و شماره‌های بعدی یک واحد جابه‌جا می‌شوند.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2204,18 +2209,20 @@ fun DirectorOfficeSharedMainScreen(
                                     selectorRangeSelection = null
                                     selectorRangeTextValue = TextFieldValue("")
                                     turnText = ""
-                                    turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                                    if (!insertTurnMode) {
+                                        turnNumber = ((turns.maxOfOrNull { it.turnNumber } ?: 0) + 1).toString()
+                                    }
                                 })
                             }
                         }
                     }
-                    OutlinedTextField(
-                        value = turnNumber,
-                        onValueChange = { turnNumber = it.filter(Char::isDigit).take(6) },
-                        label = { Text("شماره نوبت (پیشنهادی و قابل ویرایش)") },
-                        modifier = Modifier.fillMaxWidth(), singleLine = true
-                    )
                     if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR) {
+                        OutlinedTextField(
+                            value = turnNumber,
+                            onValueChange = { turnNumber = it.filter(Char::isDigit).take(6) },
+                            label = { Text(if (insertTurnMode) "شماره محل درج" else "شماره نوبت (پیشنهادی و قابل ویرایش)") },
+                            modifier = Modifier.fillMaxWidth(), singleLine = true
+                        )
                         Text("متن‌های باقی‌مانده نقش ${selectedRole?.title.orEmpty()}", fontWeight = FontWeight.SemiBold)
                         Text("یک بخش را باز کنید، سپس ابتدا و انتهای قسمت موردنظر را از متن انتخاب کنید. قسمت‌های ثبت‌شده دیگر در انتخاب‌های بعدی نمایش داده نمی‌شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         val availableRanges = availableDirectorSelectorRanges(workspaceState, selectorItems, selectedRole?.uid)

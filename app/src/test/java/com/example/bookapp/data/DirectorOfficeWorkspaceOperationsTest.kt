@@ -51,6 +51,30 @@ class DirectorOfficeWorkspaceOperationsTest {
     }
 
     @Test
+    fun `inserting at a duplicated number shifts every matching turn and inserts before them`() = runTest {
+        val dao = FakeWorkspaceDao().apply {
+            turnRows[1] = DirectorTurnEntity(id = 1, versionId = 20, turnNumber = 42, sequenceIndex = 0, title = "چهل و دو")
+            turnRows[2] = DirectorTurnEntity(id = 2, versionId = 20, turnNumber = 43, sequenceIndex = 1, title = "امام حسین")
+            turnRows[3] = DirectorTurnEntity(id = 3, versionId = 20, turnNumber = 43, sequenceIndex = 2, title = "ام لیلا")
+            turnRows[4] = DirectorTurnEntity(id = 4, versionId = 20, turnNumber = 44, sequenceIndex = 3, title = "نوبت بعد")
+            participantRows += DirectorParticipantEntity(id = 1, turnId = 2, roleUid = "role-a", roleTitle = "امام حسین")
+            participantRows += DirectorParticipantEntity(id = 2, turnId = 3, roleUid = "role-b", roleTitle = "ام لیلا")
+            participantRows += DirectorParticipantEntity(id = 3, turnId = 4, roleUid = "role-c", roleTitle = "نقش بعد")
+        }
+
+        DirectorOfficeWorkspaceOperations.insertTurnAtNumber(
+            dao = dao, planId = 10, versionId = 20, turnNumber = 43,
+            roleUid = "role-new", roleTitle = "نقش جاافتاده", text = "متن نوبت جاافتاده"
+        )
+
+        val ordered = dao.turnRows.values.sortedBy { it.sequenceIndex }
+        assertEquals(listOf(42, 43, 44, 44, 45), ordered.map { it.turnNumber })
+        assertEquals(listOf("چهل و دو", "نقش جاافتاده", "امام حسین", "ام لیلا", "نوبت بعد"), ordered.map { it.title })
+        assertEquals("امام حسین", dao.participantRows.single { it.turnId == 2L }.roleTitle)
+        assertEquals("ام لیلا", dao.participantRows.single { it.turnId == 3L }.roleTitle)
+    }
+
+    @Test
     fun `role linked turn creation uses shared operation and keeps section link`() = runTest {
         val dao = FakeWorkspaceDao()
         DirectorOfficeWorkspaceOperations.addRoleLinkedTurn(
