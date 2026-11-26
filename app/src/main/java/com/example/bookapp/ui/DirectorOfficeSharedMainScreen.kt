@@ -452,6 +452,14 @@ fun DirectorOfficeSharedMainScreen(
         applyWorkspaceToScreen(loaded)
     }
 
+    fun excludedRolesFromVersion(version: DirectorPlanVersionEntity?): Set<String> {
+        val notes = version?.changeNotes.orEmpty()
+        val marker = "نقش‌های کنارگذاشته‌شده:"
+        if (!notes.contains(marker)) return emptySet()
+        return notes.substringAfter(marker).substringBefore("|")
+            .split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    }
+
     /** ساخت نسخه اول دفتر با روش انتخاب‌شده؛ منطق چهار روش در یک مسیر اجرا می‌شود. */
     suspend fun buildNewOfficeWithMethod(
         plan: DirectorPlanEntity,
@@ -465,34 +473,26 @@ fun DirectorOfficeSharedMainScreen(
             val tazieh = libraryRepository.taziehByUid(plan.taziehUid)
                 ?: throw IllegalStateException("مجلس مرتبط با این دفتر در کتابخانه پیدا نشد.")
             val allRoles = libraryRepository.rolesFor(tazieh)
-            val roles = if (method == DirectorOfficeSharedContract.SELECTOR)
-                allRoles.filterNot { it.uid in excludedRoleUids }
-            else allRoles
+            // انتخاب و کنارگذاری نقش‌ها در هر چهار روش ساخت اعمال می‌شود.
+            val roles = allRoles.filterNot { it.uid in excludedRoleUids }
             require(roles.isNotEmpty()) { "حداقل یک نقش باید برای ورود به دفتر انتخاب شود." }
             val roleById = roles.associateBy { it.id }
             val allSections = libraryRepository.sectionsForRoles(allRoles.map { it.id })
                 .filter { it.content.isNotBlank() }
-            val sections = if (method == DirectorOfficeSharedContract.SELECTOR) {
-                val roleUidByIdAll = allRoles.associate { it.id to it.uid }
-                val selected = allSections.filter { section ->
-                    val roleUid = roleUidByIdAll[section.roleId]
-                    roleUid != null && roleUid !in excludedRoleUids && selectedSectionPriorities[section.uid] != null
-                }.sortedWith(
-                    compareBy<SectionEntity> { section -> roleById[section.roleId]?.orderIndex ?: Int.MAX_VALUE }
-                        .thenBy { section -> selectedSectionPriorities[section.uid] ?: Int.MAX_VALUE }
-                        .thenBy { it.orderIndex }.thenBy { it.id }
-                )
-                val includedRoleUids = roles.map { it.uid }.toSet()
-                val rolesWithoutSections = roles.filter { role ->
-                    role.uid in includedRoleUids && selected.none { section -> roleUidByIdAll[section.roleId] == role.uid }
-                }
-                require(rolesWithoutSections.isEmpty()) {
-                    "برای نقش‌های ${rolesWithoutSections.joinToString("، ") { it.title }} هیچ بخشی برای ورود انتخاب نشده است. برای کنار گذاشتن کامل، خود نقش را غیرفعال کنید."
-                }
-                selected
-            } else allSections.filter { roleById.containsKey(it.roleId) }
-                .sortedWith(compareBy<SectionEntity> { section -> roleById[section.roleId]?.orderIndex ?: Int.MAX_VALUE }
-                    .thenBy { it.orderIndex }.thenBy { it.id })
+            // اولویت‌بندی و کنارگذاری بخش‌ها نیز مستقل از روش ساخت است.
+            // مقدار مثبت یعنی ورود به دفتر؛ مقدار منفی یعنی کنارگذاری؛ صفر/تهی یعنی تعیین‌تکلیف‌نشده.
+            val selected = allSections.filter { section ->
+                roleById.containsKey(section.roleId) && (selectedSectionPriorities[section.uid] ?: 0) > 0
+            }.sortedWith(
+                compareBy<SectionEntity> { section -> roleById[section.roleId]?.orderIndex ?: Int.MAX_VALUE }
+                    .thenBy { section -> selectedSectionPriorities[section.uid] ?: Int.MAX_VALUE }
+                    .thenBy { it.orderIndex }.thenBy { it.id }
+            )
+            val rolesWithoutSections = roles.filter { role -> selected.none { it.roleId == role.id } }
+            require(rolesWithoutSections.isEmpty()) {
+                "برای نقش‌های ${rolesWithoutSections.joinToString("، ") { it.title }} هیچ بخشی برای ورود انتخاب نشده است. برای کنار گذاشتن کامل، خود نقش را غیرفعال کنید."
+            }
+            val sections = selected
             val roleInputs = roles.map { DirectorOfficeBuildRole(uid = it.uid, title = it.title, orderIndex = it.orderIndex) }
             val roleUidById = roles.associate { it.id to it.uid }
             val sectionInputs = sections.mapNotNull { section ->
@@ -501,12 +501,10 @@ fun DirectorOfficeSharedMainScreen(
             }
 
             val buildResult = workspaceRepository.buildDraftFromLibrary(version.id, method, roleInputs, sectionInputs)
-            val buildConfigurationNote = if (method == DirectorOfficeSharedContract.SELECTOR) {
-                val sectionRules = selectedSectionPriorities.entries.sortedBy { it.key }
-                    .joinToString(",") { (uid, priority) -> "$uid=${priority ?: -1}" }
-                val excludedRoles = excludedRoleUids.sorted().joinToString(",")
-                "روش تکمیل دفتر: $method | اولویت‌بندی بخش‌ها: $sectionRules | نقش‌های کنارگذاشته‌شده: $excludedRoles"
-            } else "روش تکمیل دفتر: $method"
+            val sectionRules = selectedSectionPriorities.entries.sortedBy { it.key }
+                .joinToString(",") { (uid, priority) -> "$uid=${priority ?: 0}" }
+            val excludedRoles = excludedRoleUids.sorted().joinToString(",")
+            val buildConfigurationNote = "روش تکمیل دفتر: $method | اولویت‌بندی بخش‌ها: $sectionRules | نقش‌های کنارگذاشته‌شده: $excludedRoles"
             dao.updateVersion(version.copy(changeNotes = buildConfigurationNote))
 
 
@@ -552,7 +550,7 @@ fun DirectorOfficeSharedMainScreen(
             DirectorOfficeSharedContract.FULL_TEXT -> if (result.generatedTurnCount > 0)
                 "متن کامل ${result.generatedTurnCount} نقش به ترتیب وارد دفتر شد."
             else "برای نقش‌های این مجلس متن قابل انتقال پیدا نشد؛ دفتر خالی ذخیره شد و می‌توانید نوبت‌ها را بعداً اضافه کنید."
-            DirectorOfficeSharedContract.MANUAL -> "دفتر خام ساخته شد؛ اکنون نوبت‌ها را از داخل همین دفتر اضافه کنید."
+            DirectorOfficeSharedContract.MANUAL -> "دفتر خام با نقش‌ها و بخش‌های انتخاب‌شده ساخته شد؛ اکنون نوبت‌ها را به‌صورت دستی اضافه کنید."
             else -> if (result.generatedTurnCount > 0)
                 "${result.generatedTurnCount} نوبت از بخش‌های انتخاب‌شده و بر اساس شماره‌های متن ساخته شد. بخش‌های بدون شماره همچنان از انتخاب‌گر دستی قابل تکمیل‌اند."
             else "دفتر و انتخاب‌های نقش‌ها و بخش‌ها ذخیره شد؛ بخش‌های انتخاب‌شده را می‌توانید با انتخاب‌گر به نوبت تبدیل کنید."
@@ -572,11 +570,11 @@ fun DirectorOfficeSharedMainScreen(
                     val targetTazieh = libraryRepository.taziehByUid(current.taziehUid)
                     targetTazieh?.let { libraryRepository.rolesFor(it) }.orEmpty()
                 }
-                roleOptions = refreshedRoles
-                selectedRole = selectedRole?.let { old -> refreshedRoles.firstOrNull { it.uid == old.uid } } ?: refreshedRoles.firstOrNull()
                 sources = withContext(Dispatchers.IO) { dao.sourceFiles(current.id) }
                 loadWorkspaceIntoScreen(current.id, selectedVersion?.id)
                 val currentVersion = selectedVersion
+                roleOptions = refreshedRoles.filterNot { it.uid in excludedRolesFromVersion(currentVersion) }
+                selectedRole = selectedRole?.let { old -> roleOptions.firstOrNull { it.uid == old.uid } } ?: roleOptions.firstOrNull()
                 selectedBuildMode = currentVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.substringBefore("|")
                     ?.substringAfter("روش تکمیل دفتر: ", "")
                     ?.takeIf { it in DirectorOfficeSharedContract.methodCodes }
@@ -999,15 +997,15 @@ fun DirectorOfficeSharedMainScreen(
                                         when (selectedBuildMode) {
                                             DirectorOfficeSharedContract.ROLE_NUMBERED -> {
                                                 Text("تشخیص نوبت‌های شماره‌دار از متن", fontWeight = FontWeight.Bold)
-                                                Text("برنامه متن نقش‌های همین مجلس را بررسی می‌کند و دیالوگ‌های دارای شماره را به نوبت تبدیل می‌کند. نوبت‌های هم‌شماره با متن یکسان به‌صورت جمعی ثبت می‌شوند؛ اگر متن‌ها متفاوت باشند، جداگانه ذخیره و برای اصلاح در دفتر هشدار داده می‌شوند.", style = MaterialTheme.typography.bodySmall)
+                                                Text("برنامه فقط بخش‌های انتخاب‌شده از نقش‌های فعال همین مجلس را بررسی می‌کند و دیالوگ‌های دارای شماره را به نوبت تبدیل می‌کند. نوبت‌های هم‌شماره با متن یکسان به‌صورت جمعی ثبت می‌شوند؛ اگر متن‌ها متفاوت باشند، جداگانه ذخیره و برای اصلاح در دفتر هشدار داده می‌شوند.", style = MaterialTheme.typography.bodySmall)
                                             }
                                             DirectorOfficeSharedContract.FULL_TEXT -> {
                                                 Text("ساخت از متن کامل", fontWeight = FontWeight.Bold)
-                                                Text("متن کامل بخش‌های نقش‌های همین مجلس به ترتیب نقش‌ها در دفتر ثبت می‌شود.", style = MaterialTheme.typography.bodySmall)
+                                                Text("متن کامل بخش‌های انتخاب‌شده از نقش‌های فعال همین مجلس، با رعایت اولویت هر نقش، در دفتر ثبت می‌شود.", style = MaterialTheme.typography.bodySmall)
                                             }
                                             DirectorOfficeSharedContract.MANUAL -> {
                                                 Text("ساخت دفتر خام به روش دستی", fontWeight = FontWeight.Bold)
-                                                Text("در این مرحله فقط دفتر و نسخه پیش‌نویس ساخته می‌شود. پس از ذخیره، وارد صفحه تکمیل دفتر می‌شوید و هر تعداد نوبت لازم است از همان صفحه اضافه می‌کنید.", style = MaterialTheme.typography.bodySmall)
+                                                Text("در این روش دفتر خام ساخته می‌شود؛ نقش‌ها و بخش‌های انتخاب‌شده به‌عنوان محدوده همین دفتر ثبت می‌شوند و نقش‌های کنارگذاشته‌شده در فهرست نقش‌های قابل استفاده نخواهند بود. نوبت‌ها را پس از ساخت به‌صورت دستی اضافه می‌کنید.", style = MaterialTheme.typography.bodySmall)
                                             }
                                             else -> {
                                                 Text("ساخت با انتخاب معین‌البکاء و اولویت‌بندی بخش‌ها", fontWeight = FontWeight.Bold)
@@ -1016,9 +1014,10 @@ fun DirectorOfficeSharedMainScreen(
                                         }
                                     }
                                 }
-                                if (selectedBuildMode == DirectorOfficeSharedContract.SELECTOR && selectedTazieh != null) {
+                                if (selectedTazieh != null) {
                                     Divider()
                                     Text("تعیین وضعیت نقش‌ها و اولویت بخش‌ها", fontWeight = FontWeight.Bold)
+                                    Text("این انتخاب‌ها در هر چهار روش ساخت دفتر اعمال می‌شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                                     Text("برای کنار گذاشتن کامل یک نقش، تیک کنار نام آن را بردارید. برای هر نقش فعال، تمام بخش‌ها باید اولویت بگیرند یا «وارد دفتر نشود» شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     roleOptions.forEach { role ->
                                         val roleSections = buildSectionOptions.filter { it.roleId == role.id }
@@ -1099,10 +1098,10 @@ fun DirectorOfficeSharedMainScreen(
                                 }
                                 Button(
                                     modifier = Modifier.fillMaxWidth(),
-                                    enabled = canCreatePersonal && canBuildMethod(selectedBuildMode) && selectedTazieh != null && planTitle.isNotBlank() && !busy && (selectedBuildMode != DirectorOfficeSharedContract.SELECTOR || (roleOptions.isNotEmpty() && roleOptions.any { it.uid !in excludedBuildRoleUids } && roleOptions.filter { it.uid !in excludedBuildRoleUids }.all { role ->
+                                    enabled = canCreatePersonal && canBuildMethod(selectedBuildMode) && selectedTazieh != null && planTitle.isNotBlank() && !busy && (roleOptions.isNotEmpty() && roleOptions.any { it.uid !in excludedBuildRoleUids } && roleOptions.filter { it.uid !in excludedBuildRoleUids }.all { role ->
                                         val rs = buildSectionOptions.filter { it.roleId == role.id }
                                         rs.isNotEmpty() && rs.all { (selectorSectionPriorities[it.uid] ?: 0) != 0 } && rs.any { (selectorSectionPriorities[it.uid] ?: 0) > 0 }
-                                    })),
+                                    }),
                                     onClick = {
                                         scope.launch {
                                             busy = true
@@ -1255,11 +1254,11 @@ fun DirectorOfficeSharedMainScreen(
                                             }
                                         }
                                         val targetTazieh = prepared.first
-                                        roleOptions = prepared.second
-                                        selectedRole = roleOptions.firstOrNull()
                                         sources = prepared.third.second
                                         var loadedWorkspace = prepared.third.first
                                         val chosenVersion = loadedWorkspace.selectedVersion
+                                        roleOptions = prepared.second.filterNot { it.uid in excludedRolesFromVersion(chosenVersion) }
+                                        selectedRole = roleOptions.firstOrNull()
                                         selectedBuildMode = chosenVersion?.changeNotes?.substringAfter("روش تکمیل دفتر: ", "")?.substringBefore("|")
                                             ?.substringAfter("روش تکمیل دفتر: ", "")
                                             ?.takeIf { code -> code in DirectorOfficeSharedContract.methodCodes }
@@ -1268,6 +1267,7 @@ fun DirectorOfficeSharedMainScreen(
                                         // روش انتخاب معین‌البکاء با تنظیمات ذخیره‌شده ساخته می‌شود؛ از بازسازی خودکار متن‌های کنارگذاشته‌شده جلوگیری کن.
                                         val hasStoredDialogue = loadedWorkspace.textSegmentsByTurn.values.any { rows -> rows.any { it.text.isNotBlank() } }
                                         if (chosenVersion != null && selectedBuildMode !in setOf(DirectorOfficeSharedContract.SELECTOR, DirectorOfficeSharedContract.MANUAL) &&
+                                            !chosenVersion.changeNotes.contains("اولویت‌بندی بخش‌ها:") &&
                                             (isAdmin || canCreatePersonal || canEditPersonal) && !hasStoredDialogue && targetTazieh != null) {
                                             val imported = withContext(Dispatchers.IO) {
                                                 libraryRepository.importExistingText(dao, transactionRunner, chosenVersion.id, targetTazieh.id, selectedBuildMode)
