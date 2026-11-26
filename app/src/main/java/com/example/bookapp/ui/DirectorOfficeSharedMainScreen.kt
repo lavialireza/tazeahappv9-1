@@ -153,6 +153,16 @@ private fun availableDirectorSelectorRanges(
 }
 
 
+private data class DirectorBuildPreviewRow(
+    val key: String,
+    val turnNumber: Int,
+    val roleUids: Set<String>,
+    val roleTitles: String,
+    val sectionTitles: String,
+    val text: String,
+    val duplicate: Boolean = false
+)
+
 private data class BuiltOfficeScreenData(
     val roles: List<RoleEntity>,
     val selectedRole: RoleEntity?,
@@ -328,6 +338,14 @@ fun DirectorOfficeSharedMainScreen(
     var buildSectionOptions by remember { mutableStateOf(emptyList<SectionEntity>()) }
     var selectorSectionPriorities by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var excludedBuildRoleUids by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showBuildPreview by remember { mutableStateOf(false) }
+    var buildPreviewConfirmed by remember { mutableStateOf(false) }
+    var buildPreviewRows by remember { mutableStateOf(emptyList<DirectorBuildPreviewRow>()) }
+    var buildPreviewWarnings by remember { mutableStateOf(emptyList<String>()) }
+    var showBuildTemplateDialog by remember { mutableStateOf(false) }
+    var buildTemplateName by remember { mutableStateOf("") }
+    var buildTemplateNames by remember { mutableStateOf(emptyList<String>()) }
+    var selectedBuildTemplate by remember { mutableStateOf("") }
     var expandedPrioritySectionUid by remember { mutableStateOf<String?>(null) }
     var selectedRole by remember { mutableStateOf<RoleEntity?>(null) }
     var roleMenuExpanded by remember { mutableStateOf(false) }
@@ -353,6 +371,79 @@ fun DirectorOfficeSharedMainScreen(
     var selectedBuildMode by remember { mutableStateOf(DirectorOfficeSharedContract.ROLE_NUMBERED) }
     val canBuildSelectedMethod = canBuildMethod(selectedBuildMode)
     val canBuildAnyMethod = isAdmin || DirectorOfficeSharedContract.methodCodes.any { canBuildMethod(it) }
+    fun buildTemplatePrefs() = context.getSharedPreferences("director_office_build_templates_v1", Context.MODE_PRIVATE)
+    fun refreshBuildTemplateNames() {
+        val uid = selectedTazieh?.uid ?: return
+        buildTemplateNames = runCatching {
+            val array = org.json.JSONArray(buildTemplatePrefs().getString(uid, "[]").orEmpty())
+            (0 until array.length()).mapNotNull { array.optJSONObject(it)?.optString("name")?.takeIf { n -> n.isNotBlank() } }
+        }.getOrDefault(emptyList())
+        if (selectedBuildTemplate !in buildTemplateNames) selectedBuildTemplate = buildTemplateNames.firstOrNull().orEmpty()
+    }
+    fun makeBuildPreview(): Pair<List<DirectorBuildPreviewRow>, List<String>> {
+        val activeRoles = roleOptions.filterNot { it.uid in excludedBuildRoleUids }
+        val roleById = activeRoles.associateBy { it.id }
+        val chosen = buildSectionOptions.filter { roleById.containsKey(it.roleId) && (selectorSectionPriorities[it.uid] ?: 0) > 0 }
+            .sortedWith(compareBy<SectionEntity> { roleById[it.roleId]?.orderIndex ?: Int.MAX_VALUE }
+                .thenBy { selectorSectionPriorities[it.uid] ?: Int.MAX_VALUE }.thenBy { it.orderIndex }.thenBy { it.id })
+        val rows = mutableListOf<DirectorBuildPreviewRow>()
+        when (selectedBuildMode) {
+            DirectorOfficeSharedContract.ROLE_NUMBERED, DirectorOfficeSharedContract.SELECTOR -> {
+                data class Entry(val number: Int, val role: RoleEntity, val section: SectionEntity, val text: String)
+                val entries = chosen.flatMap { section ->
+                    val role = roleById[section.roleId] ?: return@flatMap emptyList()
+                    DirectorOfficeWorkspaceUseCases.parseNumberedDialogues(section.content).map { (number, text) -> Entry(number, role, section, text) }
+                }
+                entries.groupBy { it.number }.toSortedMap().forEach { (number, sameNumber) ->
+                    sameNumber.groupBy { DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.text) }.values.forEachIndexed { index, group ->
+                        rows += DirectorBuildPreviewRow("$number:$index:${group.first().role.uid}", number,
+                            group.map { it.role.uid }.toSet(), group.map { it.role.title }.distinct().joinToString("، "),
+                            group.map { it.section.title }.distinct().joinToString("، "), group.first().text.trim())
+                    }
+                }
+            }
+            DirectorOfficeSharedContract.FULL_TEXT -> activeRoles.forEachIndexed { index, role ->
+                val sections = chosen.filter { it.roleId == role.id }
+                if (sections.isNotEmpty()) rows += DirectorBuildPreviewRow("full:${role.uid}", index + 1, setOf(role.uid), role.title,
+                    sections.joinToString("، ") { it.title }, sections.joinToString("\n\n") { it.content })
+            }
+        }
+        val duplicates = rows.filter { it.text.isNotBlank() }.groupBy { DirectorOfficeWorkspaceUseCases.normalizeDialogueText(it.text) }.filterValues { it.size > 1 }
+        val duplicateKeys = duplicates.values.flatten().map { it.key }.toSet()
+        val marked = rows.map { it.copy(duplicate = it.key in duplicateKeys) }
+        val warnings = buildList {
+            if (selectedBuildMode == DirectorOfficeSharedContract.MANUAL) add("روش دستی دفتر را بدون نوبت می‌سازد؛ نقش‌ها و بخش‌های انتخاب‌شده محدوده دفتر خواهند بود.")
+            if (duplicates.isNotEmpty()) add("${duplicates.size} گروه متن تکراری شناسایی شد؛ هیچ متنی خودکار حذف نمی‌شود.")
+            if (marked.isEmpty() && selectedBuildMode != DirectorOfficeSharedContract.MANUAL) add("نوبت شماره‌دار قابل استخراجی پیدا نشد؛ رفتار فعلی این روش حفظ می‌شود.")
+        }
+        return marked to warnings
+    }
+    fun saveBuildTemplate(name: String) {
+        val uid = selectedTazieh?.uid ?: return
+        val prefs = buildTemplatePrefs()
+        val old = runCatching { org.json.JSONArray(prefs.getString(uid, "[]").orEmpty()) }.getOrDefault(org.json.JSONArray())
+        val updated = org.json.JSONArray()
+        for (i in 0 until old.length()) old.optJSONObject(i)?.let { if (!it.optString("name").equals(name, true)) updated.put(it) }
+        val priorityJson = org.json.JSONObject().apply { selectorSectionPriorities.forEach { (key, value) -> put(key, value) } }
+        val excludedJson = org.json.JSONArray().apply { excludedBuildRoleUids.sorted().forEach { put(it) } }
+        updated.put(org.json.JSONObject().put("name", name).put("method", selectedBuildMode).put("priorities", priorityJson).put("excluded", excludedJson))
+        prefs.edit().putString(uid, updated.toString()).apply()
+        refreshBuildTemplateNames()
+        selectedBuildTemplate = name
+    }
+    fun loadBuildTemplate(name: String) {
+        val uid = selectedTazieh?.uid ?: return
+        val array = runCatching { org.json.JSONArray(buildTemplatePrefs().getString(uid, "[]").orEmpty()) }.getOrDefault(org.json.JSONArray())
+        val item = (0 until array.length()).mapNotNull { array.optJSONObject(it) }.firstOrNull { it.optString("name") == name } ?: return
+        val saved = item.optJSONObject("priorities") ?: org.json.JSONObject()
+        val values = buildMap { saved.keys().forEach { put(it, saved.optInt(it, 0)) } }
+        selectorSectionPriorities = buildSectionOptions.associate { section -> section.uid to (values[section.uid] ?: if (buildSectionOptions.count { it.roleId == section.roleId } == 1) 1 else 0) }
+        val excluded = item.optJSONArray("excluded") ?: org.json.JSONArray()
+        excludedBuildRoleUids = (0 until excluded.length()).mapNotNull { excluded.optString(it).takeIf(String::isNotBlank) }.toSet()
+        val method = item.optString("method")
+        if (method in DirectorOfficeSharedContract.methodCodes && canBuildMethod(method)) selectedBuildMode = method
+        buildPreviewConfirmed = false
+    }
     val canShowVersionManagement = isAdmin || canBuildAnyMethod || canEditPersonal || canImportSources
     var selectorItems by remember { mutableStateOf(emptyList<DirectorSelectorItem>()) }
     var selectorRole by remember { mutableStateOf<RoleEntity?>(null) }
@@ -939,6 +1030,8 @@ fun DirectorOfficeSharedMainScreen(
                                                         }.toMap()
                                                         selectedRole = loaded.first.firstOrNull()
                                                         selectorRole = loaded.first.firstOrNull()
+                                                        refreshBuildTemplateNames()
+                                                        buildPreviewConfirmed = false
                                                     }
                                                 }
                                             )
@@ -983,7 +1076,7 @@ fun DirectorOfficeSharedMainScreen(
                                     ) {
                                         RadioButton(
                                             selected = selectedBuildMode == method.code,
-                                            onClick = { selectedBuildMode = method.code },
+                                            onClick = { selectedBuildMode = method.code; buildPreviewConfirmed = false },
                                             enabled = canBuildMethod(method.code)
                                         )
                                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1019,6 +1112,18 @@ fun DirectorOfficeSharedMainScreen(
                                     Text("تعیین وضعیت نقش‌ها و اولویت بخش‌ها", fontWeight = FontWeight.Bold)
                                     Text("این انتخاب‌ها در هر چهار روش ساخت دفتر اعمال می‌شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                                     Text("برای کنار گذاشتن کامل یک نقش، تیک کنار نام آن را بردارید. برای هر نقش فعال، تمام بخش‌ها باید اولویت بگیرند یا «وارد دفتر نشود» شوند.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        var templateMenuExpanded by remember { mutableStateOf(false) }
+                                        if (buildTemplateNames.isNotEmpty()) {
+                                            Box(Modifier.weight(1f)) {
+                                                OutlinedButton(onClick = { templateMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(selectedBuildTemplate.ifBlank { "بارگذاری الگو" }) }
+                                                DropdownMenu(expanded = templateMenuExpanded, onDismissRequest = { templateMenuExpanded = false }) {
+                                                    buildTemplateNames.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { loadBuildTemplate(name); selectedBuildTemplate = name; templateMenuExpanded = false }) }
+                                                }
+                                            }
+                                        } else Spacer(Modifier.weight(1f))
+                                        TextButton(onClick = { showBuildTemplateDialog = true }) { Text("ذخیره الگو") }
+                                    }
                                     roleOptions.forEach { role ->
                                         val roleSections = buildSectionOptions.filter { it.roleId == role.id }
                                         val roleExcluded = role.uid in excludedBuildRoleUids
@@ -1032,11 +1137,21 @@ fun DirectorOfficeSharedMainScreen(
                                                         checked = !roleExcluded,
                                                         onCheckedChange = { checked ->
                                                             excludedBuildRoleUids = if (checked) excludedBuildRoleUids - role.uid else excludedBuildRoleUids + role.uid
+                                                            buildPreviewConfirmed = false
                                                         }
                                                     )
                                                     Column(Modifier.weight(1f)) {
                                                         Text(role.title, fontWeight = FontWeight.SemiBold)
-                                                        Text(if (roleExcluded) "این نقش به‌طور کامل وارد دفتر نمی‌شود" else "${roleSections.size} بخش شناسایی شده", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                        val roleResolved = roleSections.isNotEmpty() && roleSections.all { (selectorSectionPriorities[it.uid] ?: 0) != 0 } && roleSections.any { (selectorSectionPriorities[it.uid] ?: 0) > 0 }
+                                                        Text(
+                                                            when {
+                                                                roleExcluded -> "این نقش به‌طور کامل وارد دفتر نمی‌شود"
+                                                                roleResolved -> "تکمیل شد • ${roleSections.size} بخش شناسایی شده"
+                                                                else -> "نیازمند تعیین وضعیت • ${roleSections.size} بخش شناسایی شده"
+                                                            },
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = if (roleResolved || roleExcluded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
                                                     }
                                                 }
                                                 if (!roleExcluded) {
@@ -1065,6 +1180,7 @@ fun DirectorOfficeSharedMainScreen(
                                                                             text = { Text("اولویت $priority") },
                                                                             onClick = {
                                                                                 selectorSectionPriorities = selectorSectionPriorities + (section.uid to priority)
+                                                                                buildPreviewConfirmed = false
                                                                                 expandedPrioritySectionUid = null
                                                                             }
                                                                         )
@@ -1073,6 +1189,7 @@ fun DirectorOfficeSharedMainScreen(
                                                                         text = { Text("وارد دفتر نشود") },
                                                                         onClick = {
                                                                             selectorSectionPriorities = selectorSectionPriorities + (section.uid to -1)
+                                                                            buildPreviewConfirmed = false
                                                                             expandedPrioritySectionUid = null
                                                                         }
                                                                     )
@@ -1103,7 +1220,14 @@ fun DirectorOfficeSharedMainScreen(
                                         rs.isNotEmpty() && rs.all { (selectorSectionPriorities[it.uid] ?: 0) != 0 } && rs.any { (selectorSectionPriorities[it.uid] ?: 0) > 0 }
                                     }),
                                     onClick = {
-                                        scope.launch {
+                                        if (!buildPreviewConfirmed) {
+                                            val (rows, warnings) = makeBuildPreview()
+                                            buildPreviewRows = rows
+                                            buildPreviewWarnings = warnings
+                                            showBuildPreview = true
+                                        } else {
+                                            buildPreviewConfirmed = false
+                                            scope.launch {
                                             busy = true
                                             var createdPlanId: Long? = null
                                             try {
@@ -1153,8 +1277,30 @@ fun DirectorOfficeSharedMainScreen(
                                                     selectedSectionPriorities = selectorSectionPriorities.mapValues { (_, value) -> value.takeIf { it > 0 } },
                                                     excludedRoleUids = excludedBuildRoleUids
                                                 )
-                                                // buildNewOfficeWithMethod نقش‌ها و Snapshot نهایی را قبلاً در IO بارگذاری و اعمال کرده است؛
-                                                // از خواندن دوباره همان داده‌ها و اجرای مجدد پرس‌وجوهای سنگین جلوگیری می‌کنیم.
+                                                if (buildPreviewRows.isNotEmpty() && selectedBuildMode != DirectorOfficeSharedContract.MANUAL) {
+                                                    withContext(Dispatchers.IO) {
+                                                        val built = workspaceRepository.loadWorkspace(newPlanId, newVersionId)
+                                                        val remaining = built.turns.toMutableList()
+                                                        buildPreviewRows.forEachIndexed { orderIndex, row ->
+                                                            val match = remaining.firstOrNull { turn ->
+                                                                if (turn.turnNumber != row.turnNumber) return@firstOrNull false
+                                                                val participants = built.participantsByTurn[turn.id].orEmpty().map { it.roleUid }.toSet()
+                                                                if (participants != row.roleUids) return@firstOrNull false
+                                                                val text = built.textSegmentsByTurn[turn.id].orEmpty().sortedBy { it.segmentIndex }.joinToString("\n") { it.text }
+                                                                DirectorOfficeWorkspaceUseCases.normalizeDialogueText(text) == DirectorOfficeWorkspaceUseCases.normalizeDialogueText(row.text)
+                                                            }
+                                                            if (match != null) {
+                                                                workspaceRepository.updateTurn(match.copy(sequenceIndex = orderIndex))
+                                                                remaining.remove(match)
+                                                            }
+                                                        }
+                                                    }
+                                                    val reorderedWorkspace = withContext(Dispatchers.IO) {
+                                                        workspaceRepository.loadWorkspace(newPlanId, newVersionId)
+                                                    }
+                                                    applyWorkspaceToScreen(reorderedWorkspace)
+                                                }
+                                                // در صورت جابه‌جایی نوبت‌ها در پیش‌نمایش، sequenceIndex همان نوبت‌ها نیز اصلاح شد.
                                                 selectedPlan = newPlan
                                                 selectedVersion = newVersion
                                                 planVersions = listOf(newVersion)
@@ -1170,13 +1316,14 @@ fun DirectorOfficeSharedMainScreen(
                                                 createdPlanId?.let { runCatching { dao.softDeletePlan(it, System.currentTimeMillis()) } }
                                                 message = "ساخت دفتر ناموفق بود: ${e.message ?: "خطای نامشخص"}"
                                             } finally { busy = false }
+                                            }
                                         }
                                     }
                                 ) {
                                     if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                                     else Icon(Icons.Default.Add, contentDescription = null)
                                     Spacer(Modifier.width(8.dp))
-                                    Text("ساخت دفتر و ذخیره")
+                                    Text(if (buildPreviewConfirmed) "ساخت دفتر نهایی" else "پیش‌نمایش و بررسی دفتر")
                                 }
                             }
                         }
@@ -2109,7 +2256,7 @@ fun DirectorOfficeSharedMainScreen(
                         DirectorOfficeBuildMethodOption(
                             method = method,
                             selected = selectedBuildMode == method.code,
-                            onClick = { if (canBuildMethod(method.code)) selectedBuildMode = method.code },
+                            onClick = { if (canBuildMethod(method.code)) { selectedBuildMode = method.code; buildPreviewConfirmed = false } },
                             orderLabel = orderLabel,
                             enabled = canBuildMethod(method.code)
                         )
@@ -2618,6 +2765,54 @@ fun DirectorOfficeSharedMainScreen(
         )
     }
     }
+    if (showBuildPreview) {
+        AlertDialog(
+            onDismissRequest = { showBuildPreview = false },
+            title = { Text("پیش‌نمایش و بررسی دفتر") },
+            text = {
+                Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("مجلس: ${selectedTazieh?.title.orEmpty()} • روش: ${DirectorOfficeSharedContract.method(selectedBuildMode)?.label.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                    buildPreviewWarnings.forEach { Text("⚠ $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    if (selectedBuildMode == DirectorOfficeSharedContract.MANUAL) Text("دفتر به‌صورت خام ساخته می‌شود؛ نوبت‌ها بعداً به‌صورت دستی اضافه خواهند شد.")
+                    if (buildPreviewRows.isEmpty()) Text("نوبتی برای پیش‌نمایش وجود ندارد؛ محدوده نقش‌ها و بخش‌های انتخاب‌شده حفظ می‌شود.")
+                    buildPreviewRows.forEachIndexed { index, row ->
+                        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (row.duplicate) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant)) {
+                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("نوبت ${DirectorOfficeWorkspaceUseCases.formatPersianNumber(row.turnNumber)} — ${row.roleTitles}", Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                                    Column {
+                                        TextButton(enabled = index > 0, onClick = { buildPreviewRows = buildPreviewRows.toMutableList().also { val v=it[index-1]; it[index-1]=it[index]; it[index]=v } }) { Text("↑") }
+                                        TextButton(enabled = index < buildPreviewRows.lastIndex, onClick = { buildPreviewRows = buildPreviewRows.toMutableList().also { val v=it[index+1]; it[index+1]=it[index]; it[index]=v } }) { Text("↓") }
+                                    }
+                                }
+                                Text(row.sectionTitles, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(row.text.take(360) + if (row.text.length > 360) "…" else "", style = MaterialTheme.typography.bodySmall)
+                                if (row.duplicate) Text("متن مشابه در ردیف دیگری وجود دارد؛ هر دو حفظ می‌شوند.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                    Text("نقش‌های فعال: ${roleOptions.count { it.uid !in excludedBuildRoleUids }} از ${roleOptions.size} | بخش‌های انتخاب‌شده: ${selectorSectionPriorities.count { (uid, value) -> value > 0 && buildSectionOptions.firstOrNull { it.uid == uid }?.let { section -> roleOptions.firstOrNull { it.id == section.roleId }?.uid !in excludedBuildRoleUids } == true }}", style = MaterialTheme.typography.bodySmall)
+                    roleOptions.filterNot { it.uid in excludedBuildRoleUids }.forEach { role ->
+                        val selectedSections = buildSectionOptions.filter { it.roleId == role.id && (selectorSectionPriorities[it.uid] ?: 0) > 0 }
+                            .sortedBy { selectorSectionPriorities[it.uid] ?: Int.MAX_VALUE }
+                        Text("${role.title}: ${selectedSections.joinToString("، ") { "${it.title} (اولویت ${selectorSectionPriorities[it.uid]})" }}", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Text("جابجایی ردیف‌ها ترتیب نمایش دفتر را تغییر می‌دهد؛ شماره اصلی نوبت‌ها حفظ می‌شود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = { TextButton(onClick = { showBuildPreview = false; buildPreviewConfirmed = true }) { Text("تأیید پیش‌نمایش") } },
+            dismissButton = { TextButton(onClick = { showBuildPreview = false; buildPreviewConfirmed = false }) { Text("بازگشت و اصلاح") } }
+        )
+    }
+    if (showBuildTemplateDialog) {
+        AlertDialog(
+            onDismissRequest = { showBuildTemplateDialog = false },
+            title = { Text("ذخیره الگوی انتخاب‌ها") },
+            text = { OutlinedTextField(value = buildTemplateName, onValueChange = { buildTemplateName = it }, label = { Text("نام الگو") }, singleLine = true) },
+            confirmButton = { TextButton(enabled = buildTemplateName.isNotBlank(), onClick = { saveBuildTemplate(buildTemplateName.trim()); buildTemplateName = ""; showBuildTemplateDialog = false }) { Text("ذخیره") } },
+            dismissButton = { TextButton(onClick = { showBuildTemplateDialog = false }) { Text("انصراف") } }
+        )
+    }
 }
 
 
@@ -3080,6 +3275,9 @@ private fun ColumnSearchContent(
         }
     }
 }
+
+
+
 
 private fun toPersianOfficeDigits(value: String): String = value.map { ch ->
     if (ch in '0'..'9') ('۰'.code + (ch.code - '0'.code)).toChar() else ch
