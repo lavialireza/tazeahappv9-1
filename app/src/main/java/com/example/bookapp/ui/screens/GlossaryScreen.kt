@@ -6,7 +6,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -183,12 +183,16 @@ fun GlossaryScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(visibleTerms, key = { it.id }) { term ->
+                itemsIndexed(visibleTerms, key = { _, term -> term.id }) { index, term ->
                     val termMeanings = meanings.filter { it.termId == term.id }
                     val expanded = selectedTermId == term.id
                     Card(
                         modifier = Modifier.fillMaxWidth().clickable { selectedTermId = if (expanded) null else term.id },
-                        shape = RoundedCornerShape(14.dp)
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (index % 2 == 0) MaterialTheme.colorScheme.surface
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                        )
                     ) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -226,8 +230,6 @@ fun GlossaryScreen(
                                             val sourceLine = listOf(meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage).filter { it.isNotBlank() }.joinToString("، ")
                                             if (sourceLine.isNotBlank()) Text("منبع: $sourceLine", style = MaterialTheme.typography.bodySmall)
                                             if (meaning.sourceUrl.isNotBlank()) Text("نشانی منبع: ${meaning.sourceUrl}", style = MaterialTheme.typography.bodySmall)
-                                            val usagePath = listOf(meaning.usageTaziehUid?.let { "مجلس: $it" }, meaning.usageVersionUid?.let { "نسخه: $it" }, meaning.usageRoleUid?.let { "نقش: $it" }, meaning.usageSectionUid?.let { "بخش: $it" }).filterNotNull()
-                                            if (usagePath.isNotEmpty()) Text(usagePath.joinToString(" | "), style = MaterialTheme.typography.bodySmall)
                                             if (meaning.usageQuote.isNotBlank()) Text("شاهد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)
                                             if (isAdmin) {
                                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -439,9 +441,6 @@ fun GlossaryScreen(
                                 })
                             }
                         }
-                    }
-                    if (selectedRole != null) {
-                        Text("نسخه: ${selectedRole?.versionUid?.ifBlank { "ثبت‌نشده" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     OutlinedTextField(quote, { quote = it }, label = { Text("شاهد کاربرد در متن (اختیاری)") }, minLines = 2)
                     OutlinedTextField(notes, { notes = it }, label = { Text("یادداشت تکمیلی مدخل (اختیاری)") }, minLines = 2)

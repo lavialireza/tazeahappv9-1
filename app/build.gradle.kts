@@ -149,23 +149,18 @@ android {
     // Explicitly attach that directory to the viewer flavor so encrypted .taz
     // files are packaged into the Viewer APK under assets/content/.
     sourceSets {
-        // Keep the common source set completely free of content assets.
-        // Content is intentionally isolated per flavor so Admin JSON can
-        // never become an input to the public Viewer variant.
+        // Shared, pre-approved glossary packages are bundled into both flavors.
+        // Tazieh content remains isolated in the Admin/Viewer flavor asset folders.
         getByName("main") {
-            assets.setSrcDirs(emptyList<String>())
+            assets.setSrcDirs(listOf("src/main/assets"))
         }
         getByName("viewer") {
             setRoot("src/viewer")
-            // Viewer-specific content plus shared, pre-approved glossary packages.
-            // The common main asset directory is intentionally attached only to
-            // the two official flavors, not to the empty main source set.
-            assets.setSrcDirs(listOf("src/viewer/assets", "src/main/assets"))
+            assets.setSrcDirs(listOf("src/viewer/assets"))
         }
         getByName("admin") {
             setRoot("src/admin")
-            // Admin-specific content plus shared glossary packages.
-            assets.setSrcDirs(listOf("src/admin/assets", "src/main/assets"))
+            assets.setSrcDirs(listOf("src/admin/assets"))
         }
 
         // آیکن‌های تولیدشده از custom_icons به‌صورت منبع موقت build اضافه می‌شوند.
