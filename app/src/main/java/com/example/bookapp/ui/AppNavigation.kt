@@ -1502,13 +1502,19 @@ fun AppNavigation(
                 relatedSections = db.searchDao().getRelatedByTitle(section.title, sectionId)
                 reloadFootnotes()
                 runCatching {
+                    val roleForGlossary = db.roleDao().getById(section.roleId)
+                    val taziehForGlossary = db.taziehDao().getById(roleForGlossary.taziehId)
                     glossaryOccurrences = com.example.bookapp.data.GlossaryTextLinker.link(
-                        section.content,
-                        db.glossaryDao().allTerms(),
-                        db.glossaryDao().allSpellings(),
-                        db.glossaryDao().allMeanings()
+                        text = section.content,
+                        terms = db.glossaryDao().allTerms(),
+                        spellings = db.glossaryDao().allSpellings(),
+                        meanings = db.glossaryDao().allMeanings(),
+                        sectionUid = section.uid,
+                        roleUid = roleForGlossary.uid,
+                        versionUid = roleForGlossary.versionUid,
+                        taziehUid = taziehForGlossary?.uid.orEmpty()
                     )
-                }.onFailure { android.util.Log.w("TaziehGlossary", "پیوند خودکار واژه‌نامه در این بخش در دسترس نیست", it) }
+                }.onFailure { android.util.Log.w("TaziehGlossary", "پیوند واژه‌های مختص این بخش در دسترس نیست", it) }
                 siblingSections = db.sectionDao().getByRole(section.roleId)
                 siblingIndex = siblingSections.indexOfFirst { it.id == sectionId }
                 val role = db.roleDao().getById(section.roleId)

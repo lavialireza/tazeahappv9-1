@@ -68,8 +68,30 @@ class VersionComparisonService(private val db: AppDatabase) {
 /** پیوندهای واژه‌نامه فقط به‌صورت annotation ارائه می‌شوند؛ متن ورودی هرگز ویرایش نمی‌شود. */
 data class GlossaryOccurrence(val start: Int, val endExclusive: Int, val termUid: String, val headword: String, val meaningCount: Int, val verifiedMeanings: List<String> = emptyList(), val sources: List<String> = emptyList())
 object GlossaryTextLinker {
-    fun link(text: String, terms: List<GlossaryTermEntity>, spellings: List<GlossarySpellingEntity>, meanings: List<GlossaryMeaningEntity>): List<GlossaryOccurrence> {
-        val approved = terms.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
+    /**
+     * واژه فقط در همان بخشی پیوند می‌خورد که کاربرد تأییدشده‌اش به usageSectionUid متصل است.
+     * شناسه‌های بالادستی نیز در صورت وجود باید با مسیر واقعی محتوا منطبق باشند.
+     */
+    fun link(
+        text: String,
+        terms: List<GlossaryTermEntity>,
+        spellings: List<GlossarySpellingEntity>,
+        meanings: List<GlossaryMeaningEntity>,
+        sectionUid: String,
+        roleUid: String,
+        versionUid: String,
+        taziehUid: String
+    ): List<GlossaryOccurrence> {
+        if (sectionUid.isBlank()) return emptyList()
+        val scopedMeanings = meanings.filter { meaning ->
+            meaning.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED &&
+                meaning.usageSectionUid == sectionUid &&
+                (meaning.usageRoleUid.isNullOrBlank() || meaning.usageRoleUid == roleUid) &&
+                (meaning.usageVersionUid.isNullOrBlank() || meaning.usageVersionUid == versionUid) &&
+                (meaning.usageTaziehUid.isNullOrBlank() || meaning.usageTaziehUid == taziehUid)
+        }
+        val scopedTermIds = scopedMeanings.map { it.termId }.toSet()
+        val approved = terms.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED && it.id in scopedTermIds }
         val byId = approved.associateBy { it.id }
         val variants = (approved.map { Triple(it.id, it.headword, it.uid) } + spellings.filter { it.termId in byId }.map { Triple(it.termId, it.spelling, byId.getValue(it.termId).uid) })
             .filter { it.second.isNotBlank() }.distinctBy { it.first to normalizeSearchText(it.second) }
@@ -93,7 +115,7 @@ object GlossaryTextLinker {
                 val range = start..(end - 1)
                 if (occupied.none { it.first <= range.last && range.first <= it.last }) {
                     occupied += range
-                    val approvedMeanings = meanings.filter { it.termId == id && it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
+                    val approvedMeanings = scopedMeanings.filter { it.termId == id }
                     found += GlossaryOccurrence(start, end, uid, byId.getValue(id).headword, approvedMeanings.size,
                         approvedMeanings.map { it.meaning }, approvedMeanings.mapNotNull { it.sourceTitle.takeIf(String::isNotBlank) }.distinct())
                 }

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "packageUid": "replace-with-a-unique-package-id",
+  "terms": [
+    {
+      "headword": "نمونه واژه",
+      "partOfSpeech": "اسم",
+      "pronunciation": "",
+      "etymology": "",
+      "notes": "",
+      "spellings": [],
+      "meanings": [
+        {
+          "meaning": "معنی این واژه در این کاربرد",
+          "sourceTitle": "نام منبع",
+          "sourceAuthor": "",
+          "sourcePage": "",
+          "sourceUrl": "",
+          "usageTaziehUid": "replace-with-real-tazieh-uid",
+          "usageVersionUid": "replace-with-real-version-uid",
+          "usageRoleUid": "replace-with-real-role-uid",
+          "usageSectionUid": "replace-with-real-section-uid",
+          "usageQuote": "شاهد کاربرد در متن همان بخش"
+        }
+      ]
+    }
+  ]
+}

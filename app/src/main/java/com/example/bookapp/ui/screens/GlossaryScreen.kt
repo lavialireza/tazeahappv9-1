@@ -14,6 +14,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,6 +43,8 @@ fun GlossaryScreen(
     isAdmin: Boolean
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var importPreview by remember { mutableStateOf<GlossaryImportPreview?>(null) }
     var terms by remember { mutableStateOf(emptyList<GlossaryTermEntity>()) }
     var spellings by remember { mutableStateOf(emptyList<GlossarySpellingEntity>()) }
     var meanings by remember { mutableStateOf(emptyList<GlossaryMeaningEntity>()) }
@@ -61,6 +66,22 @@ fun GlossaryScreen(
     }
 
     LaunchedEffect(db, isAdmin) { reload() }
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && isAdmin) {
+            scope.launch {
+                busy = true
+                try {
+                    val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        ?: error("خواندن فایل انتخاب‌شده ممکن نشد.")
+                    importPreview = GlossaryImportService(db).preview(json)
+                    message = if (importPreview?.isValid == true) "پیش‌نمایش آماده است؛ هنوز هیچ داده‌ای وارد نشده." else "فایل بررسی شد؛ خطاهای آن را در پیش‌نمایش ببینید."
+                } catch (e: Exception) {
+                    message = "خواندن بسته ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                } finally { busy = false }
+            }
+        }
+    }
 
     val visibleTerms = remember(terms, spellings, meanings, query, statusFilter, isAdmin) {
         val q = normalizeGlossaryEntry(query)
@@ -97,6 +118,13 @@ fun GlossaryScreen(
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (isAdmin) {
+                OutlinedButton(
+                    onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                ) { Text(if (busy) "در حال بررسی بسته…" else "ورود بسته واژه‌ها (JSON)") }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -224,6 +252,42 @@ fun GlossaryScreen(
         }
     }
 
+    importPreview?.let { preview ->
+        AlertDialog(
+            onDismissRequest = { if (!busy) importPreview = null },
+            title = { Text("پیش‌نمایش بسته فرهنگ اصطلاحات") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("شناسه بسته: ${preview.packageUid}")
+                    Text("واژه‌ها: ${preview.terms.size}  |  معنی‌ها: ${preview.meaningCount}  |  صورت‌های نوشتاری: ${preview.spellingCount}")
+                    Text("همه موارد جدید با وضعیت «در انتظار بررسی» ثبت می‌شوند و به‌صورت خودکار تأیید نخواهند شد.", style = MaterialTheme.typography.bodySmall)
+                    preview.errors.forEach { Text("خطا: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    preview.warnings.forEach { Text("هشدار: $it", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
+                    preview.terms.take(12).forEach { term ->
+                        Text("• ${term.headword} (${term.meanings.size} معنی)", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (preview.terms.size > 12) Text("و ${preview.terms.size - 12} واژه دیگر…", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = preview.isValid && !busy, onClick = {
+                    scope.launch {
+                        busy = true
+                        try {
+                            val result = GlossaryImportService(db).apply(preview)
+                            importPreview = null
+                            reload()
+                            message = "ورود افزایشی انجام شد: ${result.addedTerms} واژه جدید، ${result.reusedTerms} واژه موجود، ${result.addedMeanings} معنی جدید؛ ${result.skippedMeanings} معنی تکراری و ${result.skippedSpellings} صورت نوشتاری تکراری رد شد."
+                        } catch (e: Exception) {
+                            message = "ورود بسته انجام نشد و هیچ تغییر ناقصی ذخیره نشد: ${e.message ?: "خطای نامشخص"}"
+                        } finally { busy = false }
+                    }
+                }) { Text(if (busy) "در حال ورود…" else "تأیید و ورود بسته") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { importPreview = null }) { Text("انصراف") } }
+        )
+    }
+
     if (showEditor && isAdmin) {
         var headword by remember { mutableStateOf("") }
         var meaning by remember { mutableStateOf("") }
@@ -252,27 +316,35 @@ fun GlossaryScreen(
                     OutlinedTextField(pronunciation, { pronunciation = it }, label = { Text("تلفظ") }, singleLine = true)
                     OutlinedTextField(etymology, { etymology = it }, label = { Text("ریشه‌شناسی") }, minLines = 2)
                     OutlinedTextField(meaning, { meaning = it }, label = { Text("معنی") }, minLines = 2)
-                    OutlinedTextField(source, { source = it }, label = { Text("منبع") }, singleLine = true)
+                    OutlinedTextField(source, { source = it }, label = { Text("عنوان منبع (یا نشانی منبع الزامی است)") }, singleLine = true)
                     OutlinedTextField(author, { author = it }, label = { Text("پدیدآورنده") }, singleLine = true)
                     OutlinedTextField(page, { page = it }, label = { Text("صفحه / جلد") }, singleLine = true)
                     OutlinedTextField(sourceUrl, { sourceUrl = it }, label = { Text("نشانی اینترنتی منبع (اختیاری)") }, singleLine = true)
                     OutlinedTextField(taziehUid, { taziehUid = it }, label = { Text("شناسه مجلس (اختیاری)") }, singleLine = true)
                     OutlinedTextField(versionUid, { versionUid = it }, label = { Text("شناسه نسخه (اختیاری)") }, singleLine = true)
                     OutlinedTextField(roleUid, { roleUid = it }, label = { Text("شناسه نقش (اختیاری)") }, singleLine = true)
-                    OutlinedTextField(sectionUid, { sectionUid = it }, label = { Text("شناسه بخش (اختیاری)") }, singleLine = true)
+                    OutlinedTextField(sectionUid, { sectionUid = it }, label = { Text("شناسه دقیق بخش (برای پیوند به همان صفحه الزامی)") }, singleLine = true)
                     OutlinedTextField(quote, { quote = it }, label = { Text("شاهد کاربرد در متن (اختیاری)") }, minLines = 2)
                     OutlinedTextField(notes, { notes = it }, label = { Text("یادداشت تکمیلی مدخل (اختیاری)") }, minLines = 2)
                 }
             },
             confirmButton = {
-                TextButton(enabled = !busy && headword.isNotBlank() && meaning.isNotBlank(), onClick = {
+                TextButton(enabled = !busy && headword.isNotBlank() && meaning.isNotBlank() && sectionUid.isNotBlank() && (source.isNotBlank() || sourceUrl.isNotBlank()), onClick = {
                     scope.launch {
                         busy = true
                         message = null
                         try {
                             val normalized = normalizeGlossaryEntry(headword)
                             require(normalized.isNotBlank()) { "واژه معتبر نیست." }
+                            require(source.isNotBlank() || sourceUrl.isNotBlank()) { "ثبت عنوان منبع یا نشانی منبع الزامی است." }
                             db.withTransaction {
+                                val section = db.sectionDao().getByUid(sectionUid.trim())
+                                    ?: error("شناسه بخش در محتوای برنامه پیدا نشد.")
+                                val contextRole = db.roleDao().getById(section.roleId)
+                                val contextTazieh = db.taziehDao().getById(contextRole.taziehId)
+                                require(roleUid.isBlank() || roleUid.trim() == contextRole.uid) { "شناسه نقش با بخش انتخاب‌شده مطابقت ندارد." }
+                                require(versionUid.isBlank() || versionUid.trim() == contextRole.versionUid) { "شناسه نسخه با بخش انتخاب‌شده مطابقت ندارد." }
+                                require(taziehUid.isBlank() || taziehUid.trim() == contextTazieh?.uid) { "شناسه مجلس با بخش انتخاب‌شده مطابقت ندارد." }
                                 val dao = db.glossaryDao()
                                 val existing = dao.byNormalizedHeadword(normalized)
                                 val now = System.currentTimeMillis()
@@ -299,7 +371,7 @@ fun GlossaryScreen(
                                         dao.insertSpelling(GlossarySpellingEntity(termId = term.id, spelling = spelling.trim(), normalizedSpelling = normalizedSpelling))
                                     }
                                 }
-                                require(dao.duplicateMeaning(term.id, meaning.trim(), source.trim(), author.trim(), page.trim()) == null) { "این معنی با همین مشخصات منبع قبلاً ثبت شده است." }
+                                require(dao.duplicateMeaning(term.id, meaning.trim(), source.trim(), author.trim(), page.trim(), sectionUid.trim().ifBlank { null }) == null) { "این معنی با همین مشخصات منبع قبلاً ثبت شده است." }
                                 val item = GlossaryMeaningEntity(
                                     uid = "meaning-${UUID.randomUUID()}", termId = term.id, meaning = meaning.trim(),
                                     sourceTitle = source.trim(), sourceAuthor = author.trim(), sourcePage = page.trim(), sourceUrl = sourceUrl.trim(),
