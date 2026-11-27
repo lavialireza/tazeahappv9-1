@@ -299,12 +299,20 @@ fun GlossaryScreen(
         var author by remember { mutableStateOf("") }
         var page by remember { mutableStateOf("") }
         var sourceUrl by remember { mutableStateOf("") }
-        var taziehUid by remember { mutableStateOf("") }
-        var versionUid by remember { mutableStateOf("") }
-        var roleUid by remember { mutableStateOf("") }
-        var sectionUid by remember { mutableStateOf("") }
+        var taziehOptions by remember { mutableStateOf(emptyList<TaziehEntity>()) }
+        var roleOptions by remember { mutableStateOf(emptyList<RoleEntity>()) }
+        var sectionOptions by remember { mutableStateOf(emptyList<SectionEntity>()) }
+        var selectedTazieh by remember { mutableStateOf<TaziehEntity?>(null) }
+        var selectedRole by remember { mutableStateOf<RoleEntity?>(null) }
+        var selectedSection by remember { mutableStateOf<SectionEntity?>(null) }
+        var taziehExpanded by remember { mutableStateOf(false) }
+        var roleExpanded by remember { mutableStateOf(false) }
+        var sectionExpanded by remember { mutableStateOf(false) }
         var quote by remember { mutableStateOf("") }
         var notes by remember { mutableStateOf("") }
+        LaunchedEffect(Unit) {
+            taziehOptions = db.taziehDao().getAll()
+        }
         AlertDialog(
             onDismissRequest = { if (!busy) showEditor = false },
             title = { Text("ثبت واژه و معنی") },
@@ -320,16 +328,63 @@ fun GlossaryScreen(
                     OutlinedTextField(author, { author = it }, label = { Text("پدیدآورنده") }, singleLine = true)
                     OutlinedTextField(page, { page = it }, label = { Text("صفحه / جلد") }, singleLine = true)
                     OutlinedTextField(sourceUrl, { sourceUrl = it }, label = { Text("نشانی اینترنتی منبع (اختیاری)") }, singleLine = true)
-                    OutlinedTextField(taziehUid, { taziehUid = it }, label = { Text("شناسه مجلس (اختیاری)") }, singleLine = true)
-                    OutlinedTextField(versionUid, { versionUid = it }, label = { Text("شناسه نسخه (اختیاری)") }, singleLine = true)
-                    OutlinedTextField(roleUid, { roleUid = it }, label = { Text("شناسه نقش (اختیاری)") }, singleLine = true)
-                    OutlinedTextField(sectionUid, { sectionUid = it }, label = { Text("شناسه دقیق بخش (برای پیوند به همان صفحه الزامی)") }, singleLine = true)
+                    Text("تعیین محل دقیق کاربرد واژه", style = MaterialTheme.typography.titleSmall)
+                    Box {
+                        OutlinedButton(onClick = { taziehExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(selectedTazieh?.title ?: "۱. انتخاب مجلس")
+                        }
+                        DropdownMenu(expanded = taziehExpanded, onDismissRequest = { taziehExpanded = false }) {
+                            taziehOptions.forEach { item ->
+                                DropdownMenuItem(text = { Text(item.title) }, onClick = {
+                                    selectedTazieh = item
+                                    selectedRole = null
+                                    selectedSection = null
+                                    roleOptions = emptyList()
+                                    sectionOptions = emptyList()
+                                    taziehExpanded = false
+                                    scope.launch { roleOptions = db.roleDao().getByTazieh(item.id) }
+                                })
+                            }
+                        }
+                    }
+                    Box {
+                        OutlinedButton(onClick = { if (selectedTazieh != null) roleExpanded = true }, enabled = selectedTazieh != null, modifier = Modifier.fillMaxWidth()) {
+                            Text(selectedRole?.title ?: "۲. انتخاب نقش")
+                        }
+                        DropdownMenu(expanded = roleExpanded, onDismissRequest = { roleExpanded = false }) {
+                            roleOptions.forEach { item ->
+                                DropdownMenuItem(text = { Text(item.title) }, onClick = {
+                                    selectedRole = item
+                                    selectedSection = null
+                                    sectionOptions = emptyList()
+                                    roleExpanded = false
+                                    scope.launch { sectionOptions = db.sectionDao().getByRole(item.id) }
+                                })
+                            }
+                        }
+                    }
+                    Box {
+                        OutlinedButton(onClick = { if (selectedRole != null) sectionExpanded = true }, enabled = selectedRole != null, modifier = Modifier.fillMaxWidth()) {
+                            Text(selectedSection?.title ?: "۳. انتخاب بخش دقیق")
+                        }
+                        DropdownMenu(expanded = sectionExpanded, onDismissRequest = { sectionExpanded = false }) {
+                            sectionOptions.forEach { item ->
+                                DropdownMenuItem(text = { Text(item.title.ifBlank { "بخش ${item.orderIndex + 1}" }) }, onClick = {
+                                    selectedSection = item
+                                    sectionExpanded = false
+                                })
+                            }
+                        }
+                    }
+                    if (selectedRole != null) {
+                        Text("نسخه: ${selectedRole?.versionUid?.ifBlank { "ثبت‌نشده" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     OutlinedTextField(quote, { quote = it }, label = { Text("شاهد کاربرد در متن (اختیاری)") }, minLines = 2)
                     OutlinedTextField(notes, { notes = it }, label = { Text("یادداشت تکمیلی مدخل (اختیاری)") }, minLines = 2)
                 }
             },
             confirmButton = {
-                TextButton(enabled = !busy && headword.isNotBlank() && meaning.isNotBlank() && sectionUid.isNotBlank() && (source.isNotBlank() || sourceUrl.isNotBlank()), onClick = {
+                TextButton(enabled = !busy && headword.isNotBlank() && meaning.isNotBlank() && selectedTazieh != null && selectedRole != null && selectedSection != null && (source.isNotBlank() || sourceUrl.isNotBlank()), onClick = {
                     scope.launch {
                         busy = true
                         message = null
@@ -338,13 +393,12 @@ fun GlossaryScreen(
                             require(normalized.isNotBlank()) { "واژه معتبر نیست." }
                             require(source.isNotBlank() || sourceUrl.isNotBlank()) { "ثبت عنوان منبع یا نشانی منبع الزامی است." }
                             db.withTransaction {
-                                val section = db.sectionDao().getByUid(sectionUid.trim())
-                                    ?: error("شناسه بخش در محتوای برنامه پیدا نشد.")
-                                val contextRole = db.roleDao().getById(section.roleId)
-                                val contextTazieh = db.taziehDao().getById(contextRole.taziehId)
-                                require(roleUid.isBlank() || roleUid.trim() == contextRole.uid) { "شناسه نقش با بخش انتخاب‌شده مطابقت ندارد." }
-                                require(versionUid.isBlank() || versionUid.trim() == contextRole.versionUid) { "شناسه نسخه با بخش انتخاب‌شده مطابقت ندارد." }
-                                require(taziehUid.isBlank() || taziehUid.trim() == contextTazieh?.uid) { "شناسه مجلس با بخش انتخاب‌شده مطابقت ندارد." }
+                                val section = selectedSection ?: error("بخش دقیق انتخاب نشده است.")
+                                val contextRole = selectedRole ?: error("نقش انتخاب نشده است.")
+                                val contextTazieh = selectedTazieh ?: error("مجلس انتخاب نشده است.")
+                                require(section.roleId == contextRole.id && contextRole.taziehId == contextTazieh.id) {
+                                    "زنجیره مجلس، نقش و بخش تغییر کرده است؛ دوباره انتخاب کنید."
+                                }
                                 val dao = db.glossaryDao()
                                 val existing = dao.byNormalizedHeadword(normalized)
                                 val now = System.currentTimeMillis()
@@ -371,12 +425,12 @@ fun GlossaryScreen(
                                         dao.insertSpelling(GlossarySpellingEntity(termId = term.id, spelling = spelling.trim(), normalizedSpelling = normalizedSpelling))
                                     }
                                 }
-                                require(dao.duplicateMeaning(term.id, meaning.trim(), source.trim(), author.trim(), page.trim(), sectionUid.trim().ifBlank { null }) == null) { "این معنی با همین مشخصات منبع قبلاً ثبت شده است." }
+                                require(dao.duplicateMeaning(term.id, meaning.trim(), source.trim(), author.trim(), page.trim(), section.uid) == null) { "این معنی با همین مشخصات منبع قبلاً ثبت شده است." }
                                 val item = GlossaryMeaningEntity(
                                     uid = "meaning-${UUID.randomUUID()}", termId = term.id, meaning = meaning.trim(),
                                     sourceTitle = source.trim(), sourceAuthor = author.trim(), sourcePage = page.trim(), sourceUrl = sourceUrl.trim(),
-                                    usageTaziehUid = taziehUid.trim().ifBlank { null }, usageVersionUid = versionUid.trim().ifBlank { null },
-                                    usageRoleUid = roleUid.trim().ifBlank { null }, usageSectionUid = sectionUid.trim().ifBlank { null }, usageQuote = quote.trim(),
+                                    usageTaziehUid = contextTazieh.uid, usageVersionUid = contextRole.versionUid.ifBlank { null },
+                                    usageRoleUid = contextRole.uid, usageSectionUid = section.uid, usageQuote = quote.trim(),
                                     createdAt = now, updatedAt = now
                                 )
                                 dao.insertMeaning(item)
