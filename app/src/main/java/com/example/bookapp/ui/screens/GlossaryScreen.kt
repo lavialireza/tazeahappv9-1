@@ -11,6 +11,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -61,9 +63,36 @@ fun GlossaryScreen(
     var historyTermId by remember { mutableStateOf<Long?>(null) }
     var historyRows by remember { mutableStateOf(emptyList<GlossaryHistoryEntity>()) }
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
+    var editingTerm by remember { mutableStateOf<GlossaryTermEntity?>(null) }
+    var editingMeaning by remember { mutableStateOf<GlossaryMeaningEntity?>(null) }
+    var deletingTerm by remember { mutableStateOf<GlossaryTermEntity?>(null) }
+    var deletingMeaning by remember { mutableStateOf<GlossaryMeaningEntity?>(null) }
+    var usageLabels by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var deletingTermHistoryCount by remember { mutableStateOf(0) }
 
     LaunchedEffect(terms, selectedTermId) {
         if (selectedTermId != null && terms.none { it.id == selectedTermId }) selectedTermId = null
+    }
+
+    LaunchedEffect(allMeanings) {
+        val labels = mutableMapOf<String, String>()
+        allMeanings.forEach { item ->
+            val sectionUid = item.usageSectionUid
+            if (!sectionUid.isNullOrBlank()) {
+                val section = runCatching { db.sectionDao().getByUid(sectionUid) }.getOrNull()
+                if (section != null) {
+                    val role = runCatching { db.roleDao().getById(section.roleId) }.getOrNull()
+                    val tazieh = role?.let { runCatching { db.taziehDao().getById(it.taziehId) }.getOrNull() }
+                    val field = tazieh?.let { runCatching { db.fieldDao().getAll().firstOrNull { f -> f.id == it.fieldId } }.getOrNull() }
+                    labels[item.uid] = listOf(
+                        tazieh?.title?.takeIf { it.isNotBlank() }?.let { "مجلس: $it" },
+                        role?.title?.takeIf { it.isNotBlank() }?.let { "نقش: $it" },
+                        section.title.takeIf { it.isNotBlank() }?.let { "بخش: $it" }
+                    ).filterNotNull().joinToString("، ")
+                }
+            }
+        }
+        usageLabels = labels
     }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -191,7 +220,7 @@ fun GlossaryScreen(
                         shape = RoundedCornerShape(14.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = if (index % 2 == 0) MaterialTheme.colorScheme.surface
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                            else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
                         )
                     ) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -202,6 +231,7 @@ fun GlossaryScreen(
                                         when (term.reviewStatus) {
                                             GlossaryTermEntity.STATUS_VERIFIED -> "تأییدشده"
                                             GlossaryTermEntity.STATUS_REJECTED -> "ردشده"
+                                            "DELETED" -> "حذف‌شده (بایگانی)"
                                             else -> "در انتظار بررسی"
                                         },
                                         style = MaterialTheme.typography.labelSmall,
@@ -231,7 +261,13 @@ fun GlossaryScreen(
                                             if (sourceLine.isNotBlank()) Text("منبع: $sourceLine", style = MaterialTheme.typography.bodySmall)
                                             if (meaning.sourceUrl.isNotBlank()) Text("نشانی منبع: ${meaning.sourceUrl}", style = MaterialTheme.typography.bodySmall)
                                             if (meaning.usageQuote.isNotBlank()) Text("شاهد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)
+                                            val usageLabel = usageLabels[meaning.uid].orEmpty()
+                                            if (usageLabel.isNotBlank()) Text("محل کاربرد: $usageLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             if (isAdmin) {
+                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    TextButton(onClick = { editingMeaning = meaning }) { Icon(Icons.Filled.Edit, contentDescription = null); Text("ویرایش کاربرد") }
+                                                    TextButton(onClick = { deletingMeaning = meaning }) { Icon(Icons.Filled.Delete, contentDescription = null); Text("حذف کاربرد") }
+                                                }
                                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                                     if (meaning.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) TextButton(onClick = {
                                                         scope.launch {
@@ -261,7 +297,27 @@ fun GlossaryScreen(
                                 }
                                 if (isAdmin) {
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        if (term.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) Button(onClick = {
+                                        TextButton(onClick = { editingTerm = term }) { Icon(Icons.Filled.Edit, contentDescription = null); Text("ویرایش واژه") }
+                                        if (term.reviewStatus == "DELETED") TextButton(onClick = {
+                                            scope.launch {
+                                                db.withTransaction {
+                                                    val now = System.currentTimeMillis()
+                                                    db.glossaryDao().updateTerm(term.copy(reviewStatus = GlossaryTermEntity.STATUS_PENDING, updatedAt = now))
+                                                    db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "RESTORE_DELETED_TERM",
+                                                        beforeJson = "{\"status\":\"DELETED\"}", afterJson = "{\"status\":\"PENDING\"}", changedAt = now))
+                                                }
+                                                message = "واژه به وضعیت بررسی بازگردانده شد."
+                                            }
+                                        }) { Text("بازیابی") }
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                deletingTermHistoryCount = db.glossaryDao().history(term.id).size
+                                                deletingTerm = term
+                                            }
+                                        }) { Icon(Icons.Filled.Delete, contentDescription = null); Text("حذف واژه") }
+                                    }
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        if (term.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED && term.reviewStatus != "DELETED") Button(onClick = {
                                             scope.launch {
                                                 db.withTransaction {
                                                     val now = System.currentTimeMillis()
@@ -271,7 +327,7 @@ fun GlossaryScreen(
                                                 
                                             }
                                         }, modifier = Modifier.weight(1f)) { Text("تأیید مدخل") }
-                                        TextButton(onClick = {
+                                        if (term.reviewStatus != "DELETED") TextButton(onClick = {
                                             scope.launch {
                                                 db.withTransaction {
                                                     val now = System.currentTimeMillis()
@@ -514,4 +570,214 @@ fun GlossaryScreen(
             dismissButton = { TextButton(onClick = { showEditor = false }) { Text("انصراف") } }
         )
     }
+
+    editingTerm?.let { original ->
+        var headword by remember(original.id) { mutableStateOf(original.headword) }
+        var partOfSpeech by remember(original.id) { mutableStateOf(original.partOfSpeech) }
+        var pronunciation by remember(original.id) { mutableStateOf(original.pronunciation) }
+        var etymology by remember(original.id) { mutableStateOf(original.etymology) }
+        var notes by remember(original.id) { mutableStateOf(original.notes) }
+        AlertDialog(
+            onDismissRequest = { if (!busy) editingTerm = null },
+            title = { Text("ویرایش واژه") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(headword, { headword = it }, label = { Text("عنوان واژه") }, singleLine = true)
+                    OutlinedTextField(partOfSpeech, { partOfSpeech = it }, label = { Text("نوع واژه") }, singleLine = true)
+                    OutlinedTextField(pronunciation, { pronunciation = it }, label = { Text("تلفظ") }, singleLine = true)
+                    OutlinedTextField(etymology, { etymology = it }, label = { Text("ریشه‌شناسی") }, minLines = 2)
+                    OutlinedTextField(notes, { notes = it }, label = { Text("یادداشت") }, minLines = 2)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && headword.isNotBlank(), onClick = {
+                    scope.launch {
+                        busy = true
+                        try {
+                            val normalized = normalizeGlossaryEntry(headword)
+                            db.withTransaction {
+                                val dao = db.glossaryDao()
+                                val collision = dao.byNormalizedHeadword(normalized)
+                                require(collision == null || collision.id == original.id) { "واژه دیگری با همین عنوان وجود دارد." }
+                                val changed = original.copy(headword = headword.trim(), normalizedHeadword = normalized,
+                                    partOfSpeech = partOfSpeech.trim(), pronunciation = pronunciation.trim(),
+                                    etymology = etymology.trim(), notes = notes.trim(), updatedAt = System.currentTimeMillis())
+                                dao.updateTerm(changed)
+                                dao.insertHistory(GlossaryHistoryEntity(termId = original.id, action = "EDIT_TERM",
+                                    beforeJson = JSONObject().put("headword", original.headword).toString(),
+                                    afterJson = JSONObject().put("headword", changed.headword).toString(), changedAt = System.currentTimeMillis()))
+                            }
+                            editingTerm = null
+                            message = "واژه ویرایش شد."
+                        } catch (e: Exception) { message = "ویرایش انجام نشد: ${e.message ?: "خطای نامشخص"}" }
+                        finally { busy = false }
+                    }
+                }) { Text("ذخیره") }
+            },
+            dismissButton = { TextButton(onClick = { editingTerm = null }) { Text("انصراف") } }
+        )
+    }
+
+    editingMeaning?.let { original ->
+        var meaningText by remember(original.id) { mutableStateOf(original.meaning) }
+        var sourceTitle by remember(original.id) { mutableStateOf(original.sourceTitle) }
+        var sourceAuthor by remember(original.id) { mutableStateOf(original.sourceAuthor) }
+        var sourcePage by remember(original.id) { mutableStateOf(original.sourcePage) }
+        var sourceUrl by remember(original.id) { mutableStateOf(original.sourceUrl) }
+        var quote by remember(original.id) { mutableStateOf(original.usageQuote) }
+        var taziehOptions by remember(original.id) { mutableStateOf(emptyList<TaziehEntity>()) }
+        var roleOptions by remember(original.id) { mutableStateOf(emptyList<RoleEntity>()) }
+        var sectionOptions by remember(original.id) { mutableStateOf(emptyList<SectionEntity>()) }
+        var selectedTazieh by remember(original.id) { mutableStateOf<TaziehEntity?>(null) }
+        var selectedRole by remember(original.id) { mutableStateOf<RoleEntity?>(null) }
+        var selectedSection by remember(original.id) { mutableStateOf<SectionEntity?>(null) }
+        var taziehExpanded by remember(original.id) { mutableStateOf(false) }
+        var roleExpanded by remember(original.id) { mutableStateOf(false) }
+        var sectionExpanded by remember(original.id) { mutableStateOf(false) }
+        LaunchedEffect(original.uid) {
+            taziehOptions = db.taziehDao().getAll()
+            val section = original.usageSectionUid?.let { db.sectionDao().getByUid(it) }
+            val role = section?.let { db.roleDao().getById(it.roleId) }
+            val tazieh = role?.let { db.taziehDao().getById(it.taziehId) }
+            selectedTazieh = tazieh
+            selectedRole = role
+            selectedSection = section
+            if (tazieh != null) roleOptions = db.roleDao().getByTazieh(tazieh.id)
+            if (role != null) sectionOptions = db.sectionDao().getByRole(role.id)
+        }
+        AlertDialog(
+            onDismissRequest = { if (!busy) editingMeaning = null },
+            title = { Text("ویرایش معنی و کاربرد") },
+            text = {
+                Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(meaningText, { meaningText = it }, label = { Text("معنی") }, minLines = 2)
+                    OutlinedTextField(sourceTitle, { sourceTitle = it }, label = { Text("منبع") }, singleLine = true)
+                    OutlinedTextField(sourceAuthor, { sourceAuthor = it }, label = { Text("پدیدآورنده منبع") }, singleLine = true)
+                    OutlinedTextField(sourcePage, { sourcePage = it }, label = { Text("صفحه / جلد") }, singleLine = true)
+                    OutlinedTextField(sourceUrl, { sourceUrl = it }, label = { Text("نشانی منبع") }, singleLine = true)
+                    OutlinedTextField(quote, { quote = it }, label = { Text("شاهد کاربرد") }, minLines = 2)
+                    Text("تغییر محل کاربرد", style = MaterialTheme.typography.titleSmall)
+                    Box {
+                        OutlinedButton(onClick = { taziehExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(selectedTazieh?.title ?: "انتخاب مجلس") }
+                        DropdownMenu(expanded = taziehExpanded, onDismissRequest = { taziehExpanded = false }) {
+                            taziehOptions.forEach { option -> DropdownMenuItem(text = { Text(option.title) }, onClick = {
+                                selectedTazieh = option; selectedRole = null; selectedSection = null
+                                roleOptions = emptyList(); sectionOptions = emptyList(); taziehExpanded = false
+                                scope.launch { roleOptions = db.roleDao().getByTazieh(option.id) }
+                            }) }
+                        }
+                    }
+                    Box {
+                        OutlinedButton(onClick = { if (selectedTazieh != null) roleExpanded = true }, enabled = selectedTazieh != null, modifier = Modifier.fillMaxWidth()) { Text(selectedRole?.title ?: "انتخاب نقش") }
+                        DropdownMenu(expanded = roleExpanded, onDismissRequest = { roleExpanded = false }) {
+                            roleOptions.forEach { option -> DropdownMenuItem(text = { Text(option.title) }, onClick = {
+                                selectedRole = option; selectedSection = null; sectionOptions = emptyList(); roleExpanded = false
+                                scope.launch { sectionOptions = db.sectionDao().getByRole(option.id) }
+                            }) }
+                        }
+                    }
+                    Box {
+                        OutlinedButton(onClick = { if (selectedRole != null) sectionExpanded = true }, enabled = selectedRole != null, modifier = Modifier.fillMaxWidth()) { Text(selectedSection?.title ?: "انتخاب بخش") }
+                        DropdownMenu(expanded = sectionExpanded, onDismissRequest = { sectionExpanded = false }) {
+                            sectionOptions.forEach { option -> DropdownMenuItem(text = { Text(option.title.ifBlank { "بخش ${option.orderIndex + 1}" }) }, onClick = { selectedSection = option; sectionExpanded = false }) }
+                        }
+                    }
+                    Text("محل کاربرد فعلی: ${usageLabels[original.uid].orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && meaningText.isNotBlank() && (sourceTitle.isNotBlank() || sourceUrl.isNotBlank()) && selectedTazieh != null && selectedRole != null && selectedSection != null, onClick = {
+                    scope.launch {
+                        busy = true
+                        try {
+                            db.withTransaction {
+                                val chosenTazieh = selectedTazieh ?: error("مجلس انتخاب نشده است.")
+                                val chosenRole = selectedRole ?: error("نقش انتخاب نشده است.")
+                                val chosenSection = selectedSection ?: error("بخش انتخاب نشده است.")
+                                require(chosenRole.taziehId == chosenTazieh.id && chosenSection.roleId == chosenRole.id) { "ارتباط مجلس، نقش و بخش معتبر نیست." }
+                                val changed = original.copy(meaning = meaningText.trim(), sourceTitle = sourceTitle.trim(),
+                                    sourceAuthor = sourceAuthor.trim(), sourcePage = sourcePage.trim(), sourceUrl = sourceUrl.trim(),
+                                    usageTaziehUid = chosenTazieh.uid, usageVersionUid = chosenRole.versionUid.ifBlank { null },
+                                    usageRoleUid = chosenRole.uid, usageSectionUid = chosenSection.uid,
+                                    usageQuote = quote.trim(), updatedAt = System.currentTimeMillis())
+                                db.glossaryDao().updateMeaning(changed)
+                                db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = original.termId, action = "EDIT_MEANING_USAGE",
+                                    beforeJson = JSONObject().put("meaning", original.meaning).put("source", original.sourceTitle).put("usageSectionUid", original.usageSectionUid).toString(),
+                                    afterJson = JSONObject().put("meaning", changed.meaning).put("source", changed.sourceTitle).put("usageSectionUid", changed.usageSectionUid).toString(), changedAt = System.currentTimeMillis()))
+                            }
+                            editingMeaning = null
+                            message = "معنی و اطلاعات کاربرد ویرایش شد."
+                        } catch (e: Exception) { message = "ویرایش انجام نشد: ${e.message ?: "خطای نامشخص"}" }
+                        finally { busy = false }
+                    }
+                }) { Text("ذخیره") }
+            },
+            dismissButton = { TextButton(onClick = { editingMeaning = null }) { Text("انصراف") } }
+        )
+    }
+
+    deletingMeaning?.let { item ->
+        AlertDialog(
+            onDismissRequest = { if (!busy) deletingMeaning = null },
+            title = { Text("حذف کاربرد") },
+            text = { Text("فقط همین معنی و کاربرد مستقل حذف می‌شود. سایر معنی‌ها، کاربردهای دیگر و تاریخچه مدخل دست‌نخورده می‌مانند. این کار پس از تأیید نهایی انجام می‌شود.") },
+            confirmButton = {
+                TextButton(enabled = !busy, onClick = {
+                    scope.launch {
+                        busy = true
+                        try {
+                            db.withTransaction {
+                                db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = item.termId, action = "DELETE_MEANING",
+                                    beforeJson = JSONObject().put("meaningUid", item.uid).put("meaning", item.meaning)
+                                        .put("sourceTitle", item.sourceTitle).put("sourceAuthor", item.sourceAuthor)
+                                        .put("sourcePage", item.sourcePage).put("sourceUrl", item.sourceUrl)
+                                        .put("usageTaziehUid", item.usageTaziehUid).put("usageVersionUid", item.usageVersionUid)
+                                        .put("usageRoleUid", item.usageRoleUid).put("usageSectionUid", item.usageSectionUid)
+                                        .put("usageQuote", item.usageQuote).put("reviewStatus", item.reviewStatus).toString(),
+                                    afterJson = "{}", changedAt = System.currentTimeMillis()))
+                                db.glossaryDao().deleteMeaning(item)
+                            }
+                            deletingMeaning = null
+                            message = "کاربرد انتخاب‌شده حذف شد؛ سایر کاربردها باقی ماندند."
+                        } catch (e: Exception) { message = "حذف انجام نشد: ${e.message ?: "خطای نامشخص"}" }
+                        finally { busy = false }
+                    }
+                }) { Text("تأیید حذف") }
+            },
+            dismissButton = { TextButton(onClick = { deletingMeaning = null }) { Text("انصراف") } }
+        )
+    }
+
+    deletingTerm?.let { item ->
+        val linkedMeanings = allMeanings.count { it.termId == item.id }
+        val historyCount = deletingTermHistoryCount
+        AlertDialog(
+            onDismissRequest = { if (!busy) deletingTerm = null },
+            title = { Text("حذف کنترل‌شده واژه") },
+            text = {
+                Text("این واژه $linkedMeanings معنی/کاربرد و $historyCount سابقه ثبت‌شده دارد. برای جلوگیری از نابودی ارتباط‌ها و تاریخچه، حذف به‌صورت بایگانی نرم انجام می‌شود: واژه از نمایش عمومی خارج می‌شود، اما معنی‌ها، کاربردها، صورت‌های نوشتاری و سوابق آن حفظ می‌شوند. در صورت نیاز مدیر می‌تواند آن را دوباره فعال کند.")
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && item.reviewStatus != "DELETED", onClick = {
+                    scope.launch {
+                        busy = true
+                        try {
+                            db.withTransaction {
+                                val now = System.currentTimeMillis()
+                                db.glossaryDao().updateTerm(item.copy(reviewStatus = "DELETED", updatedAt = now))
+                                db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = item.id, action = "SOFT_DELETE_TERM",
+                                    beforeJson = JSONObject().put("status", item.reviewStatus).toString(),
+                                    afterJson = JSONObject().put("status", "DELETED").put("linkedMeaningsPreserved", linkedMeanings).toString(), changedAt = now))
+                            }
+                            deletingTerm = null
+                            message = "واژه بایگانی شد؛ همه کاربردها و سوابق حفظ شدند."
+                        } catch (e: Exception) { message = "بایگانی انجام نشد: ${e.message ?: "خطای نامشخص"}" }
+                        finally { busy = false }
+                    }
+                }) { Text(if (item.reviewStatus == "DELETED") "قبلاً بایگانی شده" else "تأیید بایگانی واژه") }
+            },
+            dismissButton = { TextButton(onClick = { deletingTerm = null }) { Text("بستن") } }
+        )
+    }
+
 }

@@ -19,6 +19,7 @@ interface GlossaryDao {
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertMeaning(meaning: GlossaryMeaningEntity): Long
     @Query("SELECT * FROM glossary_meanings WHERE termId = :termId AND meaning = :meaning AND sourceTitle = :sourceTitle AND sourceAuthor = :sourceAuthor AND sourcePage = :sourcePage AND IFNULL(usageSectionUid, '') = IFNULL(:usageSectionUid, '') LIMIT 1") suspend fun duplicateMeaning(termId: Long, meaning: String, sourceTitle: String, sourceAuthor: String, sourcePage: String, usageSectionUid: String?): GlossaryMeaningEntity?
     @Update suspend fun updateMeaning(meaning: GlossaryMeaningEntity): Int
+    @Delete suspend fun deleteMeaning(meaning: GlossaryMeaningEntity): Int
     @Query("SELECT * FROM glossary_spellings WHERE termId = :termId ORDER BY id") suspend fun spellings(termId: Long): List<GlossarySpellingEntity>
     @Query("SELECT * FROM glossary_spellings WHERE normalizedSpelling = :normalized LIMIT 1") suspend fun spellingByNormalized(normalized: String): GlossarySpellingEntity?
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertSpelling(spelling: GlossarySpellingEntity): Long
