@@ -54,6 +54,8 @@ fun GlossaryScreen(
     var statusFilter by remember { mutableStateOf("ALL") }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var historyTermId by remember { mutableStateOf<Long?>(null) }
+    var historyRows by remember { mutableStateOf(emptyList<GlossaryHistoryEntity>()) }
 
     suspend fun reload() {
         val dao = db.glossaryDao()
@@ -178,6 +180,11 @@ fun GlossaryScreen(
                                 if (term.pronunciation.isNotBlank()) Text("تلفظ: ${term.pronunciation}", style = MaterialTheme.typography.bodySmall)
                                 if (term.etymology.isNotBlank()) Text("ریشه‌شناسی: ${term.etymology}", style = MaterialTheme.typography.bodySmall)
                                 if (term.notes.isNotBlank()) Text("یادداشت: ${term.notes}", style = MaterialTheme.typography.bodySmall)
+                                if (isAdmin) {
+                                    TextButton(onClick = {
+                                        scope.launch { historyRows = db.glossaryDao().history(term.id); historyTermId = term.id }
+                                    }) { Text("مشاهده تاریخچه تغییرات") }
+                                }
                                 val variants = spellings.filter { it.termId == term.id }
                                 if (variants.isNotEmpty()) Text("صورت‌های دیگر: ${variants.joinToString("، ") { it.spelling }}", style = MaterialTheme.typography.bodySmall)
                                 termMeanings.forEach { meaning ->
@@ -190,7 +197,7 @@ fun GlossaryScreen(
                                             val usagePath = listOf(meaning.usageTaziehUid?.let { "مجلس: $it" }, meaning.usageVersionUid?.let { "نسخه: $it" }, meaning.usageRoleUid?.let { "نقش: $it" }, meaning.usageSectionUid?.let { "بخش: $it" }).filterNotNull()
                                             if (usagePath.isNotEmpty()) Text(usagePath.joinToString(" | "), style = MaterialTheme.typography.bodySmall)
                                             if (meaning.usageQuote.isNotBlank()) Text("شاهد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)
-                                            if (isAdmin && meaning.reviewStatus != GlossaryTermEntity.STATUS_REJECTED) {
+                                            if (isAdmin) {
                                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                                     if (meaning.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) TextButton(onClick = {
                                                         scope.launch {
@@ -206,18 +213,19 @@ fun GlossaryScreen(
                                                         scope.launch {
                                                             db.withTransaction {
                                                                 val now = System.currentTimeMillis()
-                                                                db.glossaryDao().updateMeaning(meaning.copy(reviewStatus = GlossaryTermEntity.STATUS_REJECTED, updatedAt = now))
-                                                                db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "REJECT_MEANING", beforeJson = JSONObject().put("status", meaning.reviewStatus).toString(), afterJson = JSONObject().put("meaningUid", meaning.uid).put("status", "REJECTED").toString(), changedAt = now))
+                                                                val nextStatus = if (meaning.reviewStatus == GlossaryTermEntity.STATUS_REJECTED) GlossaryTermEntity.STATUS_PENDING else GlossaryTermEntity.STATUS_REJECTED
+                                                                db.glossaryDao().updateMeaning(meaning.copy(reviewStatus = nextStatus, updatedAt = now))
+                                                                db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = if (nextStatus == GlossaryTermEntity.STATUS_PENDING) "RESTORE_MEANING" else "REJECT_MEANING", beforeJson = JSONObject().put("status", meaning.reviewStatus).toString(), afterJson = JSONObject().put("meaningUid", meaning.uid).put("status", nextStatus).toString(), changedAt = now))
                                                             }
                                                             reload()
                                                         }
-                                                    }) { Text("رد معنی") }
+                                                    }) { Text(if (meaning.reviewStatus == GlossaryTermEntity.STATUS_REJECTED) "بازگردانی به بررسی" else "رد معنی") }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                if (isAdmin && term.reviewStatus != GlossaryTermEntity.STATUS_REJECTED) {
+                                if (isAdmin) {
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         if (term.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) Button(onClick = {
                                             scope.launch {
@@ -233,12 +241,13 @@ fun GlossaryScreen(
                                             scope.launch {
                                                 db.withTransaction {
                                                     val now = System.currentTimeMillis()
-                                                    db.glossaryDao().updateTerm(term.copy(reviewStatus = GlossaryTermEntity.STATUS_REJECTED, updatedAt = now))
-                                                    db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "REJECT_TERM", beforeJson = JSONObject().put("status", term.reviewStatus).toString(), afterJson = "{\"status\":\"REJECTED\"}", changedAt = now))
+                                                    val nextStatus = if (term.reviewStatus == GlossaryTermEntity.STATUS_REJECTED) GlossaryTermEntity.STATUS_PENDING else GlossaryTermEntity.STATUS_REJECTED
+                                                    db.glossaryDao().updateTerm(term.copy(reviewStatus = nextStatus, updatedAt = now))
+                                                    db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = if (nextStatus == GlossaryTermEntity.STATUS_PENDING) "RESTORE_TERM" else "REJECT_TERM", beforeJson = JSONObject().put("status", term.reviewStatus).toString(), afterJson = JSONObject().put("status", nextStatus).toString(), changedAt = now))
                                                 }
                                                 reload()
                                             }
-                                        }) { Text("رد مدخل") }
+                                        }) { Text(if (term.reviewStatus == GlossaryTermEntity.STATUS_REJECTED) "بازگردانی به بررسی" else "رد مدخل") }
                                     }
                                 }
                             }
@@ -250,6 +259,29 @@ fun GlossaryScreen(
                 }
             }
         }
+    }
+
+    historyTermId?.let { termId ->
+        AlertDialog(
+            onDismissRequest = { historyTermId = null },
+            title = { Text("تاریخچه تغییرات مدخل") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (historyRows.isEmpty()) Text("برای این مدخل سابقه‌ای ثبت نشده است.")
+                    historyRows.forEach { item ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                            Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(item.action, fontWeight = FontWeight.SemiBold)
+                                Text(java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.changedAt)), style = MaterialTheme.typography.labelSmall)
+                                if (item.beforeJson.isNotBlank() && item.beforeJson != "{}") Text("قبل: ${item.beforeJson}", style = MaterialTheme.typography.bodySmall)
+                                if (item.afterJson.isNotBlank() && item.afterJson != "{}") Text("بعد: ${item.afterJson}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { historyTermId = null }) { Text("بستن") } }
+        )
     }
 
     importPreview?.let { preview ->

@@ -37,7 +37,11 @@ data class GlossaryImportMeaning(
     val usageVersionUid: String?,
     val usageRoleUid: String?,
     val usageSectionUid: String,
-    val usageQuote: String
+    val usageQuote: String,
+    val usageFieldTitle: String = "",
+    val usageTaziehTitle: String = "",
+    val usageRoleTitle: String = "",
+    val usageSectionTitle: String = ""
 )
 
 data class GlossaryImportResult(val addedTerms: Int, val reusedTerms: Int, val addedMeanings: Int, val skippedMeanings: Int, val addedSpellings: Int, val skippedSpellings: Int)
@@ -84,15 +88,20 @@ class GlossaryImportService(private val db: AppDatabase) {
                         val sourceTitle = meaningObject.optString("sourceTitle").trim()
                         val sourceUrl = meaningObject.optString("sourceUrl").trim()
                         val sectionUid = meaningObject.optString("usageSectionUid").trim()
+                        val fieldTitle = meaningObject.optString("usageFieldTitle").trim()
+                        val taziehTitle = meaningObject.optString("usageTaziehTitle").trim()
+                        val roleTitle = meaningObject.optString("usageRoleTitle").trim()
+                        val sectionTitle = meaningObject.optString("usageSectionTitle").trim()
+                        val hasCompletePath = fieldTitle.isNotBlank() && taziehTitle.isNotBlank() && roleTitle.isNotBlank() && sectionTitle.isNotBlank()
                         if (meaning.isBlank()) errors += "متن معنی برای «$headword» خالی است."
                         if (sourceTitle.isBlank() && sourceUrl.isBlank()) errors += "برای معنی «$headword» باید منبع یا نشانی منبع ثبت شود."
-                        if (sectionUid.isBlank()) errors += "کاربرد معنی «$headword» باید به شناسه دقیق بخش (usageSectionUid) متصل باشد."
+                        if (sectionUid.isBlank() && !hasCompletePath) errors += "کاربرد معنی «$headword» باید شناسه بخش یا مسیر کامل عنوانی (رشته، مجلس، نقش و بخش) داشته باشد."
                         meanings += GlossaryImportMeaning(
                             meaning, sourceTitle, meaningObject.optString("sourceAuthor").trim(), meaningObject.optString("sourcePage").trim(), sourceUrl,
                             meaningObject.optString("usageTaziehUid").trim().ifBlank { null },
                             meaningObject.optString("usageVersionUid").trim().ifBlank { null },
                             meaningObject.optString("usageRoleUid").trim().ifBlank { null }, sectionUid,
-                            meaningObject.optString("usageQuote").trim()
+                            meaningObject.optString("usageQuote").trim(), fieldTitle, taziehTitle, roleTitle, sectionTitle
                         )
                     }
                 }
@@ -121,8 +130,7 @@ class GlossaryImportService(private val db: AppDatabase) {
             // guarantees rollback as an additional safeguard if a later insert fails.
             preview.terms.forEach { incoming ->
                 incoming.meanings.forEach { meaning ->
-                    val section = db.sectionDao().getByUid(meaning.usageSectionUid)
-                        ?: error("شناسه بخش پیدا نشد: ${meaning.usageSectionUid}")
+                    val section = resolveUsageSection(meaning)
                     val role = db.roleDao().getById(section.roleId)
                     val tazieh = db.taziehDao().getById(role.taziehId)
                     require(meaning.usageRoleUid.isNullOrBlank() || meaning.usageRoleUid == role.uid) {
@@ -164,16 +172,25 @@ class GlossaryImportService(private val db: AppDatabase) {
                     else { dao.insertSpelling(GlossarySpellingEntity(termId = term.id, spelling = spelling, normalizedSpelling = key)); addedSpellings++ }
                 }
                 incoming.meanings.forEach { meaning ->
-                    val duplicate = dao.duplicateMeaning(term.id, meaning.meaning, meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage, meaning.usageSectionUid)
+                    val resolvedSection = resolveUsageSection(meaning)
+                    val resolvedRole = db.roleDao().getById(resolvedSection.roleId)
+                    val resolvedTazieh = db.taziehDao().getById(resolvedRole.taziehId)
+                    val resolvedMeaning = meaning.copy(
+                        usageSectionUid = resolvedSection.uid,
+                        usageRoleUid = resolvedRole.uid,
+                        usageVersionUid = resolvedRole.versionUid.ifBlank { null },
+                        usageTaziehUid = resolvedTazieh?.uid
+                    )
+                    val duplicate = dao.duplicateMeaning(term.id, meaning.meaning, meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage, resolvedSection.uid)
                     if (duplicate != null) {
                         skippedMeanings++
                     } else {
                         dao.insertMeaning(GlossaryMeaningEntity(
                             uid = "meaning-${UUID.randomUUID()}", termId = term.id, meaning = meaning.meaning,
                             sourceTitle = meaning.sourceTitle, sourceAuthor = meaning.sourceAuthor, sourcePage = meaning.sourcePage,
-                            sourceUrl = meaning.sourceUrl, usageTaziehUid = meaning.usageTaziehUid,
-                            usageVersionUid = meaning.usageVersionUid, usageRoleUid = meaning.usageRoleUid,
-                            usageSectionUid = meaning.usageSectionUid, usageQuote = meaning.usageQuote,
+                            sourceUrl = meaning.sourceUrl, usageTaziehUid = resolvedMeaning.usageTaziehUid,
+                            usageVersionUid = resolvedMeaning.usageVersionUid, usageRoleUid = resolvedMeaning.usageRoleUid,
+                            usageSectionUid = resolvedMeaning.usageSectionUid, usageQuote = meaning.usageQuote,
                             reviewStatus = GlossaryTermEntity.STATUS_PENDING, createdAt = now, updatedAt = now
                         ))
                         addedMeanings++
@@ -186,6 +203,23 @@ class GlossaryImportService(private val db: AppDatabase) {
             }
             GlossaryImportResult(addedTerms, reusedTerms, addedMeanings, skippedMeanings, addedSpellings, skippedSpellings)
         }
+    }
+
+
+    /** Resolve either a stable section UID or an exact field/tazieh/role/section title path. */
+    private suspend fun resolveUsageSection(meaning: GlossaryImportMeaning): SectionEntity {
+        if (meaning.usageSectionUid.isNotBlank()) {
+            return db.sectionDao().getByUid(meaning.usageSectionUid)
+                ?: error("شناسه بخش پیدا نشد: ${meaning.usageSectionUid}")
+        }
+        val field = db.fieldDao().getAll().singleOrNull { it.title.trim() == meaning.usageFieldTitle }
+            ?: error("رشته با عنوان «${meaning.usageFieldTitle}» پیدا نشد یا عنوان آن یکتا نیست.")
+        val tazieh = db.taziehDao().getByField(field.id).singleOrNull { it.title.trim() == meaning.usageTaziehTitle }
+            ?: error("مجلس «${meaning.usageTaziehTitle}» در رشته انتخاب‌شده پیدا نشد یا یکتا نیست.")
+        val role = db.roleDao().getByTazieh(tazieh.id).singleOrNull { it.title.trim() == meaning.usageRoleTitle }
+            ?: error("نقش «${meaning.usageRoleTitle}» در مجلس انتخاب‌شده پیدا نشد یا یکتا نیست.")
+        return db.sectionDao().getByRole(role.id).singleOrNull { it.title.trim() == meaning.usageSectionTitle }
+            ?: error("بخش «${meaning.usageSectionTitle}» در نقش انتخاب‌شده پیدا نشد یا یکتا نیست.")
     }
 
     private fun readStrings(array: JSONArray?): List<String> = if (array == null) emptyList() else
