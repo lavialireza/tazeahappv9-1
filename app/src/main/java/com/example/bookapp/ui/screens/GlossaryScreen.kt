@@ -45,9 +45,13 @@ fun GlossaryScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var importPreview by remember { mutableStateOf<GlossaryImportPreview?>(null) }
-    var terms by remember { mutableStateOf(emptyList<GlossaryTermEntity>()) }
-    var spellings by remember { mutableStateOf(emptyList<GlossarySpellingEntity>()) }
-    var meanings by remember { mutableStateOf(emptyList<GlossaryMeaningEntity>()) }
+    // Room Flow keeps the screen synchronized with bundled JSON imports that may finish
+    // after this screen has already opened. No manual reload/race with startup is needed.
+    val allTerms by db.glossaryDao().observeAllTerms().collectAsState(initial = emptyList())
+    val spellings by db.glossaryDao().observeAllSpellings().collectAsState(initial = emptyList())
+    val allMeanings by db.glossaryDao().observeAllMeanings().collectAsState(initial = emptyList())
+    val terms = if (isAdmin) allTerms else allTerms.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
+    val meanings = if (isAdmin) allMeanings else allMeanings.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
     var query by remember { mutableStateOf("") }
     var selectedTermId by remember { mutableStateOf<Long?>(null) }
     var showEditor by remember { mutableStateOf(false) }
@@ -58,17 +62,9 @@ fun GlossaryScreen(
     var historyRows by remember { mutableStateOf(emptyList<GlossaryHistoryEntity>()) }
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
 
-    suspend fun reload() {
-        val dao = db.glossaryDao()
-        val allTerms = dao.allTerms()
-        val allMeanings = dao.allMeanings()
-        terms = if (isAdmin) allTerms else allTerms.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
-        meanings = if (isAdmin) allMeanings else allMeanings.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
-        spellings = dao.allSpellings()
+    LaunchedEffect(terms, selectedTermId) {
         if (selectedTermId != null && terms.none { it.id == selectedTermId }) selectedTermId = null
     }
-
-    LaunchedEffect(db, isAdmin) { reload() }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && isAdmin) {
@@ -242,7 +238,7 @@ fun GlossaryScreen(
                                                                 db.glossaryDao().updateMeaning(meaning.copy(reviewStatus = GlossaryTermEntity.STATUS_VERIFIED, updatedAt = now))
                                                                 db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "VERIFY_MEANING", beforeJson = JSONObject().put("status", meaning.reviewStatus).toString(), afterJson = JSONObject().put("meaningUid", meaning.uid).put("status", "VERIFIED").toString(), changedAt = now))
                                                             }
-                                                            reload()
+                                                            
                                                         }
                                                     }) { Text("تأیید معنی") }
                                                     TextButton(onClick = {
@@ -253,7 +249,7 @@ fun GlossaryScreen(
                                                                 db.glossaryDao().updateMeaning(meaning.copy(reviewStatus = nextStatus, updatedAt = now))
                                                                 db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = if (nextStatus == GlossaryTermEntity.STATUS_PENDING) "RESTORE_MEANING" else "REJECT_MEANING", beforeJson = JSONObject().put("status", meaning.reviewStatus).toString(), afterJson = JSONObject().put("meaningUid", meaning.uid).put("status", nextStatus).toString(), changedAt = now))
                                                             }
-                                                            reload()
+                                                            
                                                         }
                                                     }) { Text(if (meaning.reviewStatus == GlossaryTermEntity.STATUS_REJECTED) "بازگردانی به بررسی" else "رد معنی") }
                                                 }
@@ -270,7 +266,7 @@ fun GlossaryScreen(
                                                     db.glossaryDao().updateTerm(term.copy(reviewStatus = GlossaryTermEntity.STATUS_VERIFIED, updatedAt = now))
                                                     db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "VERIFY_TERM", beforeJson = JSONObject().put("status", term.reviewStatus).toString(), afterJson = "{\"status\":\"VERIFIED\"}", changedAt = now))
                                                 }
-                                                reload()
+                                                
                                             }
                                         }, modifier = Modifier.weight(1f)) { Text("تأیید مدخل") }
                                         TextButton(onClick = {
@@ -281,7 +277,7 @@ fun GlossaryScreen(
                                                     db.glossaryDao().updateTerm(term.copy(reviewStatus = nextStatus, updatedAt = now))
                                                     db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = if (nextStatus == GlossaryTermEntity.STATUS_PENDING) "RESTORE_TERM" else "REJECT_TERM", beforeJson = JSONObject().put("status", term.reviewStatus).toString(), afterJson = JSONObject().put("status", nextStatus).toString(), changedAt = now))
                                                 }
-                                                reload()
+                                                
                                             }
                                         }) { Text(if (term.reviewStatus == GlossaryTermEntity.STATUS_REJECTED) "بازگردانی به بررسی" else "رد مدخل") }
                                     }
@@ -344,7 +340,7 @@ fun GlossaryScreen(
                         try {
                             val result = GlossaryImportService(db).apply(preview)
                             importPreview = null
-                            reload()
+                            
                             message = "ورود افزایشی انجام شد: ${result.addedTerms} واژه جدید، ${result.reusedTerms} واژه موجود، ${result.addedMeanings} معنی جدید؛ ${result.skippedMeanings} معنی تکراری و ${result.skippedSpellings} صورت نوشتاری تکراری رد شد."
                         } catch (e: Exception) {
                             message = "ورود بسته انجام نشد و هیچ تغییر ناقصی ذخیره نشد: ${e.message ?: "خطای نامشخص"}"
@@ -508,7 +504,7 @@ fun GlossaryScreen(
                                 ))
                             }
                             showEditor = false
-                            reload()
+                            
                             message = "اطلاعات به‌صورت پیشنهادی ثبت شد؛ پس از تأیید مدیر در نمایش عمومی قرار می‌گیرد."
                         } catch (e: Exception) {
                             message = "ثبت انجام نشد: ${e.message ?: "خطای نامشخص"}"

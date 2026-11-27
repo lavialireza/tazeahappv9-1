@@ -170,7 +170,24 @@ fun AppNavigation(
         }
         if (syncResult.isSuccess) {
             runCatching { syncLocalGlossaryFiles(context, db) }
-                .onFailure { error -> android.util.Log.e("TaziehGlossary", "خطا در بارگذاری بسته‌های فرهنگ اصطلاحات", error) }
+                .onSuccess { importedPackages ->
+                    android.util.Log.i("TaziehGlossary", "تعداد بسته‌های جدید فرهنگ اصطلاحات واردشده: $importedPackages")
+                }
+                .onFailure { error ->
+                    android.util.Log.e("TaziehGlossary", "خطا در بارگذاری بسته‌های فرهنگ اصطلاحات", error)
+                    android.widget.Toast.makeText(
+                        context,
+                        "بارگذاری فرهنگ اصطلاحات ناموفق بود: ${error.message ?: "خطای نامشخص"}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+        } else {
+            android.util.Log.e("TaziehContent", "به دلیل خطای بارگذاری محتوا، بسته‌های فرهنگ اصطلاحات اجرا نشدند.", syncResult.exceptionOrNull())
+            android.widget.Toast.makeText(
+                context,
+                "ابتدا محتوای تعزیه بارگذاری نشد؛ بسته‌های فرهنگ اصطلاحات نیز وارد نشدند.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
         }
         if (!publicViewer && isReturningUser && newFilesCount > 0) {
             com.example.bookapp.data.showNewContentNotification(context, newFilesCount)
