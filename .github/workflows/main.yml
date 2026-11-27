@@ -88,11 +88,14 @@ jobs:
             test "$CODE" = "$EXPECTED"
           done
           unzip -l "$VIEWER_APK" | grep -F 'assets/content/001_sample.taz'
+          # Glossary publication packages must be embedded in BOTH APK variants.
+          unzip -l "$ADMIN_APK" | grep -E 'assets/glossary/packages/[^/]+\.json'
+          unzip -l "$VIEWER_APK" | grep -E 'assets/glossary/packages/[^/]+\.json'
           if unzip -l "$VIEWER_APK" | grep -E 'assets/content/.*\.json' >/dev/null; then
             echo 'ERROR: plaintext JSON content was packaged in Viewer Test APK.'
             exit 1
           fi
-          echo 'Both isolated Test APKs verified. No production publication was performed.'
+          echo 'Both isolated Test APKs and bundled glossary packages verified. No production publication was performed.'
 
       - name: Upload Admin QA APK
         uses: actions/upload-artifact@v4
