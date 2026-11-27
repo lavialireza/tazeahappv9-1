@@ -56,6 +56,7 @@ fun GlossaryScreen(
     var busy by remember { mutableStateOf(false) }
     var historyTermId by remember { mutableStateOf<Long?>(null) }
     var historyRows by remember { mutableStateOf(emptyList<GlossaryHistoryEntity>()) }
+    var pendingExportJson by remember { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
         val dao = db.glossaryDao()
@@ -80,6 +81,23 @@ fun GlossaryScreen(
                     message = if (importPreview?.isValid == true) "پیش‌نمایش آماده است؛ هنوز هیچ داده‌ای وارد نشده." else "فایل بررسی شد؛ خطاهای آن را در پیش‌نمایش ببینید."
                 } catch (e: Exception) {
                     message = "خواندن بسته ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                } finally { busy = false }
+            }
+        }
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val json = pendingExportJson
+        pendingExportJson = null
+        if (uri != null && json != null && isAdmin) {
+            scope.launch {
+                busy = true
+                try {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { it.write(json) }
+                        ?: error("ذخیره فایل خروجی ممکن نشد.")
+                    message = "بسته انتشار ذخیره شد؛ آن را در پوشه app/src/main/assets/glossary/packages مخزن قرار دهید."
+                } catch (e: Exception) {
+                    message = "ساخت فایل انتشار ناموفق بود: ${e.message ?: "خطای نامشخص"}"
                 } finally { busy = false }
             }
         }
@@ -121,11 +139,29 @@ fun GlossaryScreen(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (isAdmin) {
-                OutlinedButton(
-                    onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-                ) { Text(if (busy) "در حال بررسی بسته…" else "ورود بسته واژه‌ها (JSON)") }
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(
+                        onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(if (busy) "در حال بررسی بسته…" else "ورود بسته واژه‌ها (JSON)") }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val packageUid = "glossary-publish-${UUID.randomUUID()}"
+                                    pendingExportJson = exportVerifiedGlossaryJson(db, packageUid)
+                                    exportLauncher.launch("$packageUid.json")
+                                } catch (e: Exception) {
+                                    message = "تهیه بسته انتشار ممکن نشد: ${e.message ?: "خطای نامشخص"}"
+                                } finally { busy = false }
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("تهیه فایل انتشار واژه‌های تأییدشده") }
+                }
             }
             OutlinedTextField(
                 value = query,

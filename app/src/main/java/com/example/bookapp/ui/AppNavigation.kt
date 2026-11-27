@@ -61,6 +61,7 @@ import com.example.bookapp.data.Prefs
 import com.example.bookapp.data.SearchResult
 import com.example.bookapp.data.SectionEntity
 import com.example.bookapp.data.syncLocalContentFiles
+import com.example.bookapp.data.syncLocalGlossaryFiles
 import com.example.bookapp.data.syncRemoteContent
 import com.example.bookapp.data.ViewerAccessPolicy
 import com.example.bookapp.ui.screens.*
@@ -166,6 +167,10 @@ fun AppNavigation(
         val newFilesCount = syncResult.getOrElse { error ->
             android.util.Log.e("TaziehContent", "خطا در بارگذاری محتوای همراه برنامه", error)
             0
+        }
+        if (syncResult.isSuccess) {
+            runCatching { syncLocalGlossaryFiles(context, db) }
+                .onFailure { error -> android.util.Log.e("TaziehGlossary", "خطا در بارگذاری بسته‌های فرهنگ اصطلاحات", error) }
         }
         if (!publicViewer && isReturningUser && newFilesCount > 0) {
             com.example.bookapp.data.showNewContentNotification(context, newFilesCount)

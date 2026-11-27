@@ -116,11 +116,17 @@ class GlossaryImportService(private val db: AppDatabase) {
         return GlossaryImportPreview(packageUid, parsed, errors.distinct(), warnings)
     }
 
-    suspend fun apply(preview: GlossaryImportPreview): GlossaryImportResult {
+    suspend fun apply(preview: GlossaryImportPreview): GlossaryImportResult = applyInternal(preview, published = false)
+
+    /** Used only for JSON packages shipped inside the APK by the project build. */
+    suspend fun applyPublished(preview: GlossaryImportPreview): GlossaryImportResult = applyInternal(preview, published = true)
+
+    private suspend fun applyInternal(preview: GlossaryImportPreview, published: Boolean): GlossaryImportResult {
         require(preview.isValid) { "ابتدا خطاهای پیش‌نمایش را برطرف کنید." }
         return db.withTransaction {
             val dao = db.glossaryDao()
-            require(!dao.hasImportPackage("IMPORT_PACKAGE:${preview.packageUid}")) {
+            val packageAction = if (published) "PUBLISH_PACKAGE:${preview.packageUid}" else "IMPORT_PACKAGE:${preview.packageUid}"
+            require(!dao.hasImportPackage(packageAction)) {
                 "این شناسه بسته قبلاً وارد شده است؛ برای بسته جدید packageUid تازه تعیین کنید."
             }
             var addedTerms = 0; var reusedTerms = 0; var addedMeanings = 0; var skippedMeanings = 0
@@ -152,19 +158,23 @@ class GlossaryImportService(private val db: AppDatabase) {
                         uid = "term-${UUID.randomUUID()}", headword = incoming.headword, normalizedHeadword = normalized,
                         partOfSpeech = incoming.partOfSpeech, pronunciation = incoming.pronunciation,
                         etymology = incoming.etymology, notes = incoming.notes,
-                        reviewStatus = GlossaryTermEntity.STATUS_PENDING, createdAt = now, updatedAt = now
+                        reviewStatus = if (published) GlossaryTermEntity.STATUS_VERIFIED else GlossaryTermEntity.STATUS_PENDING,
+                        createdAt = now, updatedAt = now
                     )
                     val id = dao.insertTerm(draft); addedTerms++
                     draft.copy(id = id)
                 } else {
                     reusedTerms++
-                    dao.updateTerm(existing.copy(
+                    val updated = existing.copy(
                         partOfSpeech = existing.partOfSpeech.ifBlank { incoming.partOfSpeech },
                         pronunciation = existing.pronunciation.ifBlank { incoming.pronunciation },
                         etymology = existing.etymology.ifBlank { incoming.etymology },
-                        notes = existing.notes.ifBlank { incoming.notes }, updatedAt = now
-                    ))
-                    existing
+                        notes = existing.notes.ifBlank { incoming.notes },
+                        reviewStatus = if (published) GlossaryTermEntity.STATUS_VERIFIED else existing.reviewStatus,
+                        updatedAt = now
+                    )
+                    dao.updateTerm(updated)
+                    updated
                 }
                 incoming.spellings.forEach { spelling ->
                     val key = normalize(spelling)
@@ -183,6 +193,9 @@ class GlossaryImportService(private val db: AppDatabase) {
                     )
                     val duplicate = dao.duplicateMeaning(term.id, meaning.meaning, meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage, resolvedSection.uid)
                     if (duplicate != null) {
+                        if (published && duplicate.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) {
+                            dao.updateMeaning(duplicate.copy(reviewStatus = GlossaryTermEntity.STATUS_VERIFIED, updatedAt = now))
+                        }
                         skippedMeanings++
                     } else {
                         dao.insertMeaning(GlossaryMeaningEntity(
@@ -191,13 +204,14 @@ class GlossaryImportService(private val db: AppDatabase) {
                             sourceUrl = meaning.sourceUrl, usageTaziehUid = resolvedMeaning.usageTaziehUid,
                             usageVersionUid = resolvedMeaning.usageVersionUid, usageRoleUid = resolvedMeaning.usageRoleUid,
                             usageSectionUid = resolvedMeaning.usageSectionUid, usageQuote = meaning.usageQuote,
-                            reviewStatus = GlossaryTermEntity.STATUS_PENDING, createdAt = now, updatedAt = now
+                            reviewStatus = if (published) GlossaryTermEntity.STATUS_VERIFIED else GlossaryTermEntity.STATUS_PENDING,
+                            createdAt = now, updatedAt = now
                         ))
                         addedMeanings++
                     }
                 }
                 dao.insertHistory(GlossaryHistoryEntity(
-                    termId = term.id, action = "IMPORT_PACKAGE:${preview.packageUid}", beforeJson = "{}",
+                    termId = term.id, action = packageAction, beforeJson = "{}",
                     afterJson = JSONObject().put("headword", incoming.headword).put("meanings", incoming.meanings.size).toString(), changedAt = now
                 ))
             }
@@ -228,4 +242,96 @@ class GlossaryImportService(private val db: AppDatabase) {
     private fun normalize(value: String): String = value.trim().replace('ي', 'ی').replace('ك', 'ک')
         .replace('ۀ', 'ه').replace('ة', 'ه').replace(Regex("[\\u064B-\\u065F\\u0670]"), "")
         .replace(Regex("\\s+"), " ")
+}
+
+
+/**
+ * Loads additive, pre-approved glossary packages bundled by the repository build.
+ * Put each new package JSON in app/src/main/assets/glossary/packages/.
+ * Content assets are synchronized first so contextual section references can resolve.
+ */
+suspend fun syncLocalGlossaryFiles(context: android.content.Context, db: AppDatabase): Int {
+    val names = context.assets.list("glossary/packages")
+        ?.filter { it.endsWith(".json", ignoreCase = true) }
+        ?.sorted() ?: emptyList()
+    if (names.isEmpty()) return 0
+
+    val service = GlossaryImportService(db)
+    val pending = mutableListOf<GlossaryImportPreview>()
+    val seenPackageUids = mutableSetOf<String>()
+    for (name in names) {
+        val text = context.assets.open("glossary/packages/$name")
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val preview = service.preview(text)
+        require(preview.isValid) {
+            "بسته فرهنگ اصطلاحات «$name» معتبر نیست: ${preview.errors.take(4).joinToString("؛ ")}"
+        }
+        require(seenPackageUids.add(preview.packageUid)) {
+            "شناسه بسته «${preview.packageUid}» در بیش از یک فایل تکرار شده است. برای هر فایل packageUid مستقل تعیین کنید."
+        }
+        if (!db.glossaryDao().hasImportPackage("PUBLISH_PACKAGE:${preview.packageUid}")) {
+            pending += preview
+        }
+    }
+
+    // Each package has its own Room transaction and stable packageUid. Existing packages
+    // are skipped on later launches; newly added files are appended without deleting old data.
+    pending.forEach { service.applyPublished(it) }
+    return pending.size
+}
+
+
+/** Creates a portable additive package containing only manager-approved terms and meanings. */
+suspend fun exportVerifiedGlossaryJson(db: AppDatabase, packageUid: String): String {
+    require(packageUid.isNotBlank()) { "شناسه بسته خروجی خالی است." }
+    val dao = db.glossaryDao()
+    val fieldsById = db.fieldDao().getAll().associateBy { it.id }
+    val termsArray = JSONArray()
+    dao.termsByStatus(GlossaryTermEntity.STATUS_VERIFIED).forEach termLoop@{ term ->
+        val meaningsArray = JSONArray()
+        dao.meanings(term.id).filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }.forEach meaningLoop@{ meaning ->
+            if (meaning.sourceTitle.isBlank() && meaning.sourceUrl.isBlank()) return@meaningLoop
+            val sectionUid = meaning.usageSectionUid ?: return@meaningLoop
+            val section = db.sectionDao().getByUid(sectionUid) ?: return@meaningLoop
+            val role = db.roleDao().getById(section.roleId)
+            val tazieh = db.taziehDao().getById(role.taziehId) ?: return@meaningLoop
+            val field = fieldsById[tazieh.fieldId] ?: return@meaningLoop
+            meaningsArray.put(JSONObject().apply {
+                put("meaning", meaning.meaning)
+                put("sourceTitle", meaning.sourceTitle)
+                put("sourceAuthor", meaning.sourceAuthor)
+                put("sourcePage", meaning.sourcePage)
+                put("sourceUrl", meaning.sourceUrl)
+                put("usageTaziehUid", tazieh.uid)
+                put("usageVersionUid", role.versionUid)
+                put("usageRoleUid", role.uid)
+                put("usageSectionUid", section.uid)
+                put("usageFieldTitle", field.title)
+                put("usageTaziehTitle", tazieh.title)
+                put("usageRoleTitle", role.title)
+                put("usageSectionTitle", section.title)
+                put("usageQuote", meaning.usageQuote)
+            })
+        }
+        if (meaningsArray.length() == 0) return@termLoop
+        val spellingArray = JSONArray()
+        dao.spellings(term.id).forEach { spellingArray.put(it.spelling) }
+        termsArray.put(JSONObject().apply {
+            put("headword", term.headword)
+            put("partOfSpeech", term.partOfSpeech)
+            put("pronunciation", term.pronunciation)
+            put("etymology", term.etymology)
+            put("notes", term.notes)
+            put("spellings", spellingArray)
+            put("meanings", meaningsArray)
+        })
+    }
+    require(termsArray.length() > 0) { "هیچ واژه و معنی تأییدشده و متصل به بخش معتبر برای انتشار وجود ندارد." }
+    return JSONObject().apply {
+        put("schemaVersion", 1)
+        put("packageUid", packageUid)
+        put("packageTitle", "بسته منتشرشده فرهنگ اصطلاحات")
+        put("description", "فقط واژه‌ها و معنی‌های تأییدشده؛ بسته افزایشی")
+        put("terms", termsArray)
+    }.toString(2)
 }
