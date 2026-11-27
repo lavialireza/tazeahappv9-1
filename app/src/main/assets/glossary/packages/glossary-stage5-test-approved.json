@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "packageUid": "glossary-stage5-approved-test-20261127",
+  "packageTitle": "بسته آزمایشی مرحله پنجم — پنج واژه تأییدشده برای آزمون انتشار",
+  "description": "بسته آزمایشی از پنج واژه برگرفته از محتوای پروژه. این فایل برای آزمون مسیر انتشار داخل APK در پوشه assets قرار گرفته و هنگام ورود به پایگاه داده به‌صورت تأییدشده ثبت می‌شود.",
+  "terms": [
+    {
+      "headword": "ذوالجناح",
+      "partOfSpeech": "اسم خاص",
+      "pronunciation": "ذوالجَناح",
+      "etymology": "",
+      "notes": "مدخل آزمایشی برای کنترل مسیر انتشار؛ تأیید این بسته صرفاً برای آزمون فنی است.",
+      "spellings": [
+        "ذوالجناه"
+      ],
+      "meanings": [
+        {
+          "meaning": "در بافت این متن، نام اسب منسوب به امام حسین که برای سوار شدن فراخوانده می‌شود.",
+          "sourceTitle": "منبع آزمایشی بسته مرحله پنجم؛ تأیید صرفاً برای آزمون فنی",
+          "sourceAuthor": "نمونه آزمایشی پروژه",
+          "sourcePage": "",
+          "sourceUrl": "",
+          "usageFieldTitle": "میرعزا",
+          "usageTaziehTitle": "ظهر عاشورا",
+          "usageRoleTitle": "امام حسین",
+          "usageSectionTitle": "متن کامل",
+          "usageQuote": "خواهر برو بیار برایم تو ذوالجناه"
+        }
+      ]
+    },
+    {
+      "headword": "علمدار",
+      "partOfSpeech": "اسم",
+      "pronunciation": "عَلَمدار",
+      "etymology": "",
+      "notes": "مدخل آزمایشی برای کنترل مسیر انتشار؛ تأیید این بسته صرفاً برای آزمون فنی است.",
+      "spellings": [],
+      "meanings": [
+        {
+          "meaning": "پرچم‌دار؛ کسی که علم یا پرچم گروه را حمل می‌کند.",
+          "sourceTitle": "منبع آزمایشی بسته مرحله پنجم؛ تأیید صرفاً برای آزمون فنی",
+          "sourceAuthor": "نمونه آزمایشی پروژه",
+          "sourcePage": "",
+          "sourceUrl": "",
+          "usageFieldTitle": "میرعزا",
+          "usageTaziehTitle": "ظهر عاشورا",
+          "usageRoleTitle": "امام حسین",
+          "usageSectionTitle": "متن کامل",
+          "usageQuote": "علمدار رشیدم سر جدا شد"
+        }
+      ]
+    },
+    {
+      "headword": "محشر",
+      "partOfSpeech": "اسم",
+      "pronunciation": "مَحشَر",
+      "etymology": "",
+      "notes": "مدخل آزمایشی برای کنترل مسیر انتشار؛ تأیید این بسته صرفاً برای آزمون فنی است.",
+      "spellings": [],
+      "meanings": [
+        {
+          "meaning": "روز رستاخیز و محل گردآمدن مردم برای حسابرسی؛ در ترکیب «شفیعان محشر» به روز قیامت اشاره دارد.",
+          "sourceTitle": "منبع آزمایشی بسته مرحله پنجم؛ تأیید صرفاً برای آزمون فنی",
+          "sourceAuthor": "نمونه آزمایشی پروژه",
+          "sourcePage": "",
+          "sourceUrl": "",
+          "usageFieldTitle": "میرعزا",
+          "usageTaziehTitle": "ظهر عاشورا",
+          "usageRoleTitle": "امام حسین",
+          "usageSectionTitle": "متن کامل",
+          "usageQuote": "اولاد خویش را که شفیعان محشرند"
+        }
+      ]
+    },
+    {
+      "headword": "خیمه‌گاه",
+      "partOfSpeech": "اسم مرکب",
+      "pronunciation": "خیمه‌گاه",
+      "etymology": "",
+      "notes": "مدخل آزمایشی برای کنترل مسیر انتشار؛ تأیید این بسته صرفاً برای آزمون فنی است.",
+      "spellings": [],
+      "meanings": [
+        {
+          "meaning": "محل برپا شدن خیمه‌ها؛ در این متن منظور محل استقرار اهل‌بیت در صحنه تعزیه است.",
+          "sourceTitle": "منبع آزمایشی بسته مرحله پنجم؛ تأیید صرفاً برای آزمون فنی",
+          "sourceAuthor": "نمونه آزمایشی پروژه",
+          "sourcePage": "",
+          "sourceUrl": "",
+          "usageFieldTitle": "میرعزا",
+          "usageTaziehTitle": "ظهر عاشورا",
+          "usageRoleTitle": "امام حسین",
+          "usageSectionTitle": "متن کامل",
+          "usageQuote": "خواهر برو بخیمه مسوزان تو پیکرم"
+        }
+      ]
+    },
+    {
+      "headword": "رکاب",
+      "partOfSpeech": "اسم",
+      "pronunciation": "رِکاب",
+      "etymology": "",
+      "notes": "مدخل آزمایشی برای کنترل مسیر انتشار؛ تأیید این بسته صرفاً برای آزمون فنی است.",
+      "spellings": [],
+      "meanings": [
+        {
+          "meaning": "بخشی از زین که سوار پا را در آن قرار می‌دهد؛ در عبارت متن، گرفتن رکاب نشانه یاری‌رساندن هنگام سوار شدن است.",
+          "sourceTitle": "منبع آزمایشی بسته مرحله پنجم؛ تأیید صرفاً برای آزمون فنی",
+          "sourceAuthor": "نمونه آزمایشی پروژه",
+          "sourcePage": "",
+          "sourceUrl": "",
+          "usageFieldTitle": "میرعزا",
+          "usageTaziehTitle": "ظهر عاشورا",
+          "usageRoleTitle": "امام حسین",
+          "usageSectionTitle": "متن کامل",
+          "usageQuote": "بیا بگیر رکاب مرا تو ای زینب"
+        }
+      ]
+    }
+  ]
+}
