@@ -157,11 +157,15 @@ android {
         }
         getByName("viewer") {
             setRoot("src/viewer")
-            assets.setSrcDirs(listOf("src/viewer/assets"))
+            // Viewer-specific content plus shared, pre-approved glossary packages.
+            // The common main asset directory is intentionally attached only to
+            // the two official flavors, not to the empty main source set.
+            assets.setSrcDirs(listOf("src/viewer/assets", "src/main/assets"))
         }
         getByName("admin") {
             setRoot("src/admin")
-            assets.setSrcDirs(listOf("src/admin/assets"))
+            // Admin-specific content plus shared glossary packages.
+            assets.setSrcDirs(listOf("src/admin/assets", "src/main/assets"))
         }
 
         // آیکن‌های تولیدشده از custom_icons به‌صورت منبع موقت build اضافه می‌شوند.
