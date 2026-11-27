@@ -1,76 +1,88 @@
 package com.example.bookapp.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.platform.LocalContext
-import android.content.Context
-import com.example.bookapp.data.GlossaryStore
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.room.withTransaction
+import com.example.bookapp.data.*
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.util.UUID
 
-data class GlossaryTerm(val term: String, val explanation: String)
+private fun normalizeGlossaryEntry(value: String): String = value.trim()
+    .replace('ي', 'ی').replace('ك', 'ک').replace('ۀ', 'ه').replace('ة', 'ه')
+    .replace(Regex("[\\u064B-\\u065F\\u0670]"), "")
+    .replace(Regex("\\s+"), " ")
 
 /**
- * فهرست ثابت اصطلاحات رایج تعزیه، برای کاربرانی که با این واژه‌ها آشنا نیستند.
- * این لیست مستقل از محتوای دیتابیس است؛ اگر خواستید واژه‌ی تازه‌ای اضافه کنید،
- * کافی است یک خط به GLOSSARY_TERMS در پایین همین فایل اضافه کنید.
+ * صفحه واحد فرهنگ اصطلاحات برای Admin و Viewer.
+ * Viewer فقط مدخل‌ها و معنی‌های تأییدشده را می‌بیند؛ ورود و بررسی اطلاعات فقط در Admin فعال است.
  */
-val GLOSSARY_TERMS = listOf(
-    GlossaryTerm("تعزیه", "نوعی نمایش سنتی و آیینی ایرانی که وقایع کربلا و رویدادهای مذهبی مشابه را روایت می‌کند."),
-    GlossaryTerm("مجلس", "هر یک از داستان‌های مستقل تعزیه (مثل «مجلس شهادت حضرت علی‌اکبر»)؛ همان چیزی که در این برنامه «تعزیه» نامیده می‌شود."),
-    GlossaryTerm("تعزیه‌خوان", "بازیگری که نقشی را در تعزیه اجرا می‌کند؛ معمولاً متن نقش خود را با آواز می‌خواند."),
-    GlossaryTerm("ذوالجناح", "نام اسب امام حسین (ع) در واقعه‌ی عاشورا."),
-    GlossaryTerm("علمدار", "لقب حضرت عباس (ع)، به‌خاطر بر دوش‌کشیدن پرچم (علم) سپاه امام حسین (ع)."),
-    GlossaryTerm("ساقی‌نامه", "بخشی از تعزیه که درباره‌ی تشنگی و آب‌رسانی (معمولاً به‌وسیله‌ی حضرت عباس) است."),
-    GlossaryTerm("شبیه‌خوانی", "نام دیگر تعزیه؛ چون بازیگران «شبیه» شخصیت‌های واقعه را اجرا می‌کنند."),
-    GlossaryTerm("مرثیه", "شعر یا سرودی در سوگ یک شخصیت یا واقعه، که در بسیاری از مجالس تعزیه خوانده می‌شود."),
-    GlossaryTerm("نوحه", "نوعی سرود سوگواری با وزن مشخص، معمولاً همراه با حرکات دسته‌جمعی."),
-    GlossaryTerm("وعده‌گاه", "محل برگزاری اجرای تعزیه، که معمولاً به‌طور موقت یا دائم (مثل تکیه) آماده می‌شود."),
-    GlossaryTerm("تکیه", "بنایی که به‌طور خاص برای برگزاری مراسم عزاداری و تعزیه ساخته می‌شود."),
-    GlossaryTerm("خیمه‌گاه", "محل استقرار خیمه‌های سپاه امام حسین (ع) در کربلا؛ صحنه‌ی بسیاری از مجالس تعزیه."),
-    GlossaryTerm("اصغر", "اشاره به حضرت علی‌اصغر (ع)، کوچک‌ترین فرزند امام حسین (ع) که در کربلا به شهادت رسید.")
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GlossaryScreen(
+    db: AppDatabase,
     onBack: () -> Unit,
-    canAdd: Boolean = true,
-    canEdit: Boolean = true,
-    canDelete: Boolean = true
+    isAdmin: Boolean
 ) {
-    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var terms by remember { mutableStateOf(emptyList<GlossaryTermEntity>()) }
+    var spellings by remember { mutableStateOf(emptyList<GlossarySpellingEntity>()) }
+    var meanings by remember { mutableStateOf(emptyList<GlossaryMeaningEntity>()) }
     var query by remember { mutableStateOf("") }
-    var customTerms by remember { mutableStateOf(GlossaryStore.get(context)) }
-    var editorTerm by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var showAdd by remember { mutableStateOf(false) }
-    val allTerms = remember(customTerms) {
-        GLOSSARY_TERMS + customTerms.map { GlossaryTerm(it.first, it.second) }
+    var selectedTermId by remember { mutableStateOf<Long?>(null) }
+    var showEditor by remember { mutableStateOf(false) }
+    var statusFilter by remember { mutableStateOf("ALL") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    suspend fun reload() {
+        val dao = db.glossaryDao()
+        val allTerms = dao.allTerms()
+        val allMeanings = dao.allMeanings()
+        terms = if (isAdmin) allTerms else allTerms.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
+        meanings = if (isAdmin) allMeanings else allMeanings.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
+        spellings = dao.allSpellings()
+        if (selectedTermId != null && terms.none { it.id == selectedTermId }) selectedTermId = null
     }
-    val filtered = remember(query, allTerms) {
-        if (query.isBlank()) allTerms
-        else allTerms.filter { it.term.contains(query, ignoreCase = true) || it.explanation.contains(query, ignoreCase = true) }
+
+    LaunchedEffect(db, isAdmin) { reload() }
+
+    val visibleTerms = remember(terms, spellings, meanings, query, statusFilter, isAdmin) {
+        val q = normalizeGlossaryEntry(query)
+        terms.filter { term ->
+            val termMeanings = meanings.filter { it.termId == term.id }
+            val matchesQuery = q.isBlank() || normalizeGlossaryEntry(term.headword).contains(q) ||
+                spellings.any { it.termId == term.id && normalizeGlossaryEntry(it.spelling).contains(q) } ||
+                termMeanings.any { normalizeGlossaryEntry(it.meaning).contains(q) || normalizeGlossaryEntry(it.sourceTitle).contains(q) }
+            val statusMatches = !isAdmin || when (statusFilter) {
+                "PENDING" -> term.reviewStatus == GlossaryTermEntity.STATUS_PENDING
+                "VERIFIED" -> term.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED
+                "REJECTED" -> term.reviewStatus == GlossaryTermEntity.STATUS_REJECTED
+                else -> true
+            }
+            matchesQuery && statusMatches
+        }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("دیکشنری اصطلاحات تعزیه") },
+                title = { Text("فرهنگ اصطلاحات تعزیه") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت")
@@ -79,67 +91,238 @@ fun GlossaryScreen(
             )
         },
         floatingActionButton = {
-            if (canAdd) FloatingActionButton(onClick = { showAdd = true }) { Icon(Icons.Filled.Add, "افزودن واژه") }
+            if (isAdmin) FloatingActionButton(onClick = { showEditor = true }) {
+                Icon(Icons.Filled.Add, contentDescription = "ثبت واژه")
+            }
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                label = { Text("جستجوی اصطلاح") },
+                label = { Text("جست‌وجوی واژه، معنی یا صورت نوشتاری") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(16.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
             )
-            LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(filtered) { entry ->
-                    val custom = customTerms.firstOrNull { it.first == entry.term && it.second == entry.explanation }
-                    Card(shape = RoundedCornerShape(12.dp)) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(entry.term, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(4.dp))
-                            Text(entry.explanation, style = MaterialTheme.typography.bodyMedium)
-                            if (custom != null) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                    if (canEdit) IconButton(onClick = { editorTerm = custom }) { Icon(Icons.Filled.Edit, "ویرایش") }
-                                    if (canDelete) IconButton(onClick = {
-                                        val remaining = customTerms.filterNot { it == custom }
-                                        val raw = org.json.JSONArray(); remaining.forEach { (t,e) -> raw.put(org.json.JSONObject().put("term", t).put("explanation", e)) }
-                                        context.getSharedPreferences("tazieh_glossary", Context.MODE_PRIVATE).edit().putString("custom_terms", raw.toString()).apply()
-                                        customTerms = GlossaryStore.get(context)
-                                    }) { Icon(Icons.Filled.Delete, "حذف") }
+            if (isAdmin) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = statusFilter == "ALL", onClick = { statusFilter = "ALL" }, label = { Text("همه") })
+                    FilterChip(selected = statusFilter == "PENDING", onClick = { statusFilter = "PENDING" }, label = { Text("در انتظار") })
+                    FilterChip(selected = statusFilter == "VERIFIED", onClick = { statusFilter = "VERIFIED" }, label = { Text("تأییدشده") })
+                    FilterChip(selected = statusFilter == "REJECTED", onClick = { statusFilter = "REJECTED" }, label = { Text("ردشده") })
+                }
+            }
+            if (message != null) {
+                Text(message!!, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(visibleTerms, key = { it.id }) { term ->
+                    val termMeanings = meanings.filter { it.termId == term.id }
+                    val expanded = selectedTermId == term.id
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { selectedTermId = if (expanded) null else term.id },
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(term.headword, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                if (isAdmin) {
+                                    Text(
+                                        when (term.reviewStatus) {
+                                            GlossaryTermEntity.STATUS_VERIFIED -> "تأییدشده"
+                                            GlossaryTermEntity.STATUS_REJECTED -> "ردشده"
+                                            else -> "در انتظار بررسی"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (term.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                                    )
+                                }
+                            }
+                            if (term.partOfSpeech.isNotBlank()) Text(term.partOfSpeech, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                            Text(termMeanings.firstOrNull()?.meaning ?: if (isAdmin) "هنوز معنی ثبت نشده است." else "", style = MaterialTheme.typography.bodyMedium)
+                            if (expanded) {
+                                HorizontalDivider()
+                                if (term.pronunciation.isNotBlank()) Text("تلفظ: ${term.pronunciation}", style = MaterialTheme.typography.bodySmall)
+                                if (term.etymology.isNotBlank()) Text("ریشه‌شناسی: ${term.etymology}", style = MaterialTheme.typography.bodySmall)
+                                if (term.notes.isNotBlank()) Text("یادداشت: ${term.notes}", style = MaterialTheme.typography.bodySmall)
+                                val variants = spellings.filter { it.termId == term.id }
+                                if (variants.isNotEmpty()) Text("صورت‌های دیگر: ${variants.joinToString("، ") { it.spelling }}", style = MaterialTheme.typography.bodySmall)
+                                termMeanings.forEach { meaning ->
+                                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                                        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Text(meaning.meaning, style = MaterialTheme.typography.bodyMedium)
+                                            val sourceLine = listOf(meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage).filter { it.isNotBlank() }.joinToString("، ")
+                                            if (sourceLine.isNotBlank()) Text("منبع: $sourceLine", style = MaterialTheme.typography.bodySmall)
+                                            if (meaning.sourceUrl.isNotBlank()) Text("نشانی منبع: ${meaning.sourceUrl}", style = MaterialTheme.typography.bodySmall)
+                                            val usagePath = listOf(meaning.usageTaziehUid?.let { "مجلس: $it" }, meaning.usageVersionUid?.let { "نسخه: $it" }, meaning.usageRoleUid?.let { "نقش: $it" }, meaning.usageSectionUid?.let { "بخش: $it" }).filterNotNull()
+                                            if (usagePath.isNotEmpty()) Text(usagePath.joinToString(" | "), style = MaterialTheme.typography.bodySmall)
+                                            if (meaning.usageQuote.isNotBlank()) Text("شاهد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)
+                                            if (isAdmin && meaning.reviewStatus != GlossaryTermEntity.STATUS_REJECTED) {
+                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    if (meaning.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) TextButton(onClick = {
+                                                        scope.launch {
+                                                            db.withTransaction {
+                                                                val now = System.currentTimeMillis()
+                                                                db.glossaryDao().updateMeaning(meaning.copy(reviewStatus = GlossaryTermEntity.STATUS_VERIFIED, updatedAt = now))
+                                                                db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "VERIFY_MEANING", beforeJson = JSONObject().put("status", meaning.reviewStatus).toString(), afterJson = JSONObject().put("meaningUid", meaning.uid).put("status", "VERIFIED").toString(), changedAt = now))
+                                                            }
+                                                            reload()
+                                                        }
+                                                    }) { Text("تأیید معنی") }
+                                                    TextButton(onClick = {
+                                                        scope.launch {
+                                                            db.withTransaction {
+                                                                val now = System.currentTimeMillis()
+                                                                db.glossaryDao().updateMeaning(meaning.copy(reviewStatus = GlossaryTermEntity.STATUS_REJECTED, updatedAt = now))
+                                                                db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "REJECT_MEANING", beforeJson = JSONObject().put("status", meaning.reviewStatus).toString(), afterJson = JSONObject().put("meaningUid", meaning.uid).put("status", "REJECTED").toString(), changedAt = now))
+                                                            }
+                                                            reload()
+                                                        }
+                                                    }) { Text("رد معنی") }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (isAdmin && term.reviewStatus != GlossaryTermEntity.STATUS_REJECTED) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        if (term.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) Button(onClick = {
+                                            scope.launch {
+                                                db.withTransaction {
+                                                    val now = System.currentTimeMillis()
+                                                    db.glossaryDao().updateTerm(term.copy(reviewStatus = GlossaryTermEntity.STATUS_VERIFIED, updatedAt = now))
+                                                    db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "VERIFY_TERM", beforeJson = JSONObject().put("status", term.reviewStatus).toString(), afterJson = "{\"status\":\"VERIFIED\"}", changedAt = now))
+                                                }
+                                                reload()
+                                            }
+                                        }, modifier = Modifier.weight(1f)) { Text("تأیید مدخل") }
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                db.withTransaction {
+                                                    val now = System.currentTimeMillis()
+                                                    db.glossaryDao().updateTerm(term.copy(reviewStatus = GlossaryTermEntity.STATUS_REJECTED, updatedAt = now))
+                                                    db.glossaryDao().insertHistory(GlossaryHistoryEntity(termId = term.id, action = "REJECT_TERM", beforeJson = JSONObject().put("status", term.reviewStatus).toString(), afterJson = "{\"status\":\"REJECTED\"}", changedAt = now))
+                                                }
+                                                reload()
+                                            }
+                                        }) { Text("رد مدخل") }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                if (visibleTerms.isEmpty()) {
+                    item { Text(if (isAdmin) "واژه‌ای مطابق جست‌وجو پیدا نشد. برای ثبت واژه جدید از دکمه افزودن استفاده کنید." else "هنوز واژه تأییدشده‌ای برای نمایش وجود ندارد.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
             }
         }
     }
-    if (showAdd) GlossaryEditorDialog("افزودن واژه", null, { showAdd = false }) { term, explanation ->
-        if (GlossaryStore.add(context, term, explanation)) customTerms = GlossaryStore.get(context)
-        showAdd = false
-    }
-    editorTerm?.let { item -> GlossaryEditorDialog("ویرایش واژه", item, { editorTerm = null }) { term, explanation ->
-        val remaining = customTerms.filterNot { it == item }.toMutableList()
-        if (term.isNotBlank() && explanation.isNotBlank() && remaining.none { it.first.trim().equals(term.trim(), true) }) {
-            remaining.add(term.trim() to explanation.trim())
-            val raw = org.json.JSONArray(); remaining.forEach { (t,e) -> raw.put(org.json.JSONObject().put("term", t).put("explanation", e)) }
-            context.getSharedPreferences("tazieh_glossary", Context.MODE_PRIVATE).edit().putString("custom_terms", raw.toString()).apply()
-            customTerms = GlossaryStore.get(context)
-        }
-        editorTerm = null
-    } }
-}
 
-@Composable
-private fun GlossaryEditorDialog(title: String, item: Pair<String, String>?, onDismiss: () -> Unit, onConfirm: (String, String) -> Unit) {
-    var term by remember(item) { mutableStateOf(item?.first.orEmpty()) }
-    var explanation by remember(item) { mutableStateOf(item?.second.orEmpty()) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = {
-        Column {
-            OutlinedTextField(term, { term = it }, label = { Text("واژه") }, modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(explanation, { explanation = it }, label = { Text("معنی / توضیح") }, modifier = Modifier.fillMaxWidth())
-        }
-    }, confirmButton = { TextButton(onClick = { onConfirm(term, explanation) }) { Text("ذخیره") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } })
+    if (showEditor && isAdmin) {
+        var headword by remember { mutableStateOf("") }
+        var meaning by remember { mutableStateOf("") }
+        var spelling by remember { mutableStateOf("") }
+        var partOfSpeech by remember { mutableStateOf("") }
+        var pronunciation by remember { mutableStateOf("") }
+        var etymology by remember { mutableStateOf("") }
+        var source by remember { mutableStateOf("") }
+        var author by remember { mutableStateOf("") }
+        var page by remember { mutableStateOf("") }
+        var sourceUrl by remember { mutableStateOf("") }
+        var taziehUid by remember { mutableStateOf("") }
+        var versionUid by remember { mutableStateOf("") }
+        var roleUid by remember { mutableStateOf("") }
+        var sectionUid by remember { mutableStateOf("") }
+        var quote by remember { mutableStateOf("") }
+        var notes by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { if (!busy) showEditor = false },
+            title = { Text("ثبت واژه و معنی") },
+            text = {
+                Column(Modifier.heightIn(max = 560.dp).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    OutlinedTextField(headword, { headword = it }, label = { Text("واژه اصلی") }, singleLine = true)
+                    OutlinedTextField(spelling, { spelling = it }, label = { Text("صورت نوشتاری دیگر (اختیاری)") }, singleLine = true)
+                    OutlinedTextField(partOfSpeech, { partOfSpeech = it }, label = { Text("نوع واژه") }, singleLine = true)
+                    OutlinedTextField(pronunciation, { pronunciation = it }, label = { Text("تلفظ") }, singleLine = true)
+                    OutlinedTextField(etymology, { etymology = it }, label = { Text("ریشه‌شناسی") }, minLines = 2)
+                    OutlinedTextField(meaning, { meaning = it }, label = { Text("معنی") }, minLines = 2)
+                    OutlinedTextField(source, { source = it }, label = { Text("منبع") }, singleLine = true)
+                    OutlinedTextField(author, { author = it }, label = { Text("پدیدآورنده") }, singleLine = true)
+                    OutlinedTextField(page, { page = it }, label = { Text("صفحه / جلد") }, singleLine = true)
+                    OutlinedTextField(sourceUrl, { sourceUrl = it }, label = { Text("نشانی اینترنتی منبع (اختیاری)") }, singleLine = true)
+                    OutlinedTextField(taziehUid, { taziehUid = it }, label = { Text("شناسه مجلس (اختیاری)") }, singleLine = true)
+                    OutlinedTextField(versionUid, { versionUid = it }, label = { Text("شناسه نسخه (اختیاری)") }, singleLine = true)
+                    OutlinedTextField(roleUid, { roleUid = it }, label = { Text("شناسه نقش (اختیاری)") }, singleLine = true)
+                    OutlinedTextField(sectionUid, { sectionUid = it }, label = { Text("شناسه بخش (اختیاری)") }, singleLine = true)
+                    OutlinedTextField(quote, { quote = it }, label = { Text("شاهد کاربرد در متن (اختیاری)") }, minLines = 2)
+                    OutlinedTextField(notes, { notes = it }, label = { Text("یادداشت تکمیلی مدخل (اختیاری)") }, minLines = 2)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && headword.isNotBlank() && meaning.isNotBlank(), onClick = {
+                    scope.launch {
+                        busy = true
+                        message = null
+                        try {
+                            val normalized = normalizeGlossaryEntry(headword)
+                            require(normalized.isNotBlank()) { "واژه معتبر نیست." }
+                            db.withTransaction {
+                                val dao = db.glossaryDao()
+                                val existing = dao.byNormalizedHeadword(normalized)
+                                val now = System.currentTimeMillis()
+                                val term = existing ?: run {
+                                    val draft = GlossaryTermEntity(
+                                        uid = "term-${UUID.randomUUID()}", headword = headword.trim(), normalizedHeadword = normalized,
+                                        partOfSpeech = partOfSpeech.trim(), pronunciation = pronunciation.trim(), etymology = etymology.trim(), notes = notes.trim(),
+                                        createdAt = now, updatedAt = now
+                                    )
+                                    draft.copy(id = dao.insertTerm(draft))
+                                }
+                                if (existing != null && (partOfSpeech.isNotBlank() || pronunciation.isNotBlank() || etymology.isNotBlank() || notes.isNotBlank())) {
+                                    dao.updateTerm(term.copy(
+                                        partOfSpeech = partOfSpeech.ifBlank { term.partOfSpeech }.trim(),
+                                        pronunciation = pronunciation.ifBlank { term.pronunciation }.trim(),
+                                        etymology = etymology.ifBlank { term.etymology }.trim(),
+                                        notes = notes.ifBlank { term.notes }.trim(), updatedAt = now
+                                    ))
+                                }
+                                if (spelling.isNotBlank()) {
+                                    val normalizedSpelling = normalizeGlossaryEntry(spelling)
+                                    require(normalizedSpelling != normalized) { "صورت نوشتاری با واژه اصلی یکسان است." }
+                                    if (dao.spellings(term.id).none { it.normalizedSpelling == normalizedSpelling }) {
+                                        dao.insertSpelling(GlossarySpellingEntity(termId = term.id, spelling = spelling.trim(), normalizedSpelling = normalizedSpelling))
+                                    }
+                                }
+                                require(dao.duplicateMeaning(term.id, meaning.trim(), source.trim(), author.trim(), page.trim()) == null) { "این معنی با همین مشخصات منبع قبلاً ثبت شده است." }
+                                val item = GlossaryMeaningEntity(
+                                    uid = "meaning-${UUID.randomUUID()}", termId = term.id, meaning = meaning.trim(),
+                                    sourceTitle = source.trim(), sourceAuthor = author.trim(), sourcePage = page.trim(), sourceUrl = sourceUrl.trim(),
+                                    usageTaziehUid = taziehUid.trim().ifBlank { null }, usageVersionUid = versionUid.trim().ifBlank { null },
+                                    usageRoleUid = roleUid.trim().ifBlank { null }, usageSectionUid = sectionUid.trim().ifBlank { null }, usageQuote = quote.trim(),
+                                    createdAt = now, updatedAt = now
+                                )
+                                dao.insertMeaning(item)
+                                dao.insertHistory(GlossaryHistoryEntity(
+                                    termId = term.id, action = if (existing == null) "CREATE_TERM_AND_MEANING" else "ADD_MEANING",
+                                    beforeJson = "{}", afterJson = JSONObject().put("headword", term.headword).put("meaning", item.meaning).put("source", item.sourceTitle).toString(), changedAt = now
+                                ))
+                            }
+                            showEditor = false
+                            reload()
+                            message = "اطلاعات به‌صورت پیشنهادی ثبت شد؛ پس از تأیید مدیر در نمایش عمومی قرار می‌گیرد."
+                        } catch (e: Exception) {
+                            message = "ثبت انجام نشد: ${e.message ?: "خطای نامشخص"}"
+                        } finally { busy = false }
+                    }
+                }) { Text(if (busy) "در حال ثبت…" else "ثبت") }
+            },
+            dismissButton = { TextButton(onClick = { showEditor = false }) { Text("انصراف") } }
+        )
+    }
 }

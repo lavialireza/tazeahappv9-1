@@ -351,7 +351,7 @@ fun ResearchCenterScreen(
             if (showAi) ResearchAction("دستیار هوش مصنوعی پژوهش", "تحلیل ساختار، پیشنهاد گوینده، استخراج واژه و جستجوی معنایی آفلاین در آرشیو", Icons.Filled.School, onOpenAi, Color(0xFFE8E1D2))
             if (showVersionComparison) ResearchAction("مقایسه نسخه‌های یک تعزیه", "بررسی اختلاف نسخه‌ها با حفظ متن و ترتیب منبع", Icons.Filled.Search, onOpenVersionComparison, Color(0xFFE8EDF8))
             if (showEncyclopedia) ResearchAction("دانشنامه تعزیه", "مدخل‌ها، شخصیت‌ها، رویدادها و پیوندهای دانشی", Icons.AutoMirrored.Filled.MenuBook, onOpenEncyclopedia, Color(0xFFDCE9E4))
-            if (showGlossary) ResearchAction("دیکشنری و اصطلاحات", "واژه‌ها، صورت‌های نوشتاری و معنی‌های ثبت‌شده", Icons.AutoMirrored.Filled.MenuBook, onOpenGlossary, Color(0xFFF8EBDD))
+            if (showGlossary) ResearchAction("فرهنگ اصطلاحات تعزیه", "واژه‌ها، معنی‌ها، منابع و کاربرد آن‌ها در متن تعزیه", Icons.AutoMirrored.Filled.MenuBook, onOpenGlossary, Color(0xFFF8EBDD))
             if (showCorrections) ResearchAction("ابزار تصحیح متن", "بررسی و مدیریت پیشنهادهای اصلاحی بدون تغییر خودکار متن اصلی", Icons.Filled.Edit, onOpenCorrections, Color(0xFFF4E5EC))
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {

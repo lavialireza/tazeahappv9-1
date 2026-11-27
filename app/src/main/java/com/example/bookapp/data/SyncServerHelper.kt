@@ -368,9 +368,6 @@ object SyncServerHelper {
             a.put(JSONObject().apply { put("id", c.id.toString()); put("uid", "android-correction-${c.id}"); put("original", c.original); put("corrected", c.corrected); put("explanation", c.explanation) })
         } })
 
-        state.put("glossary", JSONArray().also { a -> GlossaryStore.get(context).forEach { (term, explanation) ->
-            a.put(JSONArray().put(term).put(explanation))
-        } })
     }
 
     private fun mediaObject(context: Context, uid: String, parentUid: String, path: String, label: String, kind: String): JSONObject {
@@ -584,14 +581,6 @@ object SyncServerHelper {
             }
         }
 
-        val glossary = data.optJSONArray("glossary") ?: JSONArray()
-        for (i in 0 until glossary.length()) {
-            val pair = glossary.optJSONArray(i) ?: continue
-            val term = pair.optString(0).trim(); val explanation = pair.optString(1).trim()
-            if (term.isNotBlank() && explanation.isNotBlank() && !GlossaryStore.contains(context, term)) {
-                GlossaryStore.add(context, term, explanation); pulled++
-            }
-        }
 
         return MergeUserReport(pulled)
     }

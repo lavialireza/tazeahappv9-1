@@ -975,10 +975,9 @@ fun AppNavigation(
 
         if (featureEnabled("dictionary.view")) composable(ROUTE_GLOSSARY) {
             GlossaryScreen(
+                db = db,
                 onBack = { navController.popBackStack() },
-                canAdd = featureEnabled("dictionary.add"),
-                canEdit = featureEnabled("dictionary.edit"),
-                canDelete = featureEnabled("dictionary.delete")
+                isAdmin = !publicViewer
             )
         }
 
@@ -1459,7 +1458,6 @@ fun AppNavigation(
                     canAddFootnote = featureEnabled("footnotes.add"),
                     canEditFootnote = featureEnabled("footnotes.edit"),
                     canDeleteFootnote = featureEnabled("footnotes.delete"),
-                    canAddFootnoteToDictionary = featureEnabled("footnoteSync.dictionary") && featureEnabled("dictionary.add"),
                     canBookmark = featureEnabled("bookmarks.add"),
                     canBookmarkDelete = featureEnabled("bookmarks.delete"),
                     canAudio = featureEnabled("audio.play"),
@@ -1542,7 +1540,6 @@ fun AppNavigation(
                 canAddFootnote = featureEnabled("footnotes.add"),
                 canEditFootnote = featureEnabled("footnotes.edit"),
                 canDeleteFootnote = featureEnabled("footnotes.delete"),
-                canAddFootnoteToDictionary = featureEnabled("footnoteSync.dictionary") && featureEnabled("dictionary.add"),
                 saveError = footnoteError,
                 onAddFootnote = { term, explanation ->
                     if (!featureEnabled("footnotes.add")) {

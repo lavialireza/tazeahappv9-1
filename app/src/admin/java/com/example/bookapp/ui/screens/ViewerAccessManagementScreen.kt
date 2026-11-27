@@ -68,10 +68,10 @@ private val permissionChildren = mapOf(
     "copy" to listOf("copy.text"),
     "share" to listOf("share.content"),
     "pdf" to listOf("pdf.create", "pdf.save"),
-    "footnotes" to listOf("footnotes.view", "footnotes.add", "footnotes.edit", "footnotes.delete", "footnoteSync.dictionary"),
+    "footnotes" to listOf("footnotes.view", "footnotes.add", "footnotes.edit", "footnotes.delete"),
     "appIntro" to listOf("appIntro.view"),
     "myRole" to listOf("myRole.view", "myRole.select", "myRole.remove", "myRole.rehearse", "myRole.pdf"),
-    "dictionary" to listOf("dictionary.view", "dictionary.add", "dictionary.edit", "dictionary.delete"),
+    "dictionary" to listOf("dictionary.view"),
     "taziehCorrections" to listOf("taziehCorrections.view", "taziehCorrections.add", "taziehCorrections.edit", "taziehCorrections.delete", "taziehCorrections.apply"),
     "calendar" to listOf("calendar.view", "calendar.suggestions"),
     "ai" to listOf("ai.analysis", "ai.speaker", "ai.glossary", "ai.semanticSearch", "ai.transcription")
@@ -91,10 +91,10 @@ private fun permissionDescription(key: String): String = when (key) {
     "copy" -> "والد کپی متن"
     "share" -> "والد اشتراک‌گذاری"
     "pdf" -> "والد دسترسی به همه خروجی‌های قابل دریافت؛ خاموش‌کردن آن، PDF و سایر خروجی‌های کاربر را مسدود می‌کند"
-    "footnotes" -> "والد پاورقی؛ فرزندان آن مشاهده، افزودن، ویرایش، حذف و همگام‌سازی دیکشنری هستند"
+    "footnotes" -> "والد پاورقی؛ فرزندان آن مشاهده، افزودن، ویرایش و حذف پاورقی هستند"
     "appIntro" -> "والد معرفی برنامه"
     "myRole" -> "والد نقش من؛ مدیریت نقش‌های انتخاب‌شده و عملیات مرتبط"
-    "dictionary" -> "والد دیکشنری اصطلاحات تعزیه؛ فرزندان: مشاهده، افزودن، ویرایش، حذف"
+    "dictionary" -> "فرهنگ اصطلاحات تعزیه؛ فقط مشاهده برای Viewer"
     "taziehCorrections" -> "والد دیکشنری اصلاحات تعزیه؛ مستقل از دیکشنری اصطلاحات"
     "calendar" -> "والد تقویم محرم و پیشنهادهای مرتبط"
     "ai" -> "والد دسترسی به ابزارهای هوشمند؛ خاموش‌کردن آن همه قابلیت‌های هوش مصنوعی کاربر را مسدود می‌کند"

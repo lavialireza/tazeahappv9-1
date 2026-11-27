@@ -62,7 +62,6 @@ private const val ROUTE_CONTENT_MANAGEMENT = "content_management"
 private const val ROUTE_CONTENT_EDITOR = "content_editor"
 private const val ROUTE_ARCHIVE_SOURCE_INTAKE = "archive_source_intake"
 private const val ROUTE_VERSION_COMPARISON = "version_comparison"
-private const val ROUTE_GLOSSARY_MANAGEMENT = "glossary_management"
 private const val ROUTE_ENCYCLOPEDIA = "encyclopedia_management"
 private const val ROUTE_ENCYCLOPEDIA_GRAPH = "encyclopedia_graph"
 private const val ROUTE_PERFORMANCE_MANAGEMENT = "performance_management"
@@ -168,13 +167,6 @@ fun NavGraphBuilder.adminOnlyRoutes(
             onFontChoiceChange = onFontChoiceChange,
             keepScreenOn = keepScreenOn,
             onKeepScreenOnChange = onKeepScreenOnChange,
-            onBack = { navController.popBackStack() }
-        )
-    }
-
-    composable(ROUTE_GLOSSARY_MANAGEMENT) {
-        GlossaryManagementScreen(
-            db = db,
             onBack = { navController.popBackStack() }
         )
     }
@@ -510,7 +502,7 @@ fun NavGraphBuilder.adminOnlyRoutes(
                 navController.navigate(ROUTE_VERSION_COMPARISON)
             },
             onOpenGlossary = {
-                navController.navigate(ROUTE_GLOSSARY_MANAGEMENT)
+                navController.navigate("glossary")
             },
             onOpenEncyclopedia = {
                 navController.navigate(ROUTE_ENCYCLOPEDIA)

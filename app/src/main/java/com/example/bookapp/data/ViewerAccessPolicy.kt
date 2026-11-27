@@ -38,7 +38,7 @@ object ViewerAccessPolicy {
         "footnotes" to "پاورقی",
         "appIntro" to "معرفی برنامه",
         "myRole" to "نقش من",
-        "dictionary" to "دیکشنری اصطلاحات تعزیه",
+        "dictionary" to "فرهنگ اصطلاحات تعزیه",
         "taziehCorrections" to "دیکشنری اصلاح و تصحیح متن تعزیه",
         "calendar" to "تقویم محرم",
         "encyclopedia" to "دانشنامه تعزیه",

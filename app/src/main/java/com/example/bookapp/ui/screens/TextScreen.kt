@@ -286,7 +286,6 @@ fun TextScreen(
     canAddFootnote: Boolean = true,
     canEditFootnote: Boolean = true,
     canDeleteFootnote: Boolean = true,
-    canAddFootnoteToDictionary: Boolean = true,
      onOpenSearch: () -> Unit = {},
     onAdvancedSearch: () -> Unit = {},
     localSearchVisible: Boolean = false,
@@ -1102,17 +1101,6 @@ localSearchResultIsCurrentSection: Boolean = true,
                     canAddFootnote = canAddFootnote,
                     canEditFootnote = canEditFootnote,
                     canDeleteFootnote = canDeleteFootnote,
-                    onAddToDictionary = { fn ->
-                        if (!canAddFootnoteToDictionary) {
-                            statusMessage = "انتقال پاورقی به دیکشنری در سیاست دسترسی فعلی غیرفعال است."
-                            false
-                        } else {
-                            val added = com.example.bookapp.data.GlossaryStore.add(context, fn.term, fn.explanation)
-                            statusMessage = if (added) "«${fn.term}» به فرهنگ لغت اضافه شد." else "این واژه قبلاً در فرهنگ لغت وجود دارد."
-                            added
-                        }
-                    },
-                    canAddFootnoteToDictionary = canAddFootnoteToDictionary,
                     onJumpToText = { fn ->
                         val idx = content.indexOf(fn.term)
                         if (idx >= 0 && content.isNotBlank() && scrollState.maxValue > 0) {
@@ -1374,12 +1362,6 @@ private fun normalizeDictionaryTerm(value: String): String = value
     .replace('ة', 'ه')
     .replace(Regex("\\s+"), " ")
 
-private fun isAlreadyInDictionary(context: Context, term: String): Boolean {
-    val normalized = normalizeDictionaryTerm(term)
-    return normalized.isNotEmpty() && (GLOSSARY_TERMS.any {
-        normalizeDictionaryTerm(it.term) == normalized
-    } || com.example.bookapp.data.GlossaryStore.contains(context, normalized))
-}
 
 @Composable
 private fun FootnotesSection(
@@ -1387,11 +1369,9 @@ private fun FootnotesSection(
     onAdd: suspend (term: String, explanation: String) -> Result<Unit>,
     onEdit: (FootnoteEntity, term: String, explanation: String) -> Unit,
     onDelete: (FootnoteEntity) -> Unit,
-    onAddToDictionary: (FootnoteEntity) -> Boolean = { false },
     canAddFootnote: Boolean = true,
     canEditFootnote: Boolean = true,
     canDeleteFootnote: Boolean = true,
-    canAddFootnoteToDictionary: Boolean = true,
     onJumpToText: (FootnoteEntity) -> Unit = {},
     saveError: String? = null
 ) {
@@ -1399,7 +1379,6 @@ private fun FootnotesSection(
     var editing by remember { mutableStateOf<FootnoteEntity?>(null) }
     var saving by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    val context = LocalContext.current
     val footnoteScope = rememberCoroutineScope()
 
     Row(
@@ -1492,13 +1471,6 @@ private fun FootnotesSection(
                         IconButton(onClick = { onJumpToText(fn) }) {
                             Icon(Icons.Filled.Search, contentDescription = "رفتن به واژه در متن")
                         }
-                        if (canAddFootnoteToDictionary) {
-                            IconButton(onClick = {
-                                onAddToDictionary(fn)
-                            }) {
-                                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "افزودن به فرهنگ لغت")
-                            }
-                        }
                         if (canDeleteFootnote) IconButton(onClick = { onDelete(fn) }) {
                             Icon(Icons.Filled.Delete, contentDescription = "حذف پاورقی")
                         }
@@ -1549,11 +1521,8 @@ private fun FootnotesSection(
                     } else if (explanation.isBlank()) {
                         validationError = "توضیح پاورقی را وارد کنید."
                     } else {
-                        val cleanTerm = normalizeDictionaryTerm(term)
                         val current = editing
-                        if (current == null && isAlreadyInDictionary(context, cleanTerm)) {
-                            validationError = "این واژه قبلاً در دیکشنری وجود دارد و دوباره ثبت نمی‌شود."
-                        } else if (current == null) {
+                        if (current == null) {
                             if (saving) return@TextButton
                             saving = true
                             footnoteScope.launch {
@@ -1607,7 +1576,6 @@ fun TextPagerScreen(
     canAddFootnote: Boolean = true,
     canEditFootnote: Boolean = true,
     canDeleteFootnote: Boolean = true,
-    canAddFootnoteToDictionary: Boolean = true,
     canBookmark: Boolean = true,
     canBookmarkDelete: Boolean = true,
     canAudio: Boolean = true,
@@ -1957,7 +1925,6 @@ localSearchResultIsCurrentSection =
                         canAddFootnote = canAddFootnote,
                         canEditFootnote = canEditFootnote,
                         canDeleteFootnote = canDeleteFootnote,
-                        canAddFootnoteToDictionary = canAddFootnoteToDictionary,
 
                         canBookmark = canBookmark,
                         canBookmarkDelete = canBookmarkDelete,
