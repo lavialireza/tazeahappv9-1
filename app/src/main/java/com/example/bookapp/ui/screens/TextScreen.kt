@@ -1072,6 +1072,7 @@ localSearchResultIsCurrentSection: Boolean = true,
                         if (term.verifiedMeanings.isEmpty()) Text("برای این واژه هنوز معنی تأییدشده‌ای ثبت نشده است.")
                         term.verifiedMeanings.forEachIndexed { index, meaning -> Text("${index + 1}. $meaning") }
                         if (term.sources.isNotEmpty()) Text("منابع: ${term.sources.joinToString("، ")}", style = MaterialTheme.typography.labelSmall)
+                        if (term.witnesses.isNotEmpty()) Text("شاهد کاربرد: ${term.witnesses.joinToString("؛ ")}", style = MaterialTheme.typography.bodySmall)
                     } },
                     confirmButton = { TextButton(onClick = { selectedGlossary = null }) { Text("بستن") } }
                 )
@@ -1089,21 +1090,29 @@ localSearchResultIsCurrentSection: Boolean = true,
                 }
             }
 
-            if (sectionId != null && canViewFootnotes) {
+            if (sectionId != null && (canViewFootnotes || glossaryOccurrences.isNotEmpty())) {
                 Spacer(Modifier.height(24.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(16.dp))
                 FootnotesSection(
-                    footnotes = footnotes,
+                    footnotes = if (canViewFootnotes) footnotes else emptyList(),
+                    glossaryOccurrences = glossaryOccurrences,
                     onAdd = onAddFootnote,
                     onEdit = onEditFootnote,
                     onDelete = onDeleteFootnote,
-                    canAddFootnote = canAddFootnote,
-                    canEditFootnote = canEditFootnote,
-                    canDeleteFootnote = canDeleteFootnote,
+                    canAddFootnote = canViewFootnotes && canAddFootnote,
+                    canEditFootnote = canViewFootnotes && canEditFootnote,
+                    canDeleteFootnote = canViewFootnotes && canDeleteFootnote,
                     onJumpToText = { fn ->
                         val idx = content.indexOf(fn.term)
                         if (idx >= 0 && content.isNotBlank() && scrollState.maxValue > 0) {
+                            val ratio = idx.toFloat() / content.length.coerceAtLeast(1)
+                            textScope.launch { scrollState.animateScrollTo((scrollState.maxValue * ratio).toInt().coerceIn(0, scrollState.maxValue)) }
+                        }
+                    },
+                    onJumpToGlossary = { occurrence ->
+                        val idx = occurrence.start.coerceIn(0, content.length)
+                        if (content.isNotBlank() && scrollState.maxValue > 0) {
                             val ratio = idx.toFloat() / content.length.coerceAtLeast(1)
                             textScope.launch { scrollState.animateScrollTo((scrollState.maxValue * ratio).toInt().coerceIn(0, scrollState.maxValue)) }
                         }
@@ -1366,6 +1375,7 @@ private fun normalizeDictionaryTerm(value: String): String = value
 @Composable
 private fun FootnotesSection(
     footnotes: List<FootnoteEntity>,
+    glossaryOccurrences: List<GlossaryOccurrence> = emptyList(),
     onAdd: suspend (term: String, explanation: String) -> Result<Unit>,
     onEdit: (FootnoteEntity, term: String, explanation: String) -> Unit,
     onDelete: (FootnoteEntity) -> Unit,
@@ -1373,6 +1383,7 @@ private fun FootnotesSection(
     canEditFootnote: Boolean = true,
     canDeleteFootnote: Boolean = true,
     onJumpToText: (FootnoteEntity) -> Unit = {},
+    onJumpToGlossary: (GlossaryOccurrence) -> Unit = {},
     saveError: String? = null
 ) {
     var showDialog by remember { mutableStateOf(false) }
@@ -1394,7 +1405,8 @@ private fun FootnotesSection(
         }
     }
 
-    if (footnotes.isNotEmpty()) {
+    val uniqueGlossaryTerms = glossaryOccurrences.distinctBy { it.termUid }
+    if (footnotes.isNotEmpty() || uniqueGlossaryTerms.isNotEmpty()) {
         Spacer(Modifier.height(6.dp))
         OutlinedTextField(
             value = searchQuery,
@@ -1414,13 +1426,17 @@ private fun FootnotesSection(
             normalizeDictionaryTerm(it.explanation).contains(normalizedSearch)
     }
 
-    if (footnotes.isEmpty()) {
+    if (footnotes.isEmpty() && uniqueGlossaryTerms.isEmpty()) {
         Text(
-            "هنوز پاورقی‌ای برای این بخش ثبت نشده (مثلاً معنی یک واژه، توضیح مختصر یا منبع).",
+            "هنوز پاورقی یا واژه پیوندخورده‌ای برای این بخش ثبت نشده است.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-    } else if (visibleFootnotes.isEmpty()) {
+    } else if (visibleFootnotes.isEmpty() && uniqueGlossaryTerms.none { term ->
+            normalizeDictionaryTerm(term.headword).contains(normalizedSearch) ||
+                term.verifiedMeanings.any { normalizeDictionaryTerm(it).contains(normalizedSearch) } ||
+                term.sources.any { normalizeDictionaryTerm(it).contains(normalizedSearch) }
+        } && normalizedSearch.isNotBlank()) {
         Text(
             "برای «$searchQuery» پاورقی‌ای پیدا نشد.",
             style = MaterialTheme.typography.bodySmall,
@@ -1428,7 +1444,7 @@ private fun FootnotesSection(
         )
     } else {
         Text(
-            "${visibleFootnotes.size} پاورقی${if (normalizedSearch.isNotBlank()) " پیدا شد" else ""}",
+            "${visibleFootnotes.size + uniqueGlossaryTerms.count { term -> normalizedSearch.isBlank() || normalizeDictionaryTerm(term.headword).contains(normalizedSearch) || term.verifiedMeanings.any { normalizeDictionaryTerm(it).contains(normalizedSearch) } || term.sources.any { normalizeDictionaryTerm(it).contains(normalizedSearch) } }} مورد${if (normalizedSearch.isNotBlank()) " پیدا شد" else ""}",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1474,6 +1490,45 @@ private fun FootnotesSection(
                         if (canDeleteFootnote) IconButton(onClick = { onDelete(fn) }) {
                             Icon(Icons.Filled.Delete, contentDescription = "حذف پاورقی")
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    val visibleGlossaryTerms = uniqueGlossaryTerms.filter { term ->
+        normalizedSearch.isBlank() ||
+            normalizeDictionaryTerm(term.headword).contains(normalizedSearch) ||
+            term.verifiedMeanings.any { normalizeDictionaryTerm(it).contains(normalizedSearch) } ||
+            term.sources.any { normalizeDictionaryTerm(it).contains(normalizedSearch) }
+    }
+    if (visibleGlossaryTerms.isNotEmpty()) {
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("واژه‌های پیوندخورده از فرهنگ اصطلاحات", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(6.dp))
+            Text("${visibleGlossaryTerms.size}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(
+            "این موارد از معنی‌های تأییدشده فرهنگ اصطلاحات و متناسب با همین بخش نمایش داده می‌شوند.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        visibleGlossaryTerms.forEach { term ->
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onJumpToGlossary(term) },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f))
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(term.headword, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    term.verifiedMeanings.forEachIndexed { index, meaning ->
+                        Text("${index + 1}. $meaning", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (term.sources.isNotEmpty()) {
+                        Text("منابع: ${term.sources.joinToString("، ")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (term.witnesses.isNotEmpty()) {
+                        Text("شاهد کاربرد: ${term.witnesses.joinToString("؛ ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -1567,6 +1622,7 @@ fun TextPagerScreen(
     onAttachAudio: (sectionId: Long, uri: android.net.Uri) -> Unit = { _, _ -> },
     onRemoveAudio: (sectionId: Long) -> Unit = {},
     footnotesForSection: suspend (Long) -> List<com.example.bookapp.data.FootnoteEntity> = { emptyList() },
+    glossaryForSection: suspend (com.example.bookapp.data.SectionEntity) -> List<GlossaryOccurrence> = { emptyList() },
     onAddFootnote: suspend (Long, String, String) -> Result<Unit> = { _, _, _ ->
         Result.failure(IllegalStateException("ذخیره پاورقی در دسترس نیست"))
     },
@@ -1740,13 +1796,15 @@ val currentSearchResultSectionTitle =
                 val section = sections[page]
 
                 var pageFootnotes by remember(section.id) {
-                    mutableStateOf(
-                        listOf<com.example.bookapp.data.FootnoteEntity>()
-                    )
+                    mutableStateOf(listOf<com.example.bookapp.data.FootnoteEntity>())
+                }
+                var pageGlossaryOccurrences by remember(section.id) {
+                    mutableStateOf(emptyList<GlossaryOccurrence>())
                 }
 
                 LaunchedEffect(section.id) {
                     pageFootnotes = footnotesForSection(section.id)
+                    pageGlossaryOccurrences = runCatching { glossaryForSection(section) }.getOrDefault(emptyList())
                 }
 
                 val pageMatches = searchMatches
@@ -1885,6 +1943,7 @@ localSearchResultIsCurrentSection =
                         },
 
                         footnotes = pageFootnotes,
+                        glossaryOccurrences = pageGlossaryOccurrences,
 
                         onAddFootnote = { term, explanation ->
                             val result = onAddFootnote(

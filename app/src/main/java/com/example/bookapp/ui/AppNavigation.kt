@@ -1456,6 +1456,29 @@ fun AppNavigation(
                         }
                     },
                     footnotesForSection = { id -> db.footnoteDao().getBySection(id) },
+                    glossaryForSection = { section ->
+                        if (!featureEnabled("dictionary.view")) {
+                            emptyList()
+                        } else {
+                            runCatching {
+                                val roleForGlossary = db.roleDao().getById(section.roleId)
+                                val taziehForGlossary = db.taziehDao().getById(roleForGlossary.taziehId)
+                                com.example.bookapp.data.GlossaryTextLinker.link(
+                                    text = section.content,
+                                    terms = db.glossaryDao().allTerms(),
+                                    spellings = db.glossaryDao().allSpellings(),
+                                    meanings = db.glossaryDao().allMeanings(),
+                                    sectionUid = section.uid,
+                                    roleUid = roleForGlossary.uid,
+                                    versionUid = roleForGlossary.versionUid,
+                                    taziehUid = taziehForGlossary?.uid.orEmpty()
+                                )
+                            }.getOrElse { error ->
+                                android.util.Log.w("TaziehGlossary", "پیوند واژه‌های پاورقی این بخش در دسترس نیست", error)
+                                emptyList()
+                            }
+                        }
+                    },
                     onAddFootnote = { id, term, explanation ->
                         if (!featureEnabled("footnotes.add")) {
                             Result.failure(IllegalStateException("قابلیت پاورقی در سیاست دسترسی فعلی فعال نیست."))

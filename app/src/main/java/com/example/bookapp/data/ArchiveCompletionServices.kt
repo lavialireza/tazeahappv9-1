@@ -65,8 +65,17 @@ class VersionComparisonService(private val db: AppDatabase) {
     }
 }
 
-/** پیوندهای واژه‌نامه فقط به‌صورت annotation ارائه می‌شوند؛ متن ورودی هرگز ویرایش نمی‌شود. */
-data class GlossaryOccurrence(val start: Int, val endExclusive: Int, val termUid: String, val headword: String, val meaningCount: Int, val verifiedMeanings: List<String> = emptyList(), val sources: List<String> = emptyList())
+/** پیوندهای فرهنگ اصطلاحات به متن و پاورقی؛ متن اصلی ورودی هرگز ویرایش نمی‌شود. */
+data class GlossaryOccurrence(
+    val start: Int,
+    val endExclusive: Int,
+    val termUid: String,
+    val headword: String,
+    val meaningCount: Int,
+    val verifiedMeanings: List<String> = emptyList(),
+    val sources: List<String> = emptyList(),
+    val witnesses: List<String> = emptyList()
+)
 object GlossaryTextLinker {
     /**
      * واژه فقط در همان بخشی پیوند می‌خورد که کاربرد تأییدشده‌اش به usageSectionUid متصل است.
@@ -117,7 +126,15 @@ object GlossaryTextLinker {
                     occupied += range
                     val approvedMeanings = scopedMeanings.filter { it.termId == id }
                     found += GlossaryOccurrence(start, end, uid, byId.getValue(id).headword, approvedMeanings.size,
-                        approvedMeanings.map { it.meaning }, approvedMeanings.mapNotNull { it.sourceTitle.takeIf(String::isNotBlank) }.distinct())
+                        approvedMeanings.map { it.meaning },
+                        approvedMeanings.mapNotNull { meaning ->
+                            val sourceName = listOf(meaning.sourceTitle, meaning.sourceAuthor)
+                                .filter { it.isNotBlank() }.joinToString("، ")
+                            if (sourceName.isBlank()) null
+                            else if (meaning.sourcePage.isBlank()) sourceName
+                            else "$sourceName، صفحه ${meaning.sourcePage}"
+                        }.distinct(),
+                        approvedMeanings.mapNotNull { it.usageQuote.takeIf(String::isNotBlank) }.distinct())
                 }
                 from = at + needle.length
             }
