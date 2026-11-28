@@ -89,7 +89,9 @@ object GlossaryTextLinker {
         sectionUid: String,
         roleUid: String,
         versionUid: String,
-        taziehUid: String
+        taziehUid: String,
+        sourceRows: List<GlossaryMeaningSourceEntity> = emptyList(),
+        witnessRows: List<GlossaryWitnessEntity> = emptyList()
     ): List<GlossaryOccurrence> {
         if (sectionUid.isBlank()) return emptyList()
         val scopedMeanings = meanings.filter { meaning ->
@@ -127,14 +129,24 @@ object GlossaryTextLinker {
                     val approvedMeanings = scopedMeanings.filter { it.termId == id }
                     found += GlossaryOccurrence(start, end, uid, byId.getValue(id).headword, approvedMeanings.size,
                         approvedMeanings.map { it.meaning },
-                        approvedMeanings.mapNotNull { meaning ->
-                            val sourceName = listOf(meaning.sourceTitle, meaning.sourceAuthor)
-                                .filter { it.isNotBlank() }.joinToString("، ")
-                            if (sourceName.isBlank()) null
-                            else if (meaning.sourcePage.isBlank()) sourceName
-                            else "$sourceName، صفحه ${meaning.sourcePage}"
+                        approvedMeanings.flatMap { meaning ->
+                            val independent = sourceRows.filter { it.meaningId == meaning.id &&
+                                (it.usageSectionUid.isNullOrBlank() || it.usageSectionUid == sectionUid) }
+                            val independentLabels = independent.mapNotNull { source ->
+                                val label = listOf(source.title, source.author).filter { it.isNotBlank() }.joinToString("، ")
+                                if (label.isBlank()) null else if (source.page.isBlank()) label else "$label، صفحه ${source.page}"
+                            }
+                            if (independentLabels.isNotEmpty()) independentLabels else listOfNotNull(
+                                listOf(meaning.sourceTitle, meaning.sourceAuthor).filter { it.isNotBlank() }.joinToString("، ")
+                                    .takeIf { it.isNotBlank() }?.let { label -> if (meaning.sourcePage.isBlank()) label else "$label، صفحه ${meaning.sourcePage}" }
+                            )
                         }.distinct(),
-                        approvedMeanings.mapNotNull { it.usageQuote.takeIf(String::isNotBlank) }.distinct())
+                        approvedMeanings.flatMap { meaning ->
+                            val independent = witnessRows.filter { it.meaningId == meaning.id &&
+                                (it.usageSectionUid.isNullOrBlank() || it.usageSectionUid == sectionUid) }
+                            val labels = independent.mapNotNull { it.text.takeIf(String::isNotBlank) }
+                            if (labels.isNotEmpty()) labels else listOfNotNull(meaning.usageQuote.takeIf(String::isNotBlank))
+                        }.distinct())
                 }
                 from = at + needle.length
             }

@@ -999,7 +999,8 @@ fun AppNavigation(
             GlossaryScreen(
                 db = db,
                 onBack = { navController.popBackStack() },
-                isAdmin = !publicViewer
+                isAdmin = !publicViewer,
+                onOpenSection = { sectionId -> navController.navigate("text/$sectionId") }
             )
         }
 
@@ -1468,6 +1469,8 @@ fun AppNavigation(
                                     terms = db.glossaryDao().allTerms(),
                                     spellings = db.glossaryDao().allSpellings(),
                                     meanings = db.glossaryDao().allMeanings(),
+                                    sourceRows = db.glossaryDao().allMeaningSources(),
+                                    witnessRows = db.glossaryDao().allWitnesses(),
                                     sectionUid = section.uid,
                                     roleUid = roleForGlossary.uid,
                                     versionUid = roleForGlossary.versionUid,
@@ -1554,6 +1557,8 @@ fun AppNavigation(
                         terms = db.glossaryDao().allTerms(),
                         spellings = db.glossaryDao().allSpellings(),
                         meanings = db.glossaryDao().allMeanings(),
+                        sourceRows = db.glossaryDao().allMeaningSources(),
+                        witnessRows = db.glossaryDao().allWitnesses(),
                         sectionUid = section.uid,
                         roleUid = roleForGlossary.uid,
                         versionUid = roleForGlossary.versionUid,

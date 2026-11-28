@@ -23,8 +23,10 @@ interface GlossaryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertMeaningSource(source: GlossaryMeaningSourceEntity): Long
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertWitness(witness: GlossaryWitnessEntity): Long
     @Query("SELECT * FROM glossary_meaning_sources WHERE meaningId = :meaningId ORDER BY id") suspend fun meaningSources(meaningId: Long): List<GlossaryMeaningSourceEntity>
+    @Query("SELECT * FROM glossary_meaning_sources ORDER BY id") suspend fun allMeaningSources(): List<GlossaryMeaningSourceEntity>
     @Query("SELECT * FROM glossary_meaning_sources ORDER BY id") fun observeMeaningSources(): Flow<List<GlossaryMeaningSourceEntity>>
     @Query("SELECT * FROM glossary_witnesses WHERE meaningId = :meaningId ORDER BY id") suspend fun witnesses(meaningId: Long): List<GlossaryWitnessEntity>
+    @Query("SELECT * FROM glossary_witnesses ORDER BY id") suspend fun allWitnesses(): List<GlossaryWitnessEntity>
     @Query("SELECT * FROM glossary_witnesses ORDER BY id") fun observeWitnesses(): Flow<List<GlossaryWitnessEntity>>
     @Query("SELECT * FROM glossary_meanings WHERE termId = :termId AND meaning = :meaning AND sourceTitle = :sourceTitle AND sourceAuthor = :sourceAuthor AND sourcePage = :sourcePage AND sourceUrl = :sourceUrl AND IFNULL(usageSectionUid, '') = IFNULL(:usageSectionUid, '') LIMIT 1") suspend fun duplicateMeaning(termId: Long, meaning: String, sourceTitle: String, sourceAuthor: String, sourcePage: String, sourceUrl: String, usageSectionUid: String?): GlossaryMeaningEntity?
     @Update suspend fun updateMeaning(meaning: GlossaryMeaningEntity): Int

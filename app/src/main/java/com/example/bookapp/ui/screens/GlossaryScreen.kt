@@ -44,7 +44,8 @@ private fun normalizeGlossaryEntry(value: String): String = value.trim()
 fun GlossaryScreen(
     db: AppDatabase,
     onBack: () -> Unit,
-    isAdmin: Boolean
+    isAdmin: Boolean,
+    onOpenSection: (Long) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -73,10 +74,31 @@ fun GlossaryScreen(
     var deletingTerm by remember { mutableStateOf<GlossaryTermEntity?>(null) }
     var deletingMeaning by remember { mutableStateOf<GlossaryMeaningEntity?>(null) }
     var usageLabels by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var contextSectionIds by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var deletingTermHistoryCount by remember { mutableStateOf(0) }
 
     LaunchedEffect(terms, selectedTermId) {
         if (selectedTermId != null && terms.none { it.id == selectedTermId }) selectedTermId = null
+    }
+
+    LaunchedEffect(allMeaningSources, allWitnesses, allMeanings) {
+        val ids = mutableMapOf<String, Long>()
+        allMeaningSources.forEach { source ->
+            source.usageSectionUid?.takeIf { it.isNotBlank() }?.let { uid ->
+                db.sectionDao().getByUid(uid)?.let { ids["S:${source.id}"] = it.id }
+            }
+        }
+        allWitnesses.forEach { witness ->
+            witness.usageSectionUid?.takeIf { it.isNotBlank() }?.let { uid ->
+                db.sectionDao().getByUid(uid)?.let { ids["W:${witness.id}"] = it.id }
+            }
+        }
+        allMeanings.forEach { meaning ->
+            meaning.usageSectionUid?.takeIf { it.isNotBlank() }?.let { uid ->
+                db.sectionDao().getByUid(uid)?.let { ids["M:${meaning.id}"] = it.id }
+            }
+        }
+        contextSectionIds = ids
     }
 
     LaunchedEffect(allMeanings) {
@@ -360,7 +382,14 @@ fun GlossaryScreen(
                                                 ).filterNotNull()
                                                 sourceDetails.forEach { detail -> Text(detail, style = MaterialTheme.typography.bodySmall) }
                                                 val sourceLocation = listOf(src.usageFieldTitle, src.usageTaziehTitle, src.usageRoleTitle, src.usageSectionTitle).filter { it.isNotBlank() }.joinToString(" ← ")
-                                                if (sourceLocation.isNotBlank()) Text("محل کاربرد این منبع: $sourceLocation", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                                if (sourceLocation.isNotBlank()) {
+                                                    Text("محل کاربرد این منبع: $sourceLocation", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                                    contextSectionIds["S:${src.id}"]?.let { sectionId ->
+                                                        TextButton(onClick = { onOpenSection(sectionId) }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+                                                            Text("رفتن به متن این محل")
+                                                        }
+                                                    }
+                                                }
                                             }
                                             if (meaning.authorOpinion.isNotBlank()) Text("نظر مؤلف: ${meaning.authorOpinion}", style = MaterialTheme.typography.bodySmall)
                                             if (meaning.usageQuote.isNotBlank()) Text("شاهد کاربرد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)
@@ -369,10 +398,24 @@ fun GlossaryScreen(
                                                 val witnessSource = listOf(witness.sourceTitle, witness.sourcePage).filter { it.isNotBlank() }.joinToString("، ")
                                                 if (witnessSource.isNotBlank()) Text("مأخذ شاهد: $witnessSource", style = MaterialTheme.typography.bodySmall)
                                                 val witnessLocation = listOf(witness.usageFieldTitle, witness.usageTaziehTitle, witness.usageRoleTitle, witness.usageSectionTitle).filter { it.isNotBlank() }.joinToString(" ← ")
-                                                if (witnessLocation.isNotBlank()) Text("محل کاربرد این شاهد: $witnessLocation", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                                if (witnessLocation.isNotBlank()) {
+                                                    Text("محل کاربرد این شاهد: $witnessLocation", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                                    contextSectionIds["W:${witness.id}"]?.let { sectionId ->
+                                                        TextButton(onClick = { onOpenSection(sectionId) }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+                                                            Text("رفتن به متن این محل")
+                                                        }
+                                                    }
+                                                }
                                             }
                                             val usageLabel = usageLabels[meaning.uid].orEmpty()
-                                            if (usageLabel.isNotBlank()) Text("محل کاربرد: $usageLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            if (usageLabel.isNotBlank()) {
+                                                Text("محل کاربرد: $usageLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                contextSectionIds["M:${meaning.id}"]?.let { sectionId ->
+                                                    TextButton(onClick = { onOpenSection(sectionId) }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+                                                        Text("باز کردن بخش متن")
+                                                    }
+                                                }
+                                            }
                                             if (isAdmin) {
                                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                                     TextButton(onClick = { editingMeaning = meaning }) { Icon(Icons.Filled.Edit, contentDescription = null); Text("ویرایش کاربرد") }
