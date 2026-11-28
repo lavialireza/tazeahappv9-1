@@ -63,6 +63,7 @@ fun GlossaryScreen(
     var historyTermId by remember { mutableStateOf<Long?>(null) }
     var historyRows by remember { mutableStateOf(emptyList<GlossaryHistoryEntity>()) }
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
+    var pendingExcelBytes by remember { mutableStateOf<ByteArray?>(null) }
     var editingTerm by remember { mutableStateOf<GlossaryTermEntity?>(null) }
     var editingMeaning by remember { mutableStateOf<GlossaryMeaningEntity?>(null) }
     var deletingTerm by remember { mutableStateOf<GlossaryTermEntity?>(null) }
@@ -128,6 +129,41 @@ fun GlossaryScreen(
         }
     }
 
+    val excelImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && isAdmin) {
+            scope.launch {
+                busy = true
+                try {
+                    val json = context.contentResolver.openInputStream(uri)?.use { GlossaryExcelService.previewJson(it) }
+                        ?: error("خواندن فایل Excel ممکن نشد.")
+                    importPreview = GlossaryImportService(db).preview(json)
+                    message = if (importPreview?.isValid == true) "پیش‌نمایش Excel آماده است؛ هنوز هیچ داده‌ای وارد نشده." else "فایل Excel خوانده شد؛ خطاها را در پیش‌نمایش بررسی کنید."
+                } catch (e: Exception) {
+                    message = "خواندن فایل Excel ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                } finally { busy = false }
+            }
+        }
+    }
+
+    val excelExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    ) { uri ->
+        val bytes = pendingExcelBytes
+        pendingExcelBytes = null
+        if (uri != null && bytes != null && isAdmin) {
+            scope.launch {
+                busy = true
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                        ?: error("ذخیره فایل Excel ممکن نشد.")
+                    message = "فایل Excel فرهنگ اصطلاحات ذخیره شد. هر ردیف نماینده یک معنی و کاربرد مستقل است."
+                } catch (e: Exception) {
+                    message = "ساخت فایل Excel ناموفق بود: ${e.message ?: "خطای نامشخص"}"
+                } finally { busy = false }
+            }
+        }
+    }
+
     val visibleTerms = remember(terms, spellings, meanings, query, statusFilter, isAdmin) {
         val q = normalizeGlossaryEntry(query)
         terms.filter { term ->
@@ -171,6 +207,11 @@ fun GlossaryScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(if (busy) "در حال بررسی بسته…" else "ورود بسته واژه‌ها (JSON)") }
                     OutlinedButton(
+                        onClick = { excelImportLauncher.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", "*/*")) },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("ورود فایل Excel (.xlsx)") }
+                    OutlinedButton(
                         onClick = {
                             scope.launch {
                                 busy = true
@@ -186,6 +227,22 @@ fun GlossaryScreen(
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("تهیه فایل انتشار واژه‌های تأییدشده") }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    pendingExcelBytes = GlossaryExcelService.export(db)
+                                    excelExportLauncher.launch("glossary-${System.currentTimeMillis()}.xlsx")
+                                } catch (e: Exception) {
+                                    message = "تهیه خروجی Excel ممکن نشد: ${e.message ?: "خطای نامشخص"}"
+                                } finally { busy = false }
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("خروجی Excel از فرهنگ اصطلاحات") }
+                    Text("در فایل Excel هر ردیف یک معنی و کاربرد مستقل است. ورود Excel مانند بسته ورودی، ابتدا پیش‌نمایش می‌شود و موارد واردشده در انتظار بررسی مدیر خواهند بود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             OutlinedTextField(
