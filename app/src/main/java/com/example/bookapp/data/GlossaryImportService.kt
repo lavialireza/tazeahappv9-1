@@ -4,13 +4,17 @@ import androidx.room.withTransaction
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.util.zip.ZipInputStream
+import java.io.ByteArrayInputStream
+import java.security.MessageDigest
 
 /** Immutable preview row. Nothing is written to Room until apply() is explicitly called. */
 data class GlossaryImportPreview(
     val packageUid: String,
     val terms: List<GlossaryImportTerm>,
     val errors: List<String>,
-    val warnings: List<String>
+    val warnings: List<String>,
+    val preapproved: Boolean = false
 ) {
     val meaningCount: Int get() = terms.sumOf { it.meanings.size }
     val spellingCount: Int get() = terms.sumOf { it.spellings.size }
@@ -51,6 +55,147 @@ data class GlossaryImportResult(val addedTerms: Int, val reusedTerms: Int, val a
  * Import is additive and transactional; a malformed package cannot partially update the glossary.
  */
 class GlossaryImportService(private val db: AppDatabase) {
+    /** Accepts the native LexText ZIP exports (dictionary v2.3 and target vocabulary v1)
+     * as well as the app's own JSON contract v1. ZIP contents are read in-memory only.
+     */
+    fun previewFile(bytes: ByteArray, fileName: String): GlossaryImportPreview {
+        val lower = fileName.lowercase()
+        val zipSignature = bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4b.toByte()
+        if (!lower.endsWith(".zip") && !zipSignature) {
+            return preview(runCatching { bytes.toString(Charsets.UTF_8) }.getOrDefault(""))
+        }
+        val files = linkedMapOf<String, ByteArray>()
+        return try {
+            ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (!entry.isDirectory && !entry.name.startsWith("/") && !entry.name.contains("..")) {
+                        val leaf = entry.name.substringAfterLast('/')
+                        if (leaf in setOf("manifest.json", "entries.json", "sources.json", "annotations.json", "target_vocabulary.json")) {
+                            files[leaf] = zip.readBytes()
+                        }
+                    }
+                    zip.closeEntry()
+                }
+            }
+            val manifestBytes = files["manifest.json"] ?: error("فایل manifest.json در بسته پیدا نشد.")
+            val manifest = JSONObject(manifestBytes.toString(Charsets.UTF_8))
+            val contract = manifest.optString("contract")
+            val sourceRows = JSONArray(files["sources.json"]?.toString(Charsets.UTF_8) ?: "[]")
+            val sourceById = mutableMapOf<String, JSONObject>()
+            for (i in 0 until sourceRows.length()) {
+                val row = sourceRows.optJSONObject(i) ?: continue
+                sourceById[row.optString("id")] = row
+            }
+            val sourceTerms = when (contract) {
+                "lextext-taaziye-dictionary-v2" -> JSONArray(files["entries.json"]?.toString(Charsets.UTF_8) ?: error("entries.json در بسته وجود ندارد."))
+                "lextext-target-vocabulary-v1" -> JSONArray(files["target_vocabulary.json"]?.toString(Charsets.UTF_8) ?: error("target_vocabulary.json در بسته وجود ندارد."))
+                else -> error("قرارداد بسته LexText پشتیبانی نمی‌شود: ${contract.ifBlank { "نامشخص" }}")
+            }
+            val approvedOnly = manifest.optBoolean("approved_only", false)
+            val convertedTerms = JSONArray()
+            for (i in 0 until sourceTerms.length()) {
+                val row = sourceTerms.optJSONObject(i) ?: continue
+                val word = row.optString("term").trim()
+                if (word.isBlank()) continue
+                val extraMetadata = mutableListOf<String>()
+                row.optString("type").takeIf { it.isNotBlank() && it != "null" }?.let { extraMetadata += "نوع مدخل در LexText: $it" }
+                listOf("frequency" to "فراوانی", "difficulty" to "دشواری", "confidence" to "اطمینان", "target_score" to "امتیاز واژه هدف", "target_status" to "وضعیت واژه هدف", "term_status" to "وضعیت واژه در LexText").forEach { (key, label) ->
+                    val value = row.optString(key).takeIf { it.isNotBlank() && it != "null" && it != "0" }
+                    if (value != null) extraMetadata += "$label: $value"
+                }
+                val meanings = JSONArray()
+                val senses = row.optJSONArray("meanings")
+                if (senses != null) {
+                    for (j in 0 until senses.length()) {
+                        val sense = senses.optJSONObject(j) ?: continue
+                        if (approvedOnly && !sense.optBoolean("is_verified", false)) continue
+                        val text = sequenceOf("meaning", "translation", "definition").map { sense.optString(it).trim() }.firstOrNull { it.isNotBlank() } ?: ""
+                        if (text.isBlank()) continue
+                        val source = sourceById[sense.optString("source_id")]
+                        if (source != null) {
+                            val details = listOfNotNull(
+                                source.optString("publisher").takeIf { it.isNotBlank() && it != "null" },
+                                source.optString("year").takeIf { it.isNotBlank() && it != "null" }?.let { "سال $it" },
+                                source.optString("source_type").takeIf { it.isNotBlank() && it != "null" }?.let { "نوع $it" },
+                                source.optString("note").takeIf { it.isNotBlank() && it != "null" },
+                                source.optString("reliability").takeIf { it.isNotBlank() && it != "null" }?.let { "اعتبار $it" }
+                            )
+                            if (details.isNotEmpty()) extraMetadata += "جزئیات منبع «${source.optString("name") }»: ${details.joinToString("؛ ")}"
+                        }
+                        val occurrences = row.optJSONArray("occurrences")
+                        val quote = if (occurrences != null && occurrences.length() > 0) {
+                            val first = occurrences.optJSONObject(0)
+                            first?.optString("sentence")?.trim().orEmpty()
+                        } else ""
+                        meanings.put(JSONObject().apply {
+                            put("meaning", text)
+                            put("sourceTitle", source?.optString("name").orEmpty())
+                            put("sourceAuthor", source?.optString("author").orEmpty())
+                            put("sourcePage", "")
+                            put("sourceUrl", source?.optString("url").orEmpty())
+                            // LexText occurrences are document/page contexts, not app section UIDs.
+                            // Preserve the sentence as a quotation, without fabricating a section link.
+                            put("usageQuote", quote)
+                        })
+                    }
+                }
+                if (meanings.length() == 0) {
+                    val fallback = row.optString("meaning").trim()
+                    if (fallback.isNotBlank()) meanings.put(JSONObject().put("meaning", fallback).put("usageQuote", ""))
+                }
+                if (meanings.length() == 0) continue
+                val notes = buildString {
+                    val existing = row.optString("notes").trim()
+                    if (existing.isNotBlank()) append(existing)
+                    extraMetadata.forEach { item -> if (isNotEmpty()) append("\n"); append(item) }
+                    val reason = row.optString("reason").trim()
+                    if (reason.isNotBlank()) { if (isNotEmpty()) append("\n"); append("دلیل انتخاب در LexText: ").append(reason) }
+                    val occ = row.optJSONArray("occurrences")
+                    if (occ != null && occ.length() > 0) {
+                        val refs = (0 until minOf(occ.length(), 10)).mapNotNull { k ->
+                            occ.optJSONObject(k)?.let { o ->
+                                val page = o.optString("page_number").takeIf { it.isNotBlank() && it != "null" }
+                                val sentence = o.optString("sentence").trim()
+                                listOfNotNull(page?.let { "صفحه $it" }, sentence.takeIf { it.isNotBlank() }).joinToString(": ").takeIf { it.isNotBlank() }
+                            }
+                        }
+                        if (refs.isNotEmpty()) { if (isNotEmpty()) append("\n"); append("بافت‌های متنی استخراج‌شده از LexText (بدون اتصال به بخش برنامه):\n"); append(refs.joinToString("\n")) }
+                    }
+                }
+                convertedTerms.put(JSONObject().apply {
+                    put("headword", word)
+                    put("partOfSpeech", "")
+                    put("pronunciation", "")
+                    put("etymology", "")
+                    put("notes", notes)
+                    put("spellings", JSONArray())
+                    put("meanings", meanings)
+                })
+            }
+            require(convertedTerms.length() > 0) { "بسته LexText واژه و معنی قابل‌ورودی ندارد." }
+            val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val normalized = JSONObject().apply {
+                put("schemaVersion", 1)
+                put("packageUid", "lextext-${digest.take(32)}")
+                put("packageTitle", "ورودی از ${manifest.optString("application", "LexText")}")
+                put("description", "قرارداد مبدأ: $contract | نسخه: ${manifest.optString("schema_version")}")
+                put("terms", convertedTerms)
+            }
+            val result = preview(normalized.toString())
+            if (result.isValid) result.copy(
+                warnings = (result.warnings + listOf(
+                    "این بسته مستقیماً از خروجی LexText تبدیل شد.",
+                    "بافت‌های صفحه‌ای حفظ شده‌اند؛ چون خروجی مبدأ شناسه بخش تعزیه ندارد، به بخش مشخصی از برنامه متصل نشده‌اند.",
+                    if (approvedOnly) "این بسته با approved_only=true صادر شده است؛ فقط واژه‌های تأییدشده و معنی‌های is_verified=true وارد می‌شوند." else "این بسته همه وضعیت‌های مبدأ را دارد؛ رکوردهای آن در برنامه اصلی در انتظار بررسی می‌مانند."
+                )).distinct(),
+                preapproved = approvedOnly
+            ) else result
+        } catch (e: Exception) {
+            GlossaryImportPreview("", emptyList(), listOf("خواندن بسته LexText ناموفق بود: ${e.message ?: "ساختار نامعتبر"}"), emptyList())
+        }
+    }
+
     fun preview(json: String): GlossaryImportPreview {
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
@@ -94,8 +239,12 @@ class GlossaryImportService(private val db: AppDatabase) {
                         val sectionTitle = meaningObject.optString("usageSectionTitle").trim()
                         val hasCompletePath = fieldTitle.isNotBlank() && taziehTitle.isNotBlank() && roleTitle.isNotBlank() && sectionTitle.isNotBlank()
                         if (meaning.isBlank()) errors += "متن معنی برای «$headword» خالی است."
-                        if (sourceTitle.isBlank() && sourceUrl.isBlank()) errors += "برای معنی «$headword» باید منبع یا نشانی منبع ثبت شود."
-                        if (sectionUid.isBlank() && !hasCompletePath) errors += "کاربرد معنی «$headword» باید شناسه بخش یا مسیر کامل عنوانی (رشته، مجلس، نقش و بخش) داشته باشد."
+                        // LexText exports can contain approved lexical meanings and bibliographic
+                        // sources without a ta'zieh section mapping. Keep those records; never
+                        // invent a section UID. The local app can attach an exact usage later.
+                        if (sectionUid.isNotBlank() && !hasCompletePath && meaningObject.optString("usageRoleUid").isBlank() && meaningObject.optString("usageTaziehUid").isBlank()) {
+                            warnings += "برای کاربرد «$headword» فقط شناسه بخش ارائه شده است؛ اعتبارسنجی در زمان ورود انجام می‌شود."
+                        }
                         meanings += GlossaryImportMeaning(
                             meaning, sourceTitle, meaningObject.optString("sourceAuthor").trim(), meaningObject.optString("sourcePage").trim(), sourceUrl,
                             meaningObject.optString("usageTaziehUid").trim().ifBlank { null },
@@ -116,7 +265,7 @@ class GlossaryImportService(private val db: AppDatabase) {
         return GlossaryImportPreview(packageUid, parsed, errors.distinct(), warnings)
     }
 
-    suspend fun apply(preview: GlossaryImportPreview): GlossaryImportResult = applyInternal(preview, published = false)
+    suspend fun apply(preview: GlossaryImportPreview): GlossaryImportResult = applyInternal(preview, published = preview.preapproved)
 
     /** Used only for JSON packages shipped inside the APK by the project build. */
     suspend fun applyPublished(preview: GlossaryImportPreview): GlossaryImportResult = applyInternal(preview, published = true)
@@ -136,17 +285,19 @@ class GlossaryImportService(private val db: AppDatabase) {
             // guarantees rollback as an additional safeguard if a later insert fails.
             preview.terms.forEach { incoming ->
                 incoming.meanings.forEach { meaning ->
-                    val section = resolveUsageSection(meaning)
-                    val role = db.roleDao().getById(section.roleId)
-                    val tazieh = db.taziehDao().getById(role.taziehId)
-                    require(meaning.usageRoleUid.isNullOrBlank() || meaning.usageRoleUid == role.uid) {
-                        "شناسه نقش با بخش «${section.title}» مطابقت ندارد."
-                    }
-                    require(meaning.usageVersionUid.isNullOrBlank() || meaning.usageVersionUid == role.versionUid) {
-                        "شناسه نسخه با بخش «${section.title}» مطابقت ندارد."
-                    }
-                    require(meaning.usageTaziehUid.isNullOrBlank() || meaning.usageTaziehUid == tazieh?.uid) {
-                        "شناسه مجلس با بخش «${section.title}» مطابقت ندارد."
+                    if (hasUsageReference(meaning)) {
+                        val section = resolveUsageSection(meaning)
+                        val role = db.roleDao().getById(section.roleId)
+                        val tazieh = db.taziehDao().getById(role.taziehId)
+                        require(meaning.usageRoleUid.isNullOrBlank() || meaning.usageRoleUid == role.uid) {
+                            "شناسه نقش با بخش «${section.title}» مطابقت ندارد."
+                        }
+                        require(meaning.usageVersionUid.isNullOrBlank() || meaning.usageVersionUid == role.versionUid) {
+                            "شناسه نسخه با بخش «${section.title}» مطابقت ندارد."
+                        }
+                        require(meaning.usageTaziehUid.isNullOrBlank() || meaning.usageTaziehUid == tazieh?.uid) {
+                            "شناسه مجلس با بخش «${section.title}» مطابقت ندارد."
+                        }
                     }
                 }
             }
@@ -169,7 +320,7 @@ class GlossaryImportService(private val db: AppDatabase) {
                         partOfSpeech = existing.partOfSpeech.ifBlank { incoming.partOfSpeech },
                         pronunciation = existing.pronunciation.ifBlank { incoming.pronunciation },
                         etymology = existing.etymology.ifBlank { incoming.etymology },
-                        notes = existing.notes.ifBlank { incoming.notes },
+                        notes = listOf(existing.notes.trim(), incoming.notes.trim()).filter { it.isNotBlank() }.distinct().joinToString("\n"),
                         reviewStatus = if (published) GlossaryTermEntity.STATUS_VERIFIED else existing.reviewStatus,
                         updatedAt = now
                     )
@@ -182,16 +333,16 @@ class GlossaryImportService(private val db: AppDatabase) {
                     else { dao.insertSpelling(GlossarySpellingEntity(termId = term.id, spelling = spelling, normalizedSpelling = key)); addedSpellings++ }
                 }
                 incoming.meanings.forEach { meaning ->
-                    val resolvedSection = resolveUsageSection(meaning)
-                    val resolvedRole = db.roleDao().getById(resolvedSection.roleId)
-                    val resolvedTazieh = db.taziehDao().getById(resolvedRole.taziehId)
+                    val resolvedSection = if (hasUsageReference(meaning)) resolveUsageSection(meaning) else null
+                    val resolvedRole = resolvedSection?.let { db.roleDao().getById(it.roleId) }
+                    val resolvedTazieh = resolvedRole?.let { db.taziehDao().getById(it.taziehId) }
                     val resolvedMeaning = meaning.copy(
-                        usageSectionUid = resolvedSection.uid,
-                        usageRoleUid = resolvedRole.uid,
-                        usageVersionUid = resolvedRole.versionUid.ifBlank { null },
-                        usageTaziehUid = resolvedTazieh?.uid
+                        usageSectionUid = resolvedSection?.uid.orEmpty(),
+                        usageRoleUid = resolvedRole?.uid ?: meaning.usageRoleUid,
+                        usageVersionUid = resolvedRole?.versionUid?.ifBlank { null } ?: meaning.usageVersionUid,
+                        usageTaziehUid = resolvedTazieh?.uid ?: meaning.usageTaziehUid
                     )
-                    val duplicate = dao.duplicateMeaning(term.id, meaning.meaning, meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage, resolvedSection.uid)
+                    val duplicate = dao.duplicateMeaning(term.id, meaning.meaning, meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage, meaning.sourceUrl, resolvedSection?.uid.orEmpty())
                     if (duplicate != null) {
                         if (published && duplicate.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) {
                             dao.updateMeaning(duplicate.copy(reviewStatus = GlossaryTermEntity.STATUS_VERIFIED, updatedAt = now))
@@ -219,6 +370,9 @@ class GlossaryImportService(private val db: AppDatabase) {
         }
     }
 
+
+    private fun hasUsageReference(meaning: GlossaryImportMeaning): Boolean =
+        meaning.usageSectionUid.isNotBlank() || (!meaning.usageFieldTitle.isBlank() && !meaning.usageTaziehTitle.isBlank() && !meaning.usageRoleTitle.isBlank() && !meaning.usageSectionTitle.isBlank())
 
     /** Resolve either a stable section UID or an exact field/tazieh/role/section title path. */
     private suspend fun resolveUsageSection(meaning: GlossaryImportMeaning): SectionEntity {
@@ -290,26 +444,24 @@ suspend fun exportVerifiedGlossaryJson(db: AppDatabase, packageUid: String): Str
     dao.termsByStatus(GlossaryTermEntity.STATUS_VERIFIED).forEach termLoop@{ term ->
         val meaningsArray = JSONArray()
         dao.meanings(term.id).filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }.forEach meaningLoop@{ meaning ->
-            if (meaning.sourceTitle.isBlank() && meaning.sourceUrl.isBlank()) return@meaningLoop
-            val sectionUid = meaning.usageSectionUid ?: return@meaningLoop
-            val section = db.sectionDao().getByUid(sectionUid) ?: return@meaningLoop
-            val role = db.roleDao().getById(section.roleId)
-            val tazieh = db.taziehDao().getById(role.taziehId) ?: return@meaningLoop
-            val field = fieldsById[tazieh.fieldId] ?: return@meaningLoop
+            val section = meaning.usageSectionUid?.takeIf { it.isNotBlank() }?.let { db.sectionDao().getByUid(it) }
+            val role = section?.let { db.roleDao().getById(it.roleId) }
+            val tazieh = role?.let { db.taziehDao().getById(it.taziehId) }
+            val field = tazieh?.let { fieldsById[it.fieldId] }
             meaningsArray.put(JSONObject().apply {
                 put("meaning", meaning.meaning)
                 put("sourceTitle", meaning.sourceTitle)
                 put("sourceAuthor", meaning.sourceAuthor)
                 put("sourcePage", meaning.sourcePage)
                 put("sourceUrl", meaning.sourceUrl)
-                put("usageTaziehUid", tazieh.uid)
-                put("usageVersionUid", role.versionUid)
-                put("usageRoleUid", role.uid)
-                put("usageSectionUid", section.uid)
-                put("usageFieldTitle", field.title)
-                put("usageTaziehTitle", tazieh.title)
-                put("usageRoleTitle", role.title)
-                put("usageSectionTitle", section.title)
+                if (tazieh != null) put("usageTaziehUid", tazieh.uid)
+                if (role != null) put("usageVersionUid", role.versionUid)
+                if (role != null) put("usageRoleUid", role.uid)
+                if (section != null) put("usageSectionUid", section.uid)
+                if (field != null) put("usageFieldTitle", field.title)
+                if (tazieh != null) put("usageTaziehTitle", tazieh.title)
+                if (role != null) put("usageRoleTitle", role.title)
+                if (section != null) put("usageSectionTitle", section.title)
                 put("usageQuote", meaning.usageQuote)
             })
         }

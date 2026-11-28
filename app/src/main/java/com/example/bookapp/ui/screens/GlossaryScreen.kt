@@ -103,9 +103,10 @@ fun GlossaryScreen(
             scope.launch {
                 busy = true
                 try {
-                    val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: error("خواندن فایل انتخاب‌شده ممکن نشد.")
-                    importPreview = GlossaryImportService(db).preview(json)
+                    val displayName = uri.lastPathSegment?.substringAfterLast('/') ?: "glossary.json"
+                    importPreview = GlossaryImportService(db).previewFile(bytes, displayName)
                     message = if (importPreview?.isValid == true) "پیش‌نمایش آماده است؛ هنوز هیچ داده‌ای وارد نشده." else "فایل بررسی شد؛ خطاهای آن را در پیش‌نمایش ببینید."
                 } catch (e: Exception) {
                     message = "خواندن بسته ناموفق بود: ${e.message ?: "خطای نامشخص"}"
@@ -224,10 +225,10 @@ fun GlossaryScreen(
                         if (showPackageTools) {
                             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     OutlinedButton(
-                        onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
+                        onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain", "application/zip", "application/x-zip-compressed", "*/*")) },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (busy) "در حال بررسی بسته…" else "ورود بسته واژه‌ها (JSON)") }
+                    ) { Text(if (busy) "در حال بررسی بسته…" else "ورود بسته واژه‌ها (JSON یا ZIP برنامه جانبی)") }
                     OutlinedButton(
                         onClick = { excelImportLauncher.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", "*/*")) },
                         enabled = !busy,
@@ -464,7 +465,11 @@ fun GlossaryScreen(
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("شناسه بسته: ${preview.packageUid}")
                     Text("واژه‌ها: ${preview.terms.size}  |  معنی‌ها: ${preview.meaningCount}  |  صورت‌های نوشتاری: ${preview.spellingCount}")
-                    Text("همه موارد جدید با وضعیت «در انتظار بررسی» ثبت می‌شوند و به‌صورت خودکار تأیید نخواهند شد.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (preview.preapproved) "این بسته با تأیید نهایی LexText صادر شده است؛ فقط موارد تأییدشده مبدأ در برنامه اصلی نیز تأییدشده ثبت می‌شوند."
+                        else "موارد این بسته با وضعیت «در انتظار بررسی» ثبت می‌شوند و به‌صورت خودکار تأیید نخواهند شد.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     preview.errors.forEach { Text("خطا: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     preview.warnings.forEach { Text("هشدار: $it", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
                     preview.terms.take(12).forEach { term ->
@@ -626,7 +631,7 @@ fun GlossaryScreen(
                                         dao.insertSpelling(GlossarySpellingEntity(termId = term.id, spelling = spelling.trim(), normalizedSpelling = normalizedSpelling))
                                     }
                                 }
-                                require(dao.duplicateMeaning(term.id, meaning.trim(), source.trim(), author.trim(), page.trim(), section.uid) == null) { "این معنی با همین مشخصات منبع قبلاً ثبت شده است." }
+                                require(dao.duplicateMeaning(term.id, meaning.trim(), source.trim(), author.trim(), page.trim(), sourceUrl.trim(), section.uid) == null) { "این معنی با همین مشخصات منبع قبلاً ثبت شده است." }
                                 val item = GlossaryMeaningEntity(
                                     uid = "meaning-${UUID.randomUUID()}", termId = term.id, meaning = meaning.trim(),
                                     sourceTitle = source.trim(), sourceAuthor = author.trim(), sourcePage = page.trim(), sourceUrl = sourceUrl.trim(),
