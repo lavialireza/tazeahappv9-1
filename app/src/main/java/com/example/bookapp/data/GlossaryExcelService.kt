@@ -127,7 +127,7 @@ object GlossaryExcelService {
             term.getJSONArray("meanings").put(meaning)
         }
         val termArray = JSONArray()
-        terms.values.forEach { termArray.put(term) }
+        terms.values.forEach { groupedTerm -> termArray.put(groupedTerm) }
         require(termArray.length() > 0) { "هیچ واژه‌ای در ردیف‌های فایل پیدا نشد." }
         return JSONObject().put("schemaVersion", 1).put("packageUid", packageUid).put("terms", termArray).toString()
     }
