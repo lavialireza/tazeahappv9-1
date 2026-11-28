@@ -11,7 +11,7 @@ import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 
-const val APP_DATABASE_SCHEMA_VERSION = 21
+const val APP_DATABASE_SCHEMA_VERSION = 22
 
 @Database(
     entities = [
@@ -128,6 +128,18 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `glossary_witnesses` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `meaningId` INTEGER NOT NULL, `externalUid` TEXT, `text` TEXT NOT NULL, `witnessType` TEXT NOT NULL, `sourceTitle` TEXT NOT NULL, `sourcePage` TEXT NOT NULL, `sourceUrl` TEXT NOT NULL, `note` TEXT NOT NULL, FOREIGN KEY(`meaningId`) REFERENCES `glossary_meanings`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_glossary_witnesses_meaningId` ON `glossary_witnesses` (`meaningId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_glossary_witnesses_externalUid` ON `glossary_witnesses` (`externalUid`)")
+            }
+        }
+
+        /** Version 22: retain full independent bibliographic and quoted-text details per source. */
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `language` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `volume` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `bibliographicInfo` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `originalText` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `translation` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `commentary` TEXT NOT NULL DEFAULT ''")
             }
         }
 
@@ -692,8 +704,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_17_18,
                         MIGRATION_18_19,
                         MIGRATION_19_20,
-                        MIGRATION_20_21
-                    )
+                        MIGRATION_20_21,
+                        MIGRATION_21_22\n                    )
                     .build()
 
                 INSTANCE = instance

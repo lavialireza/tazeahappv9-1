@@ -345,12 +345,20 @@ fun GlossaryScreen(
                                             val sourceLine = listOf(meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage).filter { it.isNotBlank() }.joinToString("، ")
                                             if (sourceLine.isNotBlank()) Text("منبع اصلی: $sourceLine", style = MaterialTheme.typography.bodySmall)
                                             if (meaning.sourceUrl.isNotBlank()) Text("نشانی منبع: ${meaning.sourceUrl}", style = MaterialTheme.typography.bodySmall)
-                                            val extraSources = allMeaningSources.filter { it.meaningId == meaning.id &&
-                                                !(it.title == meaning.sourceTitle && it.author == meaning.sourceAuthor && it.page == meaning.sourcePage && it.url == meaning.sourceUrl) }
+                                            val extraSources = allMeaningSources.filter { it.meaningId == meaning.id }
                                             extraSources.forEach { src ->
                                                 val label = listOf(src.title, src.author, src.publisher, src.year, src.page).filter { it.isNotBlank() }.joinToString("، ")
                                                 Text("منبع مستقل: $label", style = MaterialTheme.typography.bodySmall)
                                                 if (src.url.isNotBlank()) Text(src.url, style = MaterialTheme.typography.bodySmall)
+                                                val sourceDetails = listOf(
+                                                    src.language.takeIf { it.isNotBlank() }?.let { "زبان: $it" },
+                                                    src.volume.takeIf { it.isNotBlank() }?.let { "جلد: $it" },
+                                                    src.bibliographicInfo.takeIf { it.isNotBlank() }?.let { "مشخصات: $it" },
+                                                    src.originalText.takeIf { it.isNotBlank() }?.let { "متن اصلی: $it" },
+                                                    src.translation.takeIf { it.isNotBlank() }?.let { "ترجمه: $it" },
+                                                    src.commentary.takeIf { it.isNotBlank() }?.let { "توضیحات: $it" }
+                                                ).filterNotNull()
+                                                sourceDetails.forEach { detail -> Text(detail, style = MaterialTheme.typography.bodySmall) }
                                             }
                                             if (meaning.authorOpinion.isNotBlank()) Text("نظر مؤلف: ${meaning.authorOpinion}", style = MaterialTheme.typography.bodySmall)
                                             if (meaning.usageQuote.isNotBlank()) Text("شاهد کاربرد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)

@@ -56,7 +56,8 @@ data class GlossaryImportMeaning(
 data class GlossaryImportSource(
     val externalUid: String? = null, val title: String, val author: String = "", val publisher: String = "",
     val year: String = "", val page: String = "", val url: String = "", val sourceType: String = "",
-    val note: String = "", val reliability: Int? = null
+    val note: String = "", val reliability: Int? = null, val language: String = "", val volume: String = "",
+    val bibliographicInfo: String = "", val originalText: String = "", val translation: String = "", val commentary: String = ""
 )
 
 data class GlossaryImportWitness(
@@ -105,7 +106,7 @@ class GlossaryImportService(private val db: AppDatabase) {
                 sourceById[row.optString("id")] = row
             }
             val sourceTerms = when (contract) {
-                "lextext-taaziye-dictionary-v2", "lextext-taaziye-dictionary-v3" -> JSONArray(files["entries.json"]?.toString(Charsets.UTF_8) ?: error("entries.json در بسته وجود ندارد."))
+                "lextext-taaziye-dictionary-v2", "lextext-taaziye-dictionary-v3", "lextext-taaziye-dictionary-v3.1" -> JSONArray(files["entries.json"]?.toString(Charsets.UTF_8) ?: error("entries.json در بسته وجود ندارد."))
                 "lextext-target-vocabulary-v1" -> JSONArray(files["target_vocabulary.json"]?.toString(Charsets.UTF_8) ?: error("target_vocabulary.json در بسته وجود ندارد."))
                 else -> error("قرارداد بسته LexText پشتیبانی نمی‌شود: ${contract.ifBlank { "نامشخص" }}")
             }
@@ -243,7 +244,7 @@ class GlossaryImportService(private val db: AppDatabase) {
             if (result.isValid) result.copy(
                 warnings = (result.warnings + listOf(
                     "این بسته مستقیماً از خروجی LexText تبدیل شد.",
-                    if (contract == "lextext-taaziye-dictionary-v3") "قرارداد v3 شامل شناسه‌های پایدار، منابع متعدد، نظر مؤلف و شواهد مستقل است." else "قرارداد قدیمی LexText شناسایی شد؛ اطلاعات افزوده‌ای که در مبدأ وجود ندارد ساخته نمی‌شود.",
+                    if (contract == "lextext-taaziye-dictionary-v3.1") "قرارداد v3.1 علاوه بر شناسه‌های پایدار، منابع متعدد، نظر مؤلف و شواهد، جزئیات مستقل هر منبع را نیز دارد." else if (contract == "lextext-taaziye-dictionary-v3") "قرارداد v3 شامل شناسه‌های پایدار، منابع متعدد، نظر مؤلف و شواهد مستقل است." else "قرارداد قدیمی LexText شناسایی شد؛ اطلاعات افزوده‌ای که در مبدأ وجود ندارد ساخته نمی‌شود.",
                     "بافت‌های صفحه‌ای حفظ شده‌اند؛ چون خروجی مبدأ شناسه بخش تعزیه ندارد، به بخش مشخصی از برنامه متصل نشده‌اند.",
                     if (approvedOnly) "این بسته با approved_only=true صادر شده است؛ فقط واژه‌های تأییدشده و معنی‌های is_verified=true وارد می‌شوند." else "این بسته همه وضعیت‌های مبدأ را دارد؛ رکوردهای آن در برنامه اصلی در انتظار بررسی می‌مانند."
                 )).distinct(),
@@ -311,7 +312,11 @@ class GlossaryImportService(private val db: AppDatabase) {
                                 src.optString("externalUid").trim().ifBlank { null }, title, src.optString("author").trim(),
                                 src.optString("publisher").trim(), src.optString("year").trim(), src.optString("page").trim(),
                                 src.optString("url").trim(), src.optString("sourceType").trim(), src.optString("note").trim(),
-                                src.optInt("reliability", -1).takeIf { it >= 0 }
+                                src.optInt("reliability", -1).takeIf { it >= 0 },
+                                src.optString("language").trim(), src.optString("volume").trim(),
+                                src.optString("bibliographic_info").ifBlank { src.optString("bibliographicInfo") }.trim(),
+                                src.optString("original_text").ifBlank { src.optString("originalText") }.trim(),
+                                src.optString("translation").trim(), src.optString("commentary").trim()
                             )
                         } }
                         val importedWitnesses = mutableListOf<GlossaryImportWitness>()
@@ -444,7 +449,9 @@ class GlossaryImportService(private val db: AppDatabase) {
                             if (src.externalUid.isNullOrBlank() || !dao.hasMeaningSource(duplicate.id, src.externalUid)) {
                                 dao.insertMeaningSource(GlossaryMeaningSourceEntity(meaningId = duplicate.id, externalUid = src.externalUid,
                                     title = src.title, author = src.author, publisher = src.publisher, year = src.year, page = src.page,
-                                    url = src.url, sourceType = src.sourceType, note = src.note, reliability = src.reliability))
+                                    url = src.url, sourceType = src.sourceType, note = src.note, reliability = src.reliability,
+                                    language = src.language, volume = src.volume, bibliographicInfo = src.bibliographicInfo,
+                                    originalText = src.originalText, translation = src.translation, commentary = src.commentary))
                             }
                         }
                         meaning.witnesses.forEach { w ->
@@ -475,7 +482,9 @@ class GlossaryImportService(private val db: AppDatabase) {
                         sourceRows.forEach { src -> dao.insertMeaningSource(GlossaryMeaningSourceEntity(
                             meaningId = insertedMeaningId, externalUid = src.externalUid, title = src.title, author = src.author,
                             publisher = src.publisher, year = src.year, page = src.page, url = src.url,
-                            sourceType = src.sourceType, note = src.note, reliability = src.reliability
+                            sourceType = src.sourceType, note = src.note, reliability = src.reliability,
+                            language = src.language, volume = src.volume, bibliographicInfo = src.bibliographicInfo,
+                            originalText = src.originalText, translation = src.translation, commentary = src.commentary
                         )) }
                         meaning.witnesses.forEach { w -> dao.insertWitness(GlossaryWitnessEntity(
                             meaningId = insertedMeaningId, externalUid = w.externalUid, text = w.text, witnessType = w.witnessType,
@@ -580,6 +589,8 @@ suspend fun exportVerifiedGlossaryJson(db: AppDatabase, packageUid: String): Str
                     put("externalUid", src.externalUid); put("title", src.title); put("author", src.author)
                     put("publisher", src.publisher); put("year", src.year); put("page", src.page); put("url", src.url)
                     put("sourceType", src.sourceType); put("note", src.note); if (src.reliability != null) put("reliability", src.reliability)
+                    put("language", src.language); put("volume", src.volume); put("bibliographicInfo", src.bibliographicInfo)
+                    put("originalText", src.originalText); put("translation", src.translation); put("commentary", src.commentary)
                 }) }
                 put("sources", sourceArray)
                 val witnessArray = JSONArray()

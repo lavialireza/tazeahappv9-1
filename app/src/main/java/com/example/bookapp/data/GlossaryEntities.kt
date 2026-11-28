@@ -63,7 +63,13 @@ data class GlossaryMeaningSourceEntity(
     val url: String = "",
     val sourceType: String = "",
     val note: String = "",
-    val reliability: Int? = null
+    val reliability: Int? = null,
+    val language: String = "",
+    val volume: String = "",
+    val bibliographicInfo: String = "",
+    val originalText: String = "",
+    val translation: String = "",
+    val commentary: String = ""
 )
 
 @Entity(tableName = "glossary_witnesses", foreignKeys = [ForeignKey(entity = GlossaryMeaningEntity::class, parentColumns = ["id"], childColumns = ["meaningId"], onDelete = ForeignKey.CASCADE)], indices = [Index("meaningId"), Index("externalUid")])
