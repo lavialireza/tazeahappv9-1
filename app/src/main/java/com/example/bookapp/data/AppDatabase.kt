@@ -11,7 +11,7 @@ import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 
-const val APP_DATABASE_SCHEMA_VERSION = 20
+const val APP_DATABASE_SCHEMA_VERSION = 21
 
 @Database(
     entities = [
@@ -41,6 +41,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 20
         GlossaryTermEntity::class,
         GlossarySpellingEntity::class,
         GlossaryMeaningEntity::class,
+        GlossaryMeaningSourceEntity::class,
+        GlossaryWitnessEntity::class,
         GlossaryHistoryEntity::class,
         EncyclopediaRecordEntity::class,
         EncyclopediaLinkEntity::class,
@@ -111,6 +113,21 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_versionId` ON `director_change_history` (`versionId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_turnId_changedAt` ON `director_change_history` (`turnId`, `changedAt`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_director_change_history_changedAt` ON `director_change_history` (`changedAt`)")
+            }
+        }
+
+        /** Version 21: preserve independent sources, author opinion and witnesses per meaning. */
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `glossary_terms` ADD COLUMN `externalUid` TEXT")
+                db.execSQL("ALTER TABLE `glossary_meanings` ADD COLUMN `externalUid` TEXT")
+                db.execSQL("ALTER TABLE `glossary_meanings` ADD COLUMN `authorOpinion` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `glossary_meaning_sources` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `meaningId` INTEGER NOT NULL, `externalUid` TEXT, `title` TEXT NOT NULL, `author` TEXT NOT NULL, `publisher` TEXT NOT NULL, `year` TEXT NOT NULL, `page` TEXT NOT NULL, `url` TEXT NOT NULL, `sourceType` TEXT NOT NULL, `note` TEXT NOT NULL, `reliability` INTEGER, FOREIGN KEY(`meaningId`) REFERENCES `glossary_meanings`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_glossary_meaning_sources_meaningId` ON `glossary_meaning_sources` (`meaningId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_glossary_meaning_sources_externalUid` ON `glossary_meaning_sources` (`externalUid`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `glossary_witnesses` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `meaningId` INTEGER NOT NULL, `externalUid` TEXT, `text` TEXT NOT NULL, `witnessType` TEXT NOT NULL, `sourceTitle` TEXT NOT NULL, `sourcePage` TEXT NOT NULL, `sourceUrl` TEXT NOT NULL, `note` TEXT NOT NULL, FOREIGN KEY(`meaningId`) REFERENCES `glossary_meanings`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_glossary_witnesses_meaningId` ON `glossary_witnesses` (`meaningId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_glossary_witnesses_externalUid` ON `glossary_witnesses` (`externalUid`)")
             }
         }
 
@@ -674,7 +691,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_16_17,
                         MIGRATION_17_18,
                         MIGRATION_18_19,
-                        MIGRATION_19_20
+                        MIGRATION_19_20,
+                        MIGRATION_20_21
                     )
                     .build()
 

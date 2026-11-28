@@ -16,6 +16,7 @@ data class GlossaryTermEntity(
     val pronunciation: String = "",
     val etymology: String = "",
     val notes: String = "",
+    val externalUid: String? = null,
     val reviewStatus: String = STATUS_PENDING,
     val createdAt: Long,
     val updatedAt: Long
@@ -32,6 +33,8 @@ data class GlossaryMeaningEntity(
     val uid: String,
     val termId: Long,
     val meaning: String,
+    val externalUid: String? = null,
+    val authorOpinion: String = "",
     val sourceTitle: String = "",
     val sourceAuthor: String = "",
     val sourcePage: String = "",
@@ -44,6 +47,36 @@ data class GlossaryMeaningEntity(
     val reviewStatus: String = GlossaryTermEntity.STATUS_PENDING,
     val createdAt: Long,
     val updatedAt: Long
+)
+
+
+@Entity(tableName = "glossary_meaning_sources", foreignKeys = [ForeignKey(entity = GlossaryMeaningEntity::class, parentColumns = ["id"], childColumns = ["meaningId"], onDelete = ForeignKey.CASCADE)], indices = [Index("meaningId"), Index("externalUid")])
+data class GlossaryMeaningSourceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val meaningId: Long,
+    val externalUid: String? = null,
+    val title: String,
+    val author: String = "",
+    val publisher: String = "",
+    val year: String = "",
+    val page: String = "",
+    val url: String = "",
+    val sourceType: String = "",
+    val note: String = "",
+    val reliability: Int? = null
+)
+
+@Entity(tableName = "glossary_witnesses", foreignKeys = [ForeignKey(entity = GlossaryMeaningEntity::class, parentColumns = ["id"], childColumns = ["meaningId"], onDelete = ForeignKey.CASCADE)], indices = [Index("meaningId"), Index("externalUid")])
+data class GlossaryWitnessEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val meaningId: Long,
+    val externalUid: String? = null,
+    val text: String,
+    val witnessType: String = "",
+    val sourceTitle: String = "",
+    val sourcePage: String = "",
+    val sourceUrl: String = "",
+    val note: String = ""
 )
 
 @Entity(tableName = "glossary_history", foreignKeys = [ForeignKey(entity = GlossaryTermEntity::class, parentColumns = ["id"], childColumns = ["termId"], onDelete = ForeignKey.CASCADE)], indices = [Index("termId"), Index("changedAt")])

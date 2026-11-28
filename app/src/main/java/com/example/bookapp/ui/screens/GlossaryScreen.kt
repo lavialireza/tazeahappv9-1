@@ -54,6 +54,8 @@ fun GlossaryScreen(
     val allTerms by db.glossaryDao().observeAllTerms().collectAsState(initial = emptyList())
     val spellings by db.glossaryDao().observeAllSpellings().collectAsState(initial = emptyList())
     val allMeanings by db.glossaryDao().observeAllMeanings().collectAsState(initial = emptyList())
+    val allMeaningSources by db.glossaryDao().observeMeaningSources().collectAsState(initial = emptyList())
+    val allWitnesses by db.glossaryDao().observeWitnesses().collectAsState(initial = emptyList())
     val terms = if (isAdmin) allTerms else allTerms.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
     val meanings = if (isAdmin) allMeanings else allMeanings.filter { it.reviewStatus == GlossaryTermEntity.STATUS_VERIFIED }
     var query by remember { mutableStateOf("") }
@@ -341,9 +343,22 @@ fun GlossaryScreen(
                                         Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text(meaning.meaning, style = MaterialTheme.typography.bodyMedium)
                                             val sourceLine = listOf(meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage).filter { it.isNotBlank() }.joinToString("، ")
-                                            if (sourceLine.isNotBlank()) Text("منبع: $sourceLine", style = MaterialTheme.typography.bodySmall)
+                                            if (sourceLine.isNotBlank()) Text("منبع اصلی: $sourceLine", style = MaterialTheme.typography.bodySmall)
                                             if (meaning.sourceUrl.isNotBlank()) Text("نشانی منبع: ${meaning.sourceUrl}", style = MaterialTheme.typography.bodySmall)
-                                            if (meaning.usageQuote.isNotBlank()) Text("شاهد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)
+                                            val extraSources = allMeaningSources.filter { it.meaningId == meaning.id &&
+                                                !(it.title == meaning.sourceTitle && it.author == meaning.sourceAuthor && it.page == meaning.sourcePage && it.url == meaning.sourceUrl) }
+                                            extraSources.forEach { src ->
+                                                val label = listOf(src.title, src.author, src.publisher, src.year, src.page).filter { it.isNotBlank() }.joinToString("، ")
+                                                Text("منبع مستقل: $label", style = MaterialTheme.typography.bodySmall)
+                                                if (src.url.isNotBlank()) Text(src.url, style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            if (meaning.authorOpinion.isNotBlank()) Text("نظر مؤلف: ${meaning.authorOpinion}", style = MaterialTheme.typography.bodySmall)
+                                            if (meaning.usageQuote.isNotBlank()) Text("شاهد کاربرد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)
+                                            allWitnesses.filter { it.meaningId == meaning.id }.forEach { witness ->
+                                                Text("شاهد مستقل: ${witness.text}", style = MaterialTheme.typography.bodySmall)
+                                                val witnessSource = listOf(witness.sourceTitle, witness.sourcePage).filter { it.isNotBlank() }.joinToString("، ")
+                                                if (witnessSource.isNotBlank()) Text("مأخذ شاهد: $witnessSource", style = MaterialTheme.typography.bodySmall)
+                                            }
                                             val usageLabel = usageLabels[meaning.uid].orEmpty()
                                             if (usageLabel.isNotBlank()) Text("محل کاربرد: $usageLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             if (isAdmin) {

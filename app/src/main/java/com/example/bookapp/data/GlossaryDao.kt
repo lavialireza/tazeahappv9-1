@@ -16,7 +16,16 @@ interface GlossaryDao {
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertTerm(term: GlossaryTermEntity): Long
     @Update suspend fun updateTerm(term: GlossaryTermEntity): Int
     @Query("SELECT * FROM glossary_meanings WHERE termId = :termId ORDER BY id") suspend fun meanings(termId: Long): List<GlossaryMeaningEntity>
+    @Query("SELECT * FROM glossary_meanings WHERE externalUid = :uid LIMIT 1") suspend fun meaningByExternalUid(uid: String): GlossaryMeaningEntity?
+    @Query("SELECT EXISTS(SELECT 1 FROM glossary_meaning_sources WHERE meaningId = :meaningId AND externalUid = :uid)") suspend fun hasMeaningSource(meaningId: Long, uid: String): Boolean
+    @Query("SELECT EXISTS(SELECT 1 FROM glossary_witnesses WHERE meaningId = :meaningId AND externalUid = :uid)") suspend fun hasWitness(meaningId: Long, uid: String): Boolean
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertMeaning(meaning: GlossaryMeaningEntity): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertMeaningSource(source: GlossaryMeaningSourceEntity): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertWitness(witness: GlossaryWitnessEntity): Long
+    @Query("SELECT * FROM glossary_meaning_sources WHERE meaningId = :meaningId ORDER BY id") suspend fun meaningSources(meaningId: Long): List<GlossaryMeaningSourceEntity>
+    @Query("SELECT * FROM glossary_meaning_sources ORDER BY id") fun observeMeaningSources(): Flow<List<GlossaryMeaningSourceEntity>>
+    @Query("SELECT * FROM glossary_witnesses WHERE meaningId = :meaningId ORDER BY id") suspend fun witnesses(meaningId: Long): List<GlossaryWitnessEntity>
+    @Query("SELECT * FROM glossary_witnesses ORDER BY id") fun observeWitnesses(): Flow<List<GlossaryWitnessEntity>>
     @Query("SELECT * FROM glossary_meanings WHERE termId = :termId AND meaning = :meaning AND sourceTitle = :sourceTitle AND sourceAuthor = :sourceAuthor AND sourcePage = :sourcePage AND sourceUrl = :sourceUrl AND IFNULL(usageSectionUid, '') = IFNULL(:usageSectionUid, '') LIMIT 1") suspend fun duplicateMeaning(termId: Long, meaning: String, sourceTitle: String, sourceAuthor: String, sourcePage: String, sourceUrl: String, usageSectionUid: String?): GlossaryMeaningEntity?
     @Update suspend fun updateMeaning(meaning: GlossaryMeaningEntity): Int
     @Delete suspend fun deleteMeaning(meaning: GlossaryMeaningEntity): Int

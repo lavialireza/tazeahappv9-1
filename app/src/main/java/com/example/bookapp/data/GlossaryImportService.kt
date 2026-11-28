@@ -28,7 +28,8 @@ data class GlossaryImportTerm(
     val etymology: String,
     val notes: String,
     val spellings: List<String>,
-    val meanings: List<GlossaryImportMeaning>
+    val meanings: List<GlossaryImportMeaning>,
+    val externalUid: String? = null
 )
 
 data class GlossaryImportMeaning(
@@ -45,17 +46,33 @@ data class GlossaryImportMeaning(
     val usageFieldTitle: String = "",
     val usageTaziehTitle: String = "",
     val usageRoleTitle: String = "",
-    val usageSectionTitle: String = ""
+    val usageSectionTitle: String = "",
+    val externalUid: String? = null,
+    val authorOpinion: String = "",
+    val sources: List<GlossaryImportSource> = emptyList(),
+    val witnesses: List<GlossaryImportWitness> = emptyList()
+)
+
+data class GlossaryImportSource(
+    val externalUid: String? = null, val title: String, val author: String = "", val publisher: String = "",
+    val year: String = "", val page: String = "", val url: String = "", val sourceType: String = "",
+    val note: String = "", val reliability: Int? = null
+)
+
+data class GlossaryImportWitness(
+    val externalUid: String? = null, val text: String, val witnessType: String = "", val sourceTitle: String = "",
+    val sourcePage: String = "", val sourceUrl: String = "", val note: String = ""
 )
 
 data class GlossaryImportResult(val addedTerms: Int, val reusedTerms: Int, val addedMeanings: Int, val skippedMeanings: Int, val addedSpellings: Int, val skippedSpellings: Int)
 
 /**
- * JSON package contract v1. All imported records are created as PENDING, never auto-approved.
+ * App package contracts v1/v2 plus native LexText dictionary v2/v3. Imported records are PENDING unless
+ * the package is an explicitly approved-only native LexText export or a bundled approved package.
  * Import is additive and transactional; a malformed package cannot partially update the glossary.
  */
 class GlossaryImportService(private val db: AppDatabase) {
-    /** Accepts the native LexText ZIP exports (dictionary v2.3 and target vocabulary v1)
+    /** Accepts native LexText ZIP exports (dictionary v2.3/v3 and target vocabulary v1)
      * as well as the app's own JSON contract v1. ZIP contents are read in-memory only.
      */
     fun previewFile(bytes: ByteArray, fileName: String): GlossaryImportPreview {
@@ -88,7 +105,7 @@ class GlossaryImportService(private val db: AppDatabase) {
                 sourceById[row.optString("id")] = row
             }
             val sourceTerms = when (contract) {
-                "lextext-taaziye-dictionary-v2" -> JSONArray(files["entries.json"]?.toString(Charsets.UTF_8) ?: error("entries.json در بسته وجود ندارد."))
+                "lextext-taaziye-dictionary-v2", "lextext-taaziye-dictionary-v3" -> JSONArray(files["entries.json"]?.toString(Charsets.UTF_8) ?: error("entries.json در بسته وجود ندارد."))
                 "lextext-target-vocabulary-v1" -> JSONArray(files["target_vocabulary.json"]?.toString(Charsets.UTF_8) ?: error("target_vocabulary.json در بسته وجود ندارد."))
                 else -> error("قرارداد بسته LexText پشتیبانی نمی‌شود: ${contract.ifBlank { "نامشخص" }}")
             }
@@ -113,6 +130,41 @@ class GlossaryImportService(private val db: AppDatabase) {
                         val text = sequenceOf("meaning", "translation", "definition").map { sense.optString(it).trim() }.firstOrNull { it.isNotBlank() } ?: ""
                         if (text.isBlank()) continue
                         val source = sourceById[sense.optString("source_id")]
+                        val sourceArray = JSONArray()
+                        val nestedSources = sense.optJSONArray("sources")
+                        if (nestedSources != null) {
+                            for (si in 0 until nestedSources.length()) {
+                                val nested = nestedSources.optJSONObject(si) ?: continue
+                                sourceArray.put(JSONObject().apply {
+                                    put("externalUid", nested.optString("source_uid").ifBlank { nested.optString("uid") })
+                                    put("title", nested.optString("name")); put("author", nested.optString("author"))
+                                    put("publisher", nested.optString("publisher")); put("year", nested.optString("year"))
+                                    put("url", nested.optString("url")); put("sourceType", nested.optString("source_type"))
+                                    put("note", nested.optString("note")); put("reliability", nested.optInt("reliability", -1))
+                                    put("page", nested.optString("page"))
+                                })
+                            }
+                        } else if (source != null) {
+                            sourceArray.put(JSONObject().apply {
+                                put("externalUid", source.optString("source_uid").ifBlank { source.optString("uid") })
+                                put("title", source.optString("name")); put("author", source.optString("author"))
+                                put("publisher", source.optString("publisher")); put("year", source.optString("year"))
+                                put("url", source.optString("url")); put("sourceType", source.optString("source_type"))
+                                put("note", source.optString("note")); put("reliability", source.optInt("reliability", -1))
+                                put("page", "")
+                            })
+                        }
+                        val witnessArray = JSONArray()
+                        val witnesses = sense.optJSONArray("witnesses")
+                        if (witnesses != null) for (wi in 0 until witnesses.length()) {
+                            val w = witnesses.optJSONObject(wi) ?: continue
+                            witnessArray.put(JSONObject().apply {
+                                put("externalUid", w.optString("witness_uid").ifBlank { w.optString("uid") })
+                                put("text", w.optString("text")); put("witnessType", w.optString("type"))
+                                put("sourceTitle", w.optString("source_title")); put("sourcePage", w.optString("source_page"))
+                                put("sourceUrl", w.optString("source_url")); put("note", w.optString("note"))
+                            })
+                        }
                         if (source != null) {
                             val details = listOfNotNull(
                                 source.optString("publisher").takeIf { it.isNotBlank() && it != "null" },
@@ -130,6 +182,10 @@ class GlossaryImportService(private val db: AppDatabase) {
                         } else ""
                         meanings.put(JSONObject().apply {
                             put("meaning", text)
+                            put("externalUid", sense.optString("meaning_uid").ifBlank { sense.optString("uid") })
+                            put("authorOpinion", sense.optString("author_opinion"))
+                            put("sources", sourceArray)
+                            put("witnesses", witnessArray)
                             put("sourceTitle", source?.optString("name").orEmpty())
                             put("sourceAuthor", source?.optString("author").orEmpty())
                             put("sourcePage", "")
@@ -165,6 +221,7 @@ class GlossaryImportService(private val db: AppDatabase) {
                 }
                 convertedTerms.put(JSONObject().apply {
                     put("headword", word)
+                    put("externalUid", row.optString("term_uid").ifBlank { row.optString("uid") })
                     put("partOfSpeech", "")
                     put("pronunciation", "")
                     put("etymology", "")
@@ -186,6 +243,7 @@ class GlossaryImportService(private val db: AppDatabase) {
             if (result.isValid) result.copy(
                 warnings = (result.warnings + listOf(
                     "این بسته مستقیماً از خروجی LexText تبدیل شد.",
+                    if (contract == "lextext-taaziye-dictionary-v3") "قرارداد v3 شامل شناسه‌های پایدار، منابع متعدد، نظر مؤلف و شواهد مستقل است." else "قرارداد قدیمی LexText شناسایی شد؛ اطلاعات افزوده‌ای که در مبدأ وجود ندارد ساخته نمی‌شود.",
                     "بافت‌های صفحه‌ای حفظ شده‌اند؛ چون خروجی مبدأ شناسه بخش تعزیه ندارد، به بخش مشخصی از برنامه متصل نشده‌اند.",
                     if (approvedOnly) "این بسته با approved_only=true صادر شده است؛ فقط واژه‌های تأییدشده و معنی‌های is_verified=true وارد می‌شوند." else "این بسته همه وضعیت‌های مبدأ را دارد؛ رکوردهای آن در برنامه اصلی در انتظار بررسی می‌مانند."
                 )).distinct(),
@@ -203,7 +261,7 @@ class GlossaryImportService(private val db: AppDatabase) {
             return GlossaryImportPreview("", emptyList(), listOf("ساختار JSON معتبر نیست: ${it.message}"), emptyList())
         }
         val version = root.optInt("schemaVersion", -1)
-        if (version != 1) errors += "نسخه قالب پشتیبانی نمی‌شود؛ schemaVersion باید 1 باشد."
+        if (version !in 1..2) errors += "نسخه قالب پشتیبانی نمی‌شود؛ schemaVersion باید 1 یا 2 باشد."
         val packageUid = root.optString("packageUid").trim()
         if (packageUid.isBlank()) errors += "شناسه بسته (packageUid) الزامی است."
         val termsArray = root.optJSONArray("terms")
@@ -245,18 +303,41 @@ class GlossaryImportService(private val db: AppDatabase) {
                         if (sectionUid.isNotBlank() && !hasCompletePath && meaningObject.optString("usageRoleUid").isBlank() && meaningObject.optString("usageTaziehUid").isBlank()) {
                             warnings += "برای کاربرد «$headword» فقط شناسه بخش ارائه شده است؛ اعتبارسنجی در زمان ورود انجام می‌شود."
                         }
+                        val importedSources = mutableListOf<GlossaryImportSource>()
+                        meaningObject.optJSONArray("sources")?.let { arr -> for (si in 0 until arr.length()) {
+                            val src = arr.optJSONObject(si) ?: continue
+                            val title = src.optString("title").trim()
+                            if (title.isNotBlank()) importedSources += GlossaryImportSource(
+                                src.optString("externalUid").trim().ifBlank { null }, title, src.optString("author").trim(),
+                                src.optString("publisher").trim(), src.optString("year").trim(), src.optString("page").trim(),
+                                src.optString("url").trim(), src.optString("sourceType").trim(), src.optString("note").trim(),
+                                src.optInt("reliability", -1).takeIf { it >= 0 }
+                            )
+                        } }
+                        val importedWitnesses = mutableListOf<GlossaryImportWitness>()
+                        meaningObject.optJSONArray("witnesses")?.let { arr -> for (wi in 0 until arr.length()) {
+                            val w = arr.optJSONObject(wi) ?: continue
+                            val text = w.optString("text").trim()
+                            if (text.isNotBlank()) importedWitnesses += GlossaryImportWitness(
+                                w.optString("externalUid").trim().ifBlank { null }, text, w.optString("witnessType").trim(),
+                                w.optString("sourceTitle").trim(), w.optString("sourcePage").trim(), w.optString("sourceUrl").trim(), w.optString("note").trim()
+                            )
+                        } }
                         meanings += GlossaryImportMeaning(
                             meaning, sourceTitle, meaningObject.optString("sourceAuthor").trim(), meaningObject.optString("sourcePage").trim(), sourceUrl,
                             meaningObject.optString("usageTaziehUid").trim().ifBlank { null },
                             meaningObject.optString("usageVersionUid").trim().ifBlank { null },
                             meaningObject.optString("usageRoleUid").trim().ifBlank { null }, sectionUid,
-                            meaningObject.optString("usageQuote").trim(), fieldTitle, taziehTitle, roleTitle, sectionTitle
+                            meaningObject.optString("usageQuote").trim(), fieldTitle, taziehTitle, roleTitle, sectionTitle,
+                            meaningObject.optString("externalUid").trim().ifBlank { null }, meaningObject.optString("authorOpinion").trim(),
+                            importedSources, importedWitnesses
                         )
                     }
                 }
                 parsed += GlossaryImportTerm(
                     headword, item.optString("partOfSpeech").trim(), item.optString("pronunciation").trim(),
-                    item.optString("etymology").trim(), item.optString("notes").trim(), spellings, meanings
+                    item.optString("etymology").trim(), item.optString("notes").trim(), spellings, meanings,
+                    item.optString("externalUid").trim().ifBlank { null }
                 )
             }
         }
@@ -308,7 +389,7 @@ class GlossaryImportService(private val db: AppDatabase) {
                     val draft = GlossaryTermEntity(
                         uid = "term-${UUID.randomUUID()}", headword = incoming.headword, normalizedHeadword = normalized,
                         partOfSpeech = incoming.partOfSpeech, pronunciation = incoming.pronunciation,
-                        etymology = incoming.etymology, notes = incoming.notes,
+                        etymology = incoming.etymology, notes = incoming.notes, externalUid = incoming.externalUid,
                         reviewStatus = if (published) GlossaryTermEntity.STATUS_VERIFIED else GlossaryTermEntity.STATUS_PENDING,
                         createdAt = now, updatedAt = now
                     )
@@ -320,6 +401,7 @@ class GlossaryImportService(private val db: AppDatabase) {
                         partOfSpeech = existing.partOfSpeech.ifBlank { incoming.partOfSpeech },
                         pronunciation = existing.pronunciation.ifBlank { incoming.pronunciation },
                         etymology = existing.etymology.ifBlank { incoming.etymology },
+                        externalUid = existing.externalUid ?: incoming.externalUid,
                         notes = listOf(existing.notes.trim(), incoming.notes.trim()).filter { it.isNotBlank() }.distinct().joinToString("\n"),
                         reviewStatus = if (published) GlossaryTermEntity.STATUS_VERIFIED else existing.reviewStatus,
                         updatedAt = now
@@ -342,15 +424,41 @@ class GlossaryImportService(private val db: AppDatabase) {
                         usageVersionUid = resolvedRole?.versionUid?.ifBlank { null } ?: meaning.usageVersionUid,
                         usageTaziehUid = resolvedTazieh?.uid ?: meaning.usageTaziehUid
                     )
-                    val duplicate = dao.duplicateMeaning(term.id, meaning.meaning, meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage, meaning.sourceUrl, resolvedSection?.uid.orEmpty())
+                    val duplicate = meaning.externalUid?.let { dao.meaningByExternalUid(it) }
+                        ?: dao.duplicateMeaning(term.id, meaning.meaning, meaning.sourceTitle, meaning.sourceAuthor, meaning.sourcePage, meaning.sourceUrl, resolvedSection?.uid.orEmpty())
                     if (duplicate != null) {
-                        if (published && duplicate.reviewStatus != GlossaryTermEntity.STATUS_VERIFIED) {
-                            dao.updateMeaning(duplicate.copy(reviewStatus = GlossaryTermEntity.STATUS_VERIFIED, updatedAt = now))
+                        val refreshed = duplicate.copy(
+                            authorOpinion = duplicate.authorOpinion.ifBlank { meaning.authorOpinion },
+                            externalUid = duplicate.externalUid ?: meaning.externalUid,
+                            reviewStatus = if (published) GlossaryTermEntity.STATUS_VERIFIED else duplicate.reviewStatus,
+                            updatedAt = now
+                        )
+                        dao.updateMeaning(refreshed)
+                        val sourceRows = meaning.sources.ifEmpty {
+                            if (meaning.sourceTitle.isNotBlank() || meaning.sourceUrl.isNotBlank()) listOf(GlossaryImportSource(
+                                title = meaning.sourceTitle.ifBlank { meaning.sourceUrl }, author = meaning.sourceAuthor,
+                                page = meaning.sourcePage, url = meaning.sourceUrl
+                            )) else emptyList()
+                        }
+                        sourceRows.forEach { src ->
+                            if (src.externalUid.isNullOrBlank() || !dao.hasMeaningSource(duplicate.id, src.externalUid)) {
+                                dao.insertMeaningSource(GlossaryMeaningSourceEntity(meaningId = duplicate.id, externalUid = src.externalUid,
+                                    title = src.title, author = src.author, publisher = src.publisher, year = src.year, page = src.page,
+                                    url = src.url, sourceType = src.sourceType, note = src.note, reliability = src.reliability))
+                            }
+                        }
+                        meaning.witnesses.forEach { w ->
+                            if (w.externalUid.isNullOrBlank() || !dao.hasWitness(duplicate.id, w.externalUid)) dao.insertWitness(
+                                GlossaryWitnessEntity(meaningId = duplicate.id, externalUid = w.externalUid, text = w.text,
+                                    witnessType = w.witnessType, sourceTitle = w.sourceTitle, sourcePage = w.sourcePage,
+                                    sourceUrl = w.sourceUrl, note = w.note))
                         }
                         skippedMeanings++
                     } else {
-                        dao.insertMeaning(GlossaryMeaningEntity(
-                            uid = "meaning-${UUID.randomUUID()}", termId = term.id, meaning = meaning.meaning,
+                        val insertedMeaningId = dao.insertMeaning(GlossaryMeaningEntity(
+                            uid = meaning.externalUid?.let { "lextext-$it" } ?: "meaning-${UUID.randomUUID()}",
+                            externalUid = meaning.externalUid, authorOpinion = meaning.authorOpinion,
+                            termId = term.id, meaning = meaning.meaning,
                             sourceTitle = meaning.sourceTitle, sourceAuthor = meaning.sourceAuthor, sourcePage = meaning.sourcePage,
                             sourceUrl = meaning.sourceUrl, usageTaziehUid = resolvedMeaning.usageTaziehUid,
                             usageVersionUid = resolvedMeaning.usageVersionUid, usageRoleUid = resolvedMeaning.usageRoleUid,
@@ -358,6 +466,21 @@ class GlossaryImportService(private val db: AppDatabase) {
                             reviewStatus = if (published) GlossaryTermEntity.STATUS_VERIFIED else GlossaryTermEntity.STATUS_PENDING,
                             createdAt = now, updatedAt = now
                         ))
+                        val sourceRows = meaning.sources.ifEmpty {
+                            if (meaning.sourceTitle.isNotBlank() || meaning.sourceUrl.isNotBlank()) listOf(GlossaryImportSource(
+                                title = meaning.sourceTitle.ifBlank { meaning.sourceUrl }, author = meaning.sourceAuthor,
+                                page = meaning.sourcePage, url = meaning.sourceUrl
+                            )) else emptyList()
+                        }
+                        sourceRows.forEach { src -> dao.insertMeaningSource(GlossaryMeaningSourceEntity(
+                            meaningId = insertedMeaningId, externalUid = src.externalUid, title = src.title, author = src.author,
+                            publisher = src.publisher, year = src.year, page = src.page, url = src.url,
+                            sourceType = src.sourceType, note = src.note, reliability = src.reliability
+                        )) }
+                        meaning.witnesses.forEach { w -> dao.insertWitness(GlossaryWitnessEntity(
+                            meaningId = insertedMeaningId, externalUid = w.externalUid, text = w.text, witnessType = w.witnessType,
+                            sourceTitle = w.sourceTitle, sourcePage = w.sourcePage, sourceUrl = w.sourceUrl, note = w.note
+                        )) }
                         addedMeanings++
                     }
                 }
@@ -450,6 +573,21 @@ suspend fun exportVerifiedGlossaryJson(db: AppDatabase, packageUid: String): Str
             val field = tazieh?.let { fieldsById[it.fieldId] }
             meaningsArray.put(JSONObject().apply {
                 put("meaning", meaning.meaning)
+                put("externalUid", meaning.externalUid ?: meaning.uid)
+                put("authorOpinion", meaning.authorOpinion)
+                val sourceArray = JSONArray()
+                dao.meaningSources(meaning.id).forEach { src -> sourceArray.put(JSONObject().apply {
+                    put("externalUid", src.externalUid); put("title", src.title); put("author", src.author)
+                    put("publisher", src.publisher); put("year", src.year); put("page", src.page); put("url", src.url)
+                    put("sourceType", src.sourceType); put("note", src.note); if (src.reliability != null) put("reliability", src.reliability)
+                }) }
+                put("sources", sourceArray)
+                val witnessArray = JSONArray()
+                dao.witnesses(meaning.id).forEach { w -> witnessArray.put(JSONObject().apply {
+                    put("externalUid", w.externalUid); put("text", w.text); put("witnessType", w.witnessType)
+                    put("sourceTitle", w.sourceTitle); put("sourcePage", w.sourcePage); put("sourceUrl", w.sourceUrl); put("note", w.note)
+                }) }
+                put("witnesses", witnessArray)
                 put("sourceTitle", meaning.sourceTitle)
                 put("sourceAuthor", meaning.sourceAuthor)
                 put("sourcePage", meaning.sourcePage)
@@ -470,6 +608,7 @@ suspend fun exportVerifiedGlossaryJson(db: AppDatabase, packageUid: String): Str
         dao.spellings(term.id).forEach { spellingArray.put(it.spelling) }
         termsArray.put(JSONObject().apply {
             put("headword", term.headword)
+            put("externalUid", term.externalUid ?: term.uid)
             put("partOfSpeech", term.partOfSpeech)
             put("pronunciation", term.pronunciation)
             put("etymology", term.etymology)
@@ -480,7 +619,7 @@ suspend fun exportVerifiedGlossaryJson(db: AppDatabase, packageUid: String): Str
     }
     require(termsArray.length() > 0) { "هیچ واژه و معنی تأییدشده و متصل به بخش معتبر برای انتشار وجود ندارد." }
     return JSONObject().apply {
-        put("schemaVersion", 1)
+        put("schemaVersion", 2)
         put("packageUid", packageUid)
         put("packageTitle", "بسته منتشرشده فرهنگ اصطلاحات")
         put("description", "فقط واژه‌ها و معنی‌های تأییدشده؛ بسته افزایشی")
