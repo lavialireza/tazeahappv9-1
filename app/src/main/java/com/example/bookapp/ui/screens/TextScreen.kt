@@ -1505,12 +1505,12 @@ private fun FootnotesSection(
     if (visibleGlossaryTerms.isNotEmpty()) {
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("واژه‌های پیوندخورده از فرهنگ اصطلاحات", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("واژه‌های پیوندخورده از واژه‌نامه", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(6.dp))
             Text("${visibleGlossaryTerms.size}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(
-            "این موارد از معنی‌های تأییدشده فرهنگ اصطلاحات و متناسب با همین بخش نمایش داده می‌شوند.",
+            "این موارد از معنی‌های تأییدشده واژه‌نامه و متناسب با همین بخش نمایش داده می‌شوند.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

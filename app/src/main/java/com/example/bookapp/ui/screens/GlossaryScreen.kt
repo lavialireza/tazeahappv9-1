@@ -27,6 +27,8 @@ import com.example.bookapp.data.*
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.UUID
+import java.text.Collator
+import java.util.Locale
 
 private fun normalizeGlossaryEntry(value: String): String = value.trim()
     .replace('ي', 'ی').replace('ك', 'ک').replace('ۀ', 'ه').replace('ة', 'ه')
@@ -34,7 +36,7 @@ private fun normalizeGlossaryEntry(value: String): String = value.trim()
     .replace(Regex("\\s+"), " ")
 
 /**
- * صفحه واحد فرهنگ اصطلاحات برای Admin و Viewer.
+ * صفحه واحد واژه‌نامه تعزیه برای Admin و Viewer.
  * Viewer فقط مدخل‌ها و معنی‌های تأییدشده را می‌بیند؛ ورود و بررسی اطلاعات فقط در Admin فعال است.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -156,7 +158,7 @@ fun GlossaryScreen(
                 try {
                     context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
                         ?: error("ذخیره فایل Excel ممکن نشد.")
-                    message = "فایل Excel فرهنگ اصطلاحات ذخیره شد. هر ردیف نماینده یک معنی و کاربرد مستقل است."
+                    message = "فایل Excel واژه‌نامه ذخیره شد. هر ردیف نماینده یک معنی و کاربرد مستقل است."
                 } catch (e: Exception) {
                     message = "ساخت فایل Excel ناموفق بود: ${e.message ?: "خطای نامشخص"}"
                 } finally { busy = false }
@@ -178,13 +180,19 @@ fun GlossaryScreen(
                 else -> true
             }
             matchesQuery && statusMatches
+        }.sortedWith { left, right ->
+            val persianCollator = Collator.getInstance(Locale("fa", "IR")).apply {
+                strength = Collator.PRIMARY
+                decomposition = Collator.CANONICAL_DECOMPOSITION
+            }
+            persianCollator.compare(left.headword.trim(), right.headword.trim())
         }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("فرهنگ اصطلاحات تعزیه") },
+                title = { Text("واژه‌نامه تعزیه") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت")
@@ -199,8 +207,22 @@ fun GlossaryScreen(
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            var showPackageTools by remember { mutableStateOf(false) }
             if (isAdmin) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { showPackageTools = !showPackageTools }.padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("مدیریت بسته‌ها", fontWeight = FontWeight.SemiBold)
+                            Text(if (showPackageTools) "بستن ▲" else "نمایش عملیات ▼", color = MaterialTheme.colorScheme.primary)
+                        }
+                        if (showPackageTools) {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     OutlinedButton(
                         onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
                         enabled = !busy,
@@ -241,8 +263,11 @@ fun GlossaryScreen(
                         },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("خروجی Excel از فرهنگ اصطلاحات") }
+                    ) { Text("خروجی Excel از واژه‌نامه") }
                     Text("در فایل Excel هر ردیف یک معنی و کاربرد مستقل است. ورود Excel مانند بسته ورودی، ابتدا پیش‌نمایش می‌شود و موارد واردشده در انتظار بررسی مدیر خواهند بود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                 }
             }
             OutlinedTextField(
@@ -434,7 +459,7 @@ fun GlossaryScreen(
     importPreview?.let { preview ->
         AlertDialog(
             onDismissRequest = { if (!busy) importPreview = null },
-            title = { Text("پیش‌نمایش بسته فرهنگ اصطلاحات") },
+            title = { Text("پیش‌نمایش بسته واژه‌نامه") },
             text = {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("شناسه بسته: ${preview.packageUid}")

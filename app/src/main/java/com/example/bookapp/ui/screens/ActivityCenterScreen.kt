@@ -109,7 +109,7 @@ fun ActivityCenterScreen(
                     if (isAdmin) CenterAction("مقایسه نسخه‌های یک تعزیه", Icons.Filled.Science, onOpenVersionComparison)
                     if (canEncyclopedia) CenterAction("دانشنامه تعزیه", Icons.AutoMirrored.Filled.MenuBook, onOpenEncyclopedia)
                     if (isAdmin) CenterAction("مدیریت دانشنامه", Icons.Filled.Storage, onOpenEncyclopediaManagement)
-                    if (canDictionary) CenterAction("فرهنگ اصطلاحات تعزیه", Icons.AutoMirrored.Filled.MenuBook, onOpenGlossary)
+                    if (canDictionary) CenterAction("واژه‌نامه تعزیه", Icons.AutoMirrored.Filled.MenuBook, onOpenGlossary)
                     if (canCorrections) CenterAction("اصلاح و تصحیح متن", Icons.AutoMirrored.Filled.MenuBook, onOpenCorrections)
                     if (canAiResearch) CenterAction("دستیار هوشمند پژوهش", Icons.Filled.Search, onOpenAiResearch)
                 }

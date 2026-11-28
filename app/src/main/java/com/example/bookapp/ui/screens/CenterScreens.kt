@@ -182,7 +182,7 @@ val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardContr
             if (showGlossary || showGallery) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (showGlossary) {
-                        LibraryCompactCard("فرهنگ اصطلاحات", "واژه‌ها و معناها", Icons.AutoMirrored.Filled.MenuBook, gold, Color(0xFF735A2A), onOpenGlossary, Modifier.weight(1f))
+                        LibraryCompactCard("واژه‌نامه", "لغت‌نامه تعزیه", Icons.AutoMirrored.Filled.MenuBook, gold, Color(0xFF735A2A), onOpenGlossary, Modifier.weight(1f))
                     }
                     if (showGallery) {
                         LibraryCompactCard("گالری تصاویر", " مستندات تصویری", Icons.Filled.PhotoLibrary, rose, Color(0xFF873F49), onOpenGallery, Modifier.weight(1f))
@@ -351,7 +351,7 @@ fun ResearchCenterScreen(
             if (showAi) ResearchAction("دستیار هوش مصنوعی پژوهش", "تحلیل ساختار، پیشنهاد گوینده، استخراج واژه و جستجوی معنایی آفلاین در آرشیو", Icons.Filled.School, onOpenAi, Color(0xFFE8E1D2))
             if (showVersionComparison) ResearchAction("مقایسه نسخه‌های یک تعزیه", "بررسی اختلاف نسخه‌ها با حفظ متن و ترتیب منبع", Icons.Filled.Search, onOpenVersionComparison, Color(0xFFE8EDF8))
             if (showEncyclopedia) ResearchAction("دانشنامه تعزیه", "مدخل‌ها، شخصیت‌ها، رویدادها و پیوندهای دانشی", Icons.AutoMirrored.Filled.MenuBook, onOpenEncyclopedia, Color(0xFFDCE9E4))
-            if (showGlossary) ResearchAction("فرهنگ اصطلاحات تعزیه", "واژه‌ها، معنی‌ها، منابع و کاربرد آن‌ها در متن تعزیه", Icons.AutoMirrored.Filled.MenuBook, onOpenGlossary, Color(0xFFF8EBDD))
+            if (showGlossary) ResearchAction("واژه‌نامه تعزیه", "لغت‌ها، معنی‌ها، منابع و کاربرد آن‌ها در متن تعزیه", Icons.AutoMirrored.Filled.MenuBook, onOpenGlossary, Color(0xFFF8EBDD))
             if (showCorrections) ResearchAction("ابزار تصحیح متن", "بررسی و مدیریت پیشنهادهای اصلاحی بدون تغییر خودکار متن اصلی", Icons.Filled.Edit, onOpenCorrections, Color(0xFFF4E5EC))
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
