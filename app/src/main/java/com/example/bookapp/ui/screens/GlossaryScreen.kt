@@ -359,6 +359,8 @@ fun GlossaryScreen(
                                                     src.commentary.takeIf { it.isNotBlank() }?.let { "توضیحات: $it" }
                                                 ).filterNotNull()
                                                 sourceDetails.forEach { detail -> Text(detail, style = MaterialTheme.typography.bodySmall) }
+                                                val sourceLocation = listOf(src.usageFieldTitle, src.usageTaziehTitle, src.usageRoleTitle, src.usageSectionTitle).filter { it.isNotBlank() }.joinToString(" ← ")
+                                                if (sourceLocation.isNotBlank()) Text("محل کاربرد این منبع: $sourceLocation", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                                             }
                                             if (meaning.authorOpinion.isNotBlank()) Text("نظر مؤلف: ${meaning.authorOpinion}", style = MaterialTheme.typography.bodySmall)
                                             if (meaning.usageQuote.isNotBlank()) Text("شاهد کاربرد: ${meaning.usageQuote}", style = MaterialTheme.typography.bodySmall)
@@ -366,6 +368,8 @@ fun GlossaryScreen(
                                                 Text("شاهد مستقل: ${witness.text}", style = MaterialTheme.typography.bodySmall)
                                                 val witnessSource = listOf(witness.sourceTitle, witness.sourcePage).filter { it.isNotBlank() }.joinToString("، ")
                                                 if (witnessSource.isNotBlank()) Text("مأخذ شاهد: $witnessSource", style = MaterialTheme.typography.bodySmall)
+                                                val witnessLocation = listOf(witness.usageFieldTitle, witness.usageTaziehTitle, witness.usageRoleTitle, witness.usageSectionTitle).filter { it.isNotBlank() }.joinToString(" ← ")
+                                                if (witnessLocation.isNotBlank()) Text("محل کاربرد این شاهد: $witnessLocation", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                                             }
                                             val usageLabel = usageLabels[meaning.uid].orEmpty()
                                             if (usageLabel.isNotBlank()) Text("محل کاربرد: $usageLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

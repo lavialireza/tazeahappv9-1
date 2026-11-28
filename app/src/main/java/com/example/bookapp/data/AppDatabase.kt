@@ -11,7 +11,7 @@ import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 
-const val APP_DATABASE_SCHEMA_VERSION = 22
+const val APP_DATABASE_SCHEMA_VERSION = 23
 
 @Database(
     entities = [
@@ -140,6 +140,20 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `originalText` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `translation` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `commentary` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /** Version 23: exact source/witness context paths supplied by LexText. */
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                listOf("usageFieldTitle", "usageTaziehTitle", "usageRoleTitle", "usageSectionTitle").forEach { column ->
+                    db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `$column` TEXT NOT NULL DEFAULT ''")
+                    db.execSQL("ALTER TABLE `glossary_witnesses` ADD COLUMN `$column` TEXT NOT NULL DEFAULT ''")
+                }
+                listOf("usageFieldUid", "usageTaziehUid", "usageRoleUid", "usageSectionUid").forEach { column ->
+                    db.execSQL("ALTER TABLE `glossary_meaning_sources` ADD COLUMN `$column` TEXT")
+                    db.execSQL("ALTER TABLE `glossary_witnesses` ADD COLUMN `$column` TEXT")
+                }
             }
         }
 
@@ -705,7 +719,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_18_19,
                         MIGRATION_19_20,
                         MIGRATION_20_21,
-                        MIGRATION_21_22
+                        MIGRATION_21_22,
+                        MIGRATION_22_23
                     )
                     .build()
 

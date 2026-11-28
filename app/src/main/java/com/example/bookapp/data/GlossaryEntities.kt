@@ -69,7 +69,15 @@ data class GlossaryMeaningSourceEntity(
     val bibliographicInfo: String = "",
     val originalText: String = "",
     val translation: String = "",
-    val commentary: String = ""
+    val commentary: String = "",
+    val usageFieldTitle: String = "",
+    val usageTaziehTitle: String = "",
+    val usageRoleTitle: String = "",
+    val usageSectionTitle: String = "",
+    val usageFieldUid: String? = null,
+    val usageTaziehUid: String? = null,
+    val usageRoleUid: String? = null,
+    val usageSectionUid: String? = null
 )
 
 @Entity(tableName = "glossary_witnesses", foreignKeys = [ForeignKey(entity = GlossaryMeaningEntity::class, parentColumns = ["id"], childColumns = ["meaningId"], onDelete = ForeignKey.CASCADE)], indices = [Index("meaningId"), Index("externalUid")])
@@ -82,7 +90,15 @@ data class GlossaryWitnessEntity(
     val sourceTitle: String = "",
     val sourcePage: String = "",
     val sourceUrl: String = "",
-    val note: String = ""
+    val note: String = "",
+    val usageFieldTitle: String = "",
+    val usageTaziehTitle: String = "",
+    val usageRoleTitle: String = "",
+    val usageSectionTitle: String = "",
+    val usageFieldUid: String? = null,
+    val usageTaziehUid: String? = null,
+    val usageRoleUid: String? = null,
+    val usageSectionUid: String? = null
 )
 
 @Entity(tableName = "glossary_history", foreignKeys = [ForeignKey(entity = GlossaryTermEntity::class, parentColumns = ["id"], childColumns = ["termId"], onDelete = ForeignKey.CASCADE)], indices = [Index("termId"), Index("changedAt")])
